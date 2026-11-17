@@ -19,7 +19,7 @@ Sibling repositories (cloned next to this one under `Retreat/`):
 - `Retreat-Forge` — builder UI: selects modules, resolves dependencies, builds the game, AI customization.
 - `Retreat-Website` — web platform: catalog, accounts, rankings, marketplace.
 
-Vision documents live in the parent folder: `FRAMEWORK.en.md` (engine/Forge) and `PLATFORM.en.md` (platform). Read `FRAMEWORK.en.md` before making architectural decisions. The originals (`FRAMEWORK.md`, `PLATFORM.md`) are in Portuguese.
+Vision documents live in the `Retreat` repository: [FRAMEWORK.md](https://github.com/RetreatSoftware/Retreat/blob/main/FRAMEWORK.md) (engine/Forge) and [PLATFORM.md](https://github.com/RetreatSoftware/Retreat/blob/main/PLATFORM.md) (platform). Read `FRAMEWORK.md` before making architectural decisions.
 
 ## Decided technical direction
 
