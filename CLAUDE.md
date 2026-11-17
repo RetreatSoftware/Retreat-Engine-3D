@@ -4,6 +4,8 @@ The 3D game engine of the Retreat ecosystem: rendering, game loop, networking, a
 
 This file contains project facts and rules only. Personal preferences belong in `CLAUDE.local.md`.
 
+The root `../CLAUDE.md` also applies here. This file may narrow its scope (see "Status") but not relax its rules; its verification and infrastructure rules apply only once this repository has code that needs them.
+
 ## Status
 
 Early stage. No code exists yet. Do not implement anything beyond what is explicitly requested.
@@ -52,3 +54,16 @@ Vision documents live in the parent folder: `FRAMEWORK.en.md` (engine/Forge) and
 - Keep the initial implementation as simple as reasonably possible.
 - Do not modify sibling repositories from this one without being asked.
 - Write documentation and code comments in English.
+
+## Verification
+
+Applies once the engine has a first loop; build the missing pieces in this order when a task needs them.
+
+1. **Command registry** (`snapshot <png>`, `wait <frames>`, `quit`, `assert.*`). Input and UI dispatch through it. Scripts run one line per frame, fixed timestep, seeded RNG.
+2. **Headless snapshot:** `cargo run --example <x> -- --headless --commands <file>` renders to an offscreen wgpu texture and writes a PNG. Open it. CI uses a software adapter (lavapipe/WARP).
+3. **Browser bridge:** serve the WASM build (`trunk serve` or wasm-bindgen) and expose `window.__retreat.command()` / `snapshot()`. Run the same scripts to check WASM-only behavior. `wasm-bindgen-test` (headless Chrome) covers WASM-only logic in CI.
+4. **Per change:** `cargo check` for native and `wasm32-unknown-unknown`, plus `cargo nextest`.
+5. **Determinism:** the same script must give the same state hash on native and WASM. Mismatch means platform drift.
+6. **Netcode:** test server plus N fake clients in one process with simulated latency, not in browsers.
+7. **Performance:** frame time and draw-call count are readable via commands so budgets can be asserted.
+
