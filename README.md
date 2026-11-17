@@ -4,6 +4,14 @@ The 3D game engine of the Retreat ecosystem, responsible for rendering, the game
 
 It supports integrating gameplay modules from [Retreat-Modules](https://github.com/RetreatSoftware/Retreat-Modules).
 
+## Technical direction
+
+- Written in Rust, rendering with `wgpu`.
+- Browser-first: games compile to WebAssembly and run in the player's browser with no download. The same engine also builds natively, for example for authoritative game servers.
+- Gameplay modules are independent crates composed at compile time.
+
+This is the initial direction and is still subject to change. Status: early stage, no code yet.
+
 ## Part of the Retreat ecosystem
 
 - [Retreat-CoreSDK](https://github.com/RetreatSoftware/Retreat-CoreSDK) — shared SDK
