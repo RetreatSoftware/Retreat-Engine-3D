@@ -10,7 +10,7 @@ It supports integrating gameplay modules from [Retreat-Modules](https://github.c
 - Browser-first: games compile to WebAssembly and run in the player's browser with no download. The same engine also builds natively, for example for authoritative game servers.
 - Gameplay modules are independent crates composed at compile time.
 
-This is the initial direction and is still subject to change. Status: early stage, no code yet.
+This is the initial direction and is still subject to change. Status: early stage; the Engine Sandbox (`sandbox/`) is being built on Bevy.
 
 ## Part of the Retreat ecosystem
 

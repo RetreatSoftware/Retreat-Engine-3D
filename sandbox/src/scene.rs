@@ -1,0 +1,94 @@
+//! The sandbox's starting scene: a ground plane, one cube, a light and a camera.
+
+use bevy::prelude::*;
+
+/// Spawns the starting scene once, at startup.
+pub struct SandboxScenePlugin;
+
+impl Plugin for SandboxScenePlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Startup, spawn_sandbox_scene);
+    }
+}
+
+/// Marks the demo cube so systems and tests can find it.
+#[derive(Component)]
+pub struct SandboxCube;
+
+/// Marks the ground plane.
+#[derive(Component)]
+pub struct SandboxGround;
+
+const GROUND_SIZE: f32 = 8.0;
+const CUBE_SIZE: f32 = 1.0;
+
+fn spawn_sandbox_scene(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    commands.spawn((
+        Name::new("sandbox_ground"),
+        SandboxGround,
+        Mesh3d(meshes.add(Plane3d::default().mesh().size(GROUND_SIZE, GROUND_SIZE))),
+        MeshMaterial3d(materials.add(Color::srgb(0.30, 0.50, 0.30))),
+    ));
+
+    commands.spawn((
+        Name::new("sandbox_cube"),
+        SandboxCube,
+        Mesh3d(meshes.add(Cuboid::new(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE))),
+        MeshMaterial3d(materials.add(Color::srgb(0.49, 0.56, 1.0))),
+        // Lift the cube by half its size so it rests on the ground instead of sinking into it.
+        Transform::from_xyz(0.0, CUBE_SIZE / 2.0, 0.0),
+    ));
+
+    commands.spawn((
+        Name::new("sandbox_light"),
+        PointLight {
+            shadow_maps_enabled: true,
+            ..default()
+        },
+        Transform::from_xyz(4.0, 8.0, 4.0),
+    ));
+
+    commands.spawn((
+        Name::new("sandbox_camera"),
+        Camera3d::default(),
+        Transform::from_xyz(-2.5, 4.5, 9.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Builds an app with only what the scene needs (no window, no GPU), runs one frame.
+    fn app_after_first_frame() -> App {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Mesh>()
+            .init_asset::<StandardMaterial>()
+            .add_plugins(SandboxScenePlugin);
+        app.update();
+        app
+    }
+
+    #[test]
+    fn scene_spawns_one_cube_resting_on_the_ground() {
+        let mut app = app_after_first_frame();
+        let mut cubes = app.world_mut().query_filtered::<&Transform, With<SandboxCube>>();
+        let transforms: Vec<&Transform> = cubes.iter(app.world()).collect();
+        assert_eq!(transforms.len(), 1, "expected exactly one SandboxCube");
+        assert_eq!(transforms[0].translation.y, CUBE_SIZE / 2.0, "cube bottom must touch y = 0");
+    }
+
+    #[test]
+    fn scene_spawns_ground_light_and_camera() {
+        let mut app = app_after_first_frame();
+        let world = app.world_mut();
+        assert_eq!(world.query_filtered::<(), With<SandboxGround>>().iter(world).count(), 1);
+        assert_eq!(world.query_filtered::<(), With<PointLight>>().iter(world).count(), 1);
+        assert_eq!(world.query_filtered::<(), With<Camera3d>>().iter(world).count(), 1);
+    }
+}

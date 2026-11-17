@@ -1,0 +1,10 @@
+[package]
+name = "retreat_sandbox"
+description = "Retreat Engine Sandbox: a small app that exercises every engine feature."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+bevy.workspace = true
+retreat_engine.workspace = true
