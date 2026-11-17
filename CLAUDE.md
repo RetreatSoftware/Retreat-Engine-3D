@@ -42,6 +42,7 @@ Vision documents live in the parent folder: `FRAMEWORK.en.md` (engine/Forge) and
 ## Architecture rules
 
 - Dependency direction: `Retreat-CoreSDK` → contract crates → engine and modules → generated game. Never reverse it.
+- **Shared generic helpers:** check `Retreat-CoreSDK` first. A helper stays in the engine until a second consumer (a module) needs it; then move it to CoreSDK instead of copying it. What belongs in CoreSDK, and what does not, is defined in `../Retreat-CoreSDK/CLAUDE.md`. Shared gameplay concepts go in the engine's public API / contract crates, not in CoreSDK.
 - Modules depend on contract crates (traits, events, component types), never on each other and never on engine internals.
 - Expose a small, stable, documented public API. Keep renderer and networking internals private.
 - Isolate all `cfg(target_arch = "wasm32")` code in a single platform layer. Do not assume native capabilities (threads, filesystem, sockets) exist in the browser; assume single-threaded WASM as the baseline.
