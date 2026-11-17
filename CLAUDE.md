@@ -8,7 +8,7 @@ The root `../CLAUDE.md` also applies here. This file may narrow its scope (see "
 
 ## Status
 
-Early stage. No code exists yet. Do not implement anything beyond what is explicitly requested.
+Early stage: the Engine Sandbox is being built (first window, then commands, snapshots, models, materials, shaders, physics, UI, browser bridge). Do not implement anything beyond what is explicitly requested.
 
 ## Ecosystem context
 
@@ -30,12 +30,24 @@ Vision documents live in the `Retreat` repository: [FRAMEWORK.md](https://github
 - **Module composition:** compile-time. Each gameplay module is an independent crate with a manifest (capabilities, dependencies, compatibility, configuration) declared in its `Cargo.toml` metadata. Forge resolves and validates; Cargo only compiles. Do not use Cargo features as the plugin mechanism.
 - **No dynamic plugin loading, no custom scripting language** for now. Keep game logic data-driven and behind contract traits so a scripting layer stays possible later.
 - **Authority:** the server owns game state. Games never mint currency or change balances; economic operations go through the platform adapter to trusted backend services.
+- **Engine base: Bevy 0.20.** Do not write a custom ECS, renderer or asset system; extend Bevy instead.
+- **Bevy is a direct dependency, pinned once per workspace.** The version lives in `[workspace.dependencies]` of the root `Cargo.toml`; crates declare `bevy.workspace = true`. Do not reach Bevy only through a re-export: Bevy's derive macros (`#[derive(Component)]`, ...) look for `bevy` in the using crate's own `Cargo.toml` and fail with "cannot find `bevy_ecs`" otherwise. Other repositories (Modules) pin the same version in their own workspace.
+- **Contract crate `retreat_engine_api`** (created with the command registry): the only engine crate modules may depend on.
+- **Modules are Bevy plugins** (`impl Plugin`) with a manifest in `[package.metadata.retreat]`.
+- **Physics: Rapier** (`bevy_rapier3d`) in a fixed timestep; Avian is the fallback.
+- **UI: `bevy_ui`.** Buttons and keys dispatch command ids.
+- **Models: glTF** through Bevy's `AssetServer`. **Shaders: WGSL**, within WebGL2 limits.
+
+## Layout
+
+- `crates/retreat_engine_api/` — contract crate (public API for modules); not created yet.
+- `crates/retreat_engine/` — engine runtime: `RetreatEnginePlugin`, later the script runner, headless snapshot and the platform layer.
+- `sandbox/` — crate `retreat_sandbox`, the Engine Sandbox app that exercises every engine feature.
 
 ## Open decisions (do not assume an answer)
 
-- Build on Bevy (plugins, ECS, renderer on wgpu) versus a custom engine layer. A short spike is planned to decide this. Do not write a custom ECS unless a technical need is demonstrated.
 - Netcode model (server-authoritative with prediction versus deterministic lockstep).
-- Asset formats and pipeline.
+- Asset pipeline beyond glTF loading (import, compression, packaging).
 - Distribution of crates across repositories (private registry versus git dependencies).
 - 2D/3D scope beyond 3D, and the exact minimum combination that always yields a playable game.
 
