@@ -1,0 +1,38 @@
+# The orbit camera module (retreat_module_orbit_camera, from Retreat-Modules) in the sandbox:
+# held arrow keys (input actions read as held) rotate the sandbox GameCamera around the cube.
+# Run: cargo run -p retreat_sandbox -- --headless --commands scripts/verify/module_orbit_camera.cmds
+# Expected pictures:
+#   orbit_start.png:    the cube seen from the front (camera on +z, height 4, radius 8), centered.
+#   orbit_quarter.png:  after holding ArrowRight for one second of simulation time the camera is
+#                       on +x: the cube is seen from the right side. The camera is at (8, 4, 0).
+#   orbit_back.png:     after holding ArrowLeft for one second it is back at the front, as in
+#                       orbit_start.png.
+
+orbit.start sandbox_camera 8 4
+wait 1
+assert.position sandbox_camera 0 4 8
+snapshot orbit_start
+input.key_down ArrowRight
+assert.input_held orbit_right
+# The camera turns on every tick the key is held: 90 degrees per second, 64 ticks per second.
+# Ticks held: the key_down line, the assert line, the wait line and 61 waited ticks = 64.
+wait 61
+input.key_up ArrowRight
+wait 1
+assert.input_not_held orbit_right
+assert.position sandbox_camera 8 4 0
+snapshot orbit_quarter
+input.key_down ArrowLeft
+# Ticks held: the key_down line, the wait line and 62 waited ticks = 64 again.
+wait 62
+input.key_up ArrowLeft
+wait 1
+assert.position sandbox_camera 0 4 8
+snapshot orbit_back
+# Stopped: the key does nothing now.
+orbit.stop
+input.key_down ArrowRight
+wait 10
+input.key_up ArrowRight
+assert.position sandbox_camera 0 4 8
+quit

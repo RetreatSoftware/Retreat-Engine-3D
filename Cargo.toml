@@ -28,6 +28,7 @@ retreat_rng = { git = "https://github.com/RetreatSoftware/Retreat-CoreSDK" }
 # Gameplay modules (Retreat-Modules repository). Same rule as CoreSDK: a git dependency,
 # Cargo.lock pins the commit, `cargo update -p retreat_module_spawner` takes a newer one.
 retreat_module_spawner = { git = "https://github.com/RetreatSoftware/Retreat-Modules" }
+retreat_module_orbit_camera = { git = "https://github.com/RetreatSoftware/Retreat-Modules" }
 # Physics. 0.37 is the release for Bevy 0.20. Default features are off: they add a debug
 # renderer, picking and async mesh colliders we do not use. `enhanced-determinism` makes
 # the simulation bit-identical across platforms (native and WASM), which `state.hash` checks.

@@ -28,5 +28,7 @@ fn add_sandbox_plugins(app: &mut App) {
         toolbar::SandboxToolbarPlugin,
         // The first gameplay module (Retreat-Modules): `spawner.rain <count>`.
         retreat_module_spawner::SpawnerModulePlugin,
+        // The orbit camera module: `orbit.start`, arrow keys held rotate the sandbox camera.
+        retreat_module_orbit_camera::OrbitCameraModulePlugin,
     ));
 }
