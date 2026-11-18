@@ -1,0 +1,26 @@
+# Drops boxes onto the cube and the ground, shows them falling and at rest, checks that the
+# simulation is deterministic (state hash), then resets.
+# Run: cargo run -p retreat_sandbox -- --headless --commands scripts/verify/physics_boxes.cmds
+# Expected pictures:
+#   physics_start.png:   three red boxes in the air above the blue cube, all in the picture.
+#   physics_falling.png: 0.4 s later: the small box has landed on the cube, the other two are
+#                        lower but still in the air.
+#   physics_rest.png:    4 s later: one box sits on top of the cube, one slid off the cube's
+#                        edge onto the ground, one lies on the ground beside the cube.
+#   physics_reset.png:   the starting scene again: no boxes.
+
+physics.spawn_box crate_top 0 2.2 0 0.5
+physics.spawn_box crate_edge 0.55 3 0.1 0.6
+physics.spawn_box crate_side -1.2 2.6 -0.4 0.4
+snapshot physics_start
+# 64 ticks = 1 s of simulation time.
+wait 25
+snapshot physics_falling
+wait 256
+snapshot physics_rest
+# Recorded on Windows; CI checks the same value on Linux (enhanced-determinism).
+state.hash
+assert.state_hash 0x2e070c0193fb9c18
+physics.reset
+snapshot physics_reset
+quit

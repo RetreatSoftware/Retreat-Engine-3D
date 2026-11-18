@@ -25,6 +25,10 @@ retreat_engine = { path = "crates/retreat_engine" }
 # CoreSDK is a separate repository. Cargo.lock pins the exact commit, so builds are
 # reproducible; run `cargo update -p retreat_rng` to pick up a newer CoreSDK commit.
 retreat_rng = { git = "https://github.com/RetreatSoftware/Retreat-CoreSDK" }
+# Physics. 0.37 is the release for Bevy 0.20. Default features are off: they add a debug
+# renderer, picking and async mesh colliders we do not use. `enhanced-determinism` makes
+# the simulation bit-identical across platforms (native and WASM), which `state.hash` checks.
+bevy_rapier3d = { version = "0.37.0", default-features = false, features = ["dim3", "enhanced-determinism"] }
 
 # Bevy is slow in an unoptimized build. Optimize dependencies fully and our own
 # code a little, so `cargo run` stays playable while compile times stay short.

@@ -15,9 +15,11 @@ mod launch_options;
 mod material;
 mod model;
 mod pending_command_work;
+mod physics;
 mod platform;
 mod shader_material;
 mod snapshot;
+mod state_hash;
 
 use std::time::Duration;
 
@@ -32,7 +34,7 @@ use retreat_engine_api::{CommandRegistry, SimulationRng};
 
 pub use asset_paths::{AssetLocation, resolve_asset_location};
 pub use builtin_commands::POSITION_TOLERANCE;
-pub use command_script::{CommandScript, PENDING_WORK_TIMEOUT};
+pub use command_script::{CommandScript, CommandScriptSystems, PENDING_WORK_TIMEOUT};
 pub use headless::HEADLESS_RESOLUTION;
 pub use launch_options::{DEFAULT_SEED, LaunchOptions};
 pub use material::{MaterialCommandsPlugin, TEXTURE_FILE_EXTENSIONS};
@@ -40,10 +42,14 @@ pub use model::{
     MODEL_FILE_EXTENSIONS, MODEL_NODE_NAME_SEPARATOR, ModelCommandsPlugin, namespaced_node_name,
 };
 pub use pending_command_work::PendingCommandWork;
+pub use physics::{PhysicsBox, PhysicsPlugin};
 pub use shader_material::{
     AppShaderMaterialExt, ShaderMaterialCommandsPlugin, ShaderMaterialRegistry,
 };
 pub use snapshot::{SNAPSHOT_DIRECTORY, SnapshotSource, snapshot_file_path};
+pub use state_hash::{
+    LastStateHash, StateHashPlugin, compute_state_hash, format_state_hash, parse_state_hash,
+};
 
 /// Sets up the Bevy foundation every Retreat game runs on.
 pub struct RetreatEnginePlugin {
@@ -155,6 +161,8 @@ impl Plugin for RetreatEnginePlugin {
             MaterialCommandsPlugin,
             ShaderMaterialCommandsPlugin,
             gpu_pipeline_errors::GpuPipelineErrorsPlugin,
+            PhysicsPlugin,
+            StateHashPlugin,
         ));
     }
 }

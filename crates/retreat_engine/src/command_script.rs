@@ -97,6 +97,11 @@ impl CommandScript {
     }
 }
 
+/// The system that runs script lines (in `FixedUpdate`). Other plugins order against it:
+/// physics runs after it, so a body spawned by a line simulates in that same tick.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CommandScriptSystems;
+
 /// Runs a script: one line per fixed tick, on deterministic time.
 pub(crate) struct CommandScriptPlugin {
     pub(crate) script: CommandScript,
@@ -106,7 +111,10 @@ impl Plugin for CommandScriptPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(self.script.clone())
             .insert_resource(TimeUpdateStrategy::FixedTimesteps(1))
-            .add_systems(FixedUpdate, run_next_script_line)
+            .add_systems(
+                FixedUpdate,
+                run_next_script_line.in_set(CommandScriptSystems),
+            )
             .add_systems(Last, hold_time_while_script_waits);
     }
 }
