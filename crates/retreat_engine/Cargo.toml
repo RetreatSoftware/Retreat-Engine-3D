@@ -7,3 +7,4 @@ publish.workspace = true
 
 [dependencies]
 bevy.workspace = true
+retreat_engine_api.workspace = true

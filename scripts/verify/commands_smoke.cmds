@@ -1,0 +1,11 @@
+# Smoke check for the command runner on the sandbox scene.
+# Run: cargo run -p retreat_sandbox -- --commands scripts/verify/commands_smoke.cmds
+# Passes if the app exits with code 0; any failing line prints `file:line: reason` and exits with code 1.
+
+assert.entity_exists sandbox_ground
+assert.entity_exists sandbox_cube
+# The cube rests on the ground: its center is half its size (0.5) above y = 0.
+assert.position sandbox_cube 0 0.5 0
+# Let a few frames render, so a human watching sees the scene before it closes.
+wait 30
+quit

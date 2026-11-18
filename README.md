@@ -12,6 +12,15 @@ It supports integrating gameplay modules from [Retreat-Modules](https://github.c
 
 This is the initial direction and is still subject to change. Status: early stage; the Engine Sandbox (`sandbox/`) is being built on Bevy.
 
+## Run the sandbox
+
+```bash
+cargo run -p retreat_sandbox
+cargo run -p retreat_sandbox -- --commands scripts/verify/commands_smoke.cmds --seed 0
+```
+
+The second line runs a command script (one command per frame) and exits with code 0 if every line passed.
+
 ## Part of the Retreat ecosystem
 
 - [Retreat-CoreSDK](https://github.com/RetreatSoftware/Retreat-CoreSDK) — shared SDK

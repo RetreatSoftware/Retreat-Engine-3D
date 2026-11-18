@@ -77,18 +77,74 @@ mod tests {
     #[test]
     fn scene_spawns_one_cube_resting_on_the_ground() {
         let mut app = app_after_first_frame();
-        let mut cubes = app.world_mut().query_filtered::<&Transform, With<SandboxCube>>();
+        let mut cubes = app
+            .world_mut()
+            .query_filtered::<&Transform, With<SandboxCube>>();
         let transforms: Vec<&Transform> = cubes.iter(app.world()).collect();
         assert_eq!(transforms.len(), 1, "expected exactly one SandboxCube");
-        assert_eq!(transforms[0].translation.y, CUBE_SIZE / 2.0, "cube bottom must touch y = 0");
+        assert_eq!(
+            transforms[0].translation.y,
+            CUBE_SIZE / 2.0,
+            "cube bottom must touch y = 0"
+        );
     }
 
     #[test]
     fn scene_spawns_ground_light_and_camera() {
         let mut app = app_after_first_frame();
         let world = app.world_mut();
-        assert_eq!(world.query_filtered::<(), With<SandboxGround>>().iter(world).count(), 1);
-        assert_eq!(world.query_filtered::<(), With<PointLight>>().iter(world).count(), 1);
-        assert_eq!(world.query_filtered::<(), With<Camera3d>>().iter(world).count(), 1);
+        assert_eq!(
+            world
+                .query_filtered::<(), With<SandboxGround>>()
+                .iter(world)
+                .count(),
+            1
+        );
+        assert_eq!(
+            world
+                .query_filtered::<(), With<PointLight>>()
+                .iter(world)
+                .count(),
+            1
+        );
+        assert_eq!(
+            world
+                .query_filtered::<(), With<Camera3d>>()
+                .iter(world)
+                .count(),
+            1
+        );
+    }
+
+    /// Runs `scripts/verify/commands_smoke.cmds` on the scene without a window, so CI checks
+    /// the script too. `include_str!` embeds the file at compile time.
+    #[test]
+    fn commands_smoke_script_passes() {
+        use retreat_engine::{CommandScript, RetreatCommandsPlugin};
+
+        let text = include_str!("../../scripts/verify/commands_smoke.cmds");
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Mesh>()
+            .init_asset::<StandardMaterial>()
+            .add_plugins(SandboxScenePlugin)
+            .add_plugins(RetreatCommandsPlugin {
+                seed: 0,
+                command_script: Some(CommandScript::from_text("commands_smoke.cmds", text)),
+            });
+        let max_updates = 200;
+        for _ in 0..max_updates {
+            app.update();
+            if let Some(exit) = app.should_exit() {
+                let failure = app
+                    .world()
+                    .resource::<CommandScript>()
+                    .failure()
+                    .map(String::from);
+                assert_eq!(exit, AppExit::Success, "script failed: {failure:?}");
+                return;
+            }
+        }
+        panic!("commands_smoke.cmds did not quit within {max_updates} updates");
     }
 }

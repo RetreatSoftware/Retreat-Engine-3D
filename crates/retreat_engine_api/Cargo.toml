@@ -1,0 +1,10 @@
+[package]
+name = "retreat_engine_api"
+description = "Retreat engine contract: the only engine crate gameplay modules may depend on (commands, simulation RNG)."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+bevy.workspace = true
+retreat_rng.workspace = true

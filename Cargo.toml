@@ -8,6 +8,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/retreat_engine_api",
     "crates/retreat_engine",
     "sandbox",
 ]
@@ -19,7 +20,11 @@ publish = false
 
 [workspace.dependencies]
 bevy = "0.20.1"
+retreat_engine_api = { path = "crates/retreat_engine_api" }
 retreat_engine = { path = "crates/retreat_engine" }
+# CoreSDK is a separate repository. Cargo.lock pins the exact commit, so builds are
+# reproducible; run `cargo update -p retreat_rng` to pick up a newer CoreSDK commit.
+retreat_rng = { git = "https://github.com/RetreatSoftware/Retreat-CoreSDK" }
 
 # Bevy is slow in an unoptimized build. Optimize dependencies fully and our own
 # code a little, so `cargo run` stays playable while compile times stay short.

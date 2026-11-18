@@ -32,7 +32,11 @@ Vision documents live in the `Retreat` repository: [FRAMEWORK.md](https://github
 - **Authority:** the server owns game state. Games never mint currency or change balances; economic operations go through the platform adapter to trusted backend services.
 - **Engine base: Bevy 0.20.** Do not write a custom ECS, renderer or asset system; extend Bevy instead.
 - **Bevy is a direct dependency, pinned once per workspace.** The version lives in `[workspace.dependencies]` of the root `Cargo.toml`; crates declare `bevy.workspace = true`. Do not reach Bevy only through a re-export: Bevy's derive macros (`#[derive(Component)]`, ...) look for `bevy` in the using crate's own `Cargo.toml` and fail with "cannot find `bevy_ecs`" otherwise. Other repositories (Modules) pin the same version in their own workspace.
-- **Contract crate `retreat_engine_api`** (created with the command registry): the only engine crate modules may depend on.
+- **Contract crate `retreat_engine_api`**: the only engine crate modules may depend on. Holds the command layer (`CommandRegistry`, `run_command_line`, `CommandArgs`, `CommandError`, `AppCommandExt::register_command`) and `SimulationRng`.
+- **Commands.** Ids are one word, `area.verb` (`assert.position`, later `physics.spawn_box`). A handler is `fn(&mut World, &CommandArgs) -> CommandResult`; it validates its arguments with `CommandArgs::expect_count` / `parse` so every error names the command, the bad value and the usage. Registering an id twice panics. Every entry point (scripts, UI, keys, browser bridge) calls `run_command_line`; never call feature logic directly from UI or input code.
+- **Command scripts** (`--commands <file>`, `.cmds`): one command per line, `#` comments and blank lines cost no frame. When a script is loaded, time runs on `TimeUpdateStrategy::FixedTimesteps(1)` (exactly one fixed tick per app update, chosen over `ManualDuration` because it cannot drift from the fixed timestep) and the runner runs in `FixedUpdate`, one line per tick. Bevy's first update starts the clock and runs no tick. The first failing line logs `file:line: message` and exits with code 1. Without a script, time is real (interactive play).
+- **Randomness:** everything that changes game state draws from the `SimulationRng` resource, seeded by `--seed` (default `DEFAULT_SEED` = 0). Never create another RNG for simulation.
+- **Cross-repository dependencies are git dependencies** on the public GitHub repositories (`retreat_rng = { git = "https://github.com/RetreatSoftware/Retreat-CoreSDK" }` in `[workspace.dependencies]`). `Cargo.lock` pins the commit; `cargo update -p retreat_rng` picks up a new CoreSDK commit. Revisit when crates need versions (private registry or crates.io).
 - **Modules are Bevy plugins** (`impl Plugin`) with a manifest in `[package.metadata.retreat]`.
 - **Physics: Rapier** (`bevy_rapier3d`) in a fixed timestep; Avian is the fallback.
 - **UI: `bevy_ui`.** Buttons and keys dispatch command ids.
@@ -40,15 +44,16 @@ Vision documents live in the `Retreat` repository: [FRAMEWORK.md](https://github
 
 ## Layout
 
-- `crates/retreat_engine_api/` — contract crate (public API for modules); not created yet.
-- `crates/retreat_engine/` — engine runtime: `RetreatEnginePlugin`, later the script runner, headless snapshot and the platform layer.
+- `crates/retreat_engine_api/` — contract crate (public API for modules): command registry and parsing, `SimulationRng`.
+- `crates/retreat_engine/` — engine runtime: `RetreatEnginePlugin` (Bevy `DefaultPlugins` + `RetreatCommandsPlugin`), `LaunchOptions` (`--commands`, `--seed`), the command-script runner, built-in commands (`wait`, `quit`, `assert.entity_exists`, `assert.position`). Later: headless snapshot and the platform layer. `RetreatCommandsPlugin` works without a window, so tests add it next to `MinimalPlugins`.
+- `scripts/verify/*.cmds` — one command script per check. `commands_smoke.cmds` also runs as a sandbox unit test.
 - `sandbox/` — crate `retreat_sandbox`, the Engine Sandbox app that exercises every engine feature.
 
 ## Open decisions (do not assume an answer)
 
 - Netcode model (server-authoritative with prediction versus deterministic lockstep).
 - Asset pipeline beyond glTF loading (import, compression, packaging).
-- Distribution of crates across repositories (private registry versus git dependencies).
+- Distribution of crates across repositories beyond today's git dependencies (versioned releases, private registry or crates.io).
 - 2D/3D scope beyond 3D, and the exact minimum combination that always yields a playable game.
 
 ## Architecture rules

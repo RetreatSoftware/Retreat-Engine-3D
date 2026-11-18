@@ -4687,7 +4687,21 @@ name = "retreat_engine"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "retreat_engine_api",
 ]
+
+[[package]]
+name = "retreat_engine_api"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "retreat_rng",
+]
+
+[[package]]
+name = "retreat_rng"
+version = "0.1.0"
+source = "git+https://github.com/RetreatSoftware/Retreat-CoreSDK#ff9008581b13ee304d2a28bd66a54a0d30c1ab12"
 
 [[package]]
 name = "retreat_sandbox"
