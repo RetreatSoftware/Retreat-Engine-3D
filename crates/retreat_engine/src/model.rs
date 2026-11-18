@@ -6,7 +6,7 @@
 //! the load error.
 
 use bevy::asset::RecursiveDependencyLoadState;
-use bevy::gltf::GltfAssetLabel;
+use bevy::gltf::{Gltf, GltfAssetLabel};
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
 use retreat_engine_api::{AppCommandExt, CommandArgs, CommandOutcome, CommandResult};
@@ -33,6 +33,11 @@ impl Plugin for ModelCommandsPlugin {
         .add_systems(Update, report_failed_model_loads);
     }
 }
+
+/// The glTF file a model was spawned from (the whole file, not only scene 0). Animation reads the
+/// file's clips through it. Stays on the model for its whole life.
+#[derive(Component, Debug)]
+pub(crate) struct ModelGltf(pub Handle<Gltf>);
 
 /// Marks a model entity whose file is still loading. Removed once the model is in the world.
 #[derive(Component, Debug)]
@@ -61,16 +66,19 @@ fn model_spawn_command(world: &mut World, args: &CommandArgs) -> CommandResult {
         resolve_asset_location(&path, "glTF model", &MODEL_FILE_EXTENSIONS, HAS_FILE_SYSTEM)
             .map_err(|message| args.failure(message))?;
     let is_outside_asset_folder = location.is_outside_asset_folder();
+    let whole_file = location.clone().into_asset_path();
     // `#Scene0`: only the file's first scene, not the whole file.
     let scene_path = GltfAssetLabel::Scene(0).from_asset(location.into_asset_path());
     let asset_server = world.resource::<AssetServer>();
     let scene: Handle<WorldAsset> = load_asset(asset_server, scene_path, is_outside_asset_folder);
+    let gltf: Handle<Gltf> = load_asset(asset_server, whole_file, is_outside_asset_folder);
 
     world.resource_mut::<PendingCommandWork>().start();
     world
         .spawn((
             Name::new(name),
             WorldAssetRoot(scene),
+            ModelGltf(gltf),
             Transform::from_translation(translation).with_scale(Vec3::splat(scale)),
             LoadingModel { path },
         ))

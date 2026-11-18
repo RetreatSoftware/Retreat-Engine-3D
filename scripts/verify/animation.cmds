@@ -1,0 +1,28 @@
+# Plays glTF animation clips on Fox.glb through the contract's AnimationPlayback. Clip time is
+# simulation time (1/64 s per fixed tick), so every picture and assert is the same on every run.
+# Run: cargo run -p retreat_sandbox -- --headless --commands scripts/verify/animation.cmds
+# Expected pictures (the fox stands left of the cube, 2 units from the middle):
+#   animation_survey.png: the fox in its Survey pose, 1 s into the clip (head turned, standing).
+#   animation_run.png:    the fox mid-stride (Run clip, 0.5 s in): legs apart, body stretched.
+#   animation_blend.png:  a pose between Walk and Run (blend weight 0.5), after 0.5 s.
+#   animation_stopped.png: identical to animation_blend.png (stop keeps the pose).
+
+model.spawn fox models/Fox.glb -2 0 1 0.02
+animation.list fox
+animation.play fox Survey loop 1
+wait 62
+assert.animation_time fox Survey 1
+snapshot animation_survey
+animation.play fox Run loop 1
+wait 30
+assert.animation_time fox Run 0.5
+snapshot animation_run
+animation.blend fox Walk Run 0.5
+assert.animation_weight fox Walk 0.5
+wait 30
+assert.animation_playing fox Run
+snapshot animation_blend
+animation.stop fox
+wait 10
+snapshot animation_stopped
+quit

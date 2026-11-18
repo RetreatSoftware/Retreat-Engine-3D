@@ -5,6 +5,7 @@
 //! (registry, built-in commands, simulation RNG, command scripts, snapshots), so games
 //! and modules do not configure these themselves.
 
+mod animation;
 mod asset_paths;
 mod audio;
 mod bridge_status;
@@ -37,6 +38,7 @@ use bevy::window::ExitCondition;
 use bevy::winit::WinitPlugin;
 use retreat_engine_api::{CommandRegistry, SimulationRng};
 
+pub use animation::AnimationCommandsPlugin;
 pub use asset_paths::{AssetLocation, resolve_asset_location};
 pub use audio::{
     AudioCommandsPlugin, SOUND_FILE_EXTENSIONS, add_sound_assets_without_audio_device,
@@ -181,6 +183,7 @@ impl Plugin for RetreatEnginePlugin {
             InputActionsPlugin,
             GameCameraPlugin,
             AudioCommandsPlugin,
+            AnimationCommandsPlugin,
             platform::PlatformPlugin,
         ));
     }

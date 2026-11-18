@@ -16,9 +16,13 @@
 //! Audio: an entity with a [`SoundPlayback`] is a sound that plays; whether it is playing is
 //! decided by simulation time, so scripts can assert it without hearing it.
 //!
+//! Animation: an entity with an [`AnimationPlayback`] plays the listed glTF clips (one clip, or a
+//! weighted blend) on simulation time; the engine maps it onto Bevy's animation.
+//!
 //! Physics: an entity with a [`PhysicsBody`] becomes a rigid body; the types name no physics
 //! library, so modules do not depend on one.
 
+mod animation_playback;
 mod command_args;
 mod command_error;
 mod command_line;
@@ -29,6 +33,7 @@ mod physics_body;
 mod simulation_rng;
 mod sound_playback;
 
+pub use animation_playback::{AnimationPlayback, ClipPlayback, MAX_CLIP_SPEED};
 pub use command_args::CommandArgs;
 pub use command_error::CommandError;
 pub use command_line::{ParsedCommandLine, parse_command_line};
