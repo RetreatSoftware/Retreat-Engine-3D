@@ -4998,9 +4998,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "retreat_module_fox_walk"
+version = "0.1.0"
+source = "git+https://github.com/RetreatSoftware/Retreat-Modules#d137738575ab356bc9e75e29e46bfbf83269240c"
+dependencies = [
+ "bevy",
+ "retreat_engine_api",
+]
+
+[[package]]
 name = "retreat_module_orbit_camera"
 version = "0.1.0"
-source = "git+https://github.com/RetreatSoftware/Retreat-Modules#c3f0420d93c4a9ecf715bc4ce3f74ec5b23fb8f2"
+source = "git+https://github.com/RetreatSoftware/Retreat-Modules#d137738575ab356bc9e75e29e46bfbf83269240c"
 dependencies = [
  "bevy",
  "retreat_engine_api",
@@ -5009,7 +5018,7 @@ dependencies = [
 [[package]]
 name = "retreat_module_sfx"
 version = "0.1.0"
-source = "git+https://github.com/RetreatSoftware/Retreat-Modules#c3f0420d93c4a9ecf715bc4ce3f74ec5b23fb8f2"
+source = "git+https://github.com/RetreatSoftware/Retreat-Modules#d137738575ab356bc9e75e29e46bfbf83269240c"
 dependencies = [
  "bevy",
  "retreat_engine_api",
@@ -5018,7 +5027,7 @@ dependencies = [
 [[package]]
 name = "retreat_module_spawner"
 version = "0.1.0"
-source = "git+https://github.com/RetreatSoftware/Retreat-Modules#c3f0420d93c4a9ecf715bc4ce3f74ec5b23fb8f2"
+source = "git+https://github.com/RetreatSoftware/Retreat-Modules#d137738575ab356bc9e75e29e46bfbf83269240c"
 dependencies = [
  "bevy",
  "retreat_engine_api",
@@ -5036,6 +5045,7 @@ dependencies = [
  "bevy",
  "retreat_engine",
  "retreat_engine_api",
+ "retreat_module_fox_walk",
  "retreat_module_orbit_camera",
  "retreat_module_sfx",
  "retreat_module_spawner",

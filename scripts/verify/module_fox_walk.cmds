@@ -1,0 +1,29 @@
+# The fox walk module (retreat_module_fox_walk, from Retreat-Modules) in the sandbox: it only
+# writes the contract's AnimationPlayback from a speed; the engine blends and plays the clips.
+# Run: cargo run -p retreat_sandbox -- --headless --commands scripts/verify/module_fox_walk.cmds
+# Expected pictures (the fox stands left of the cube):
+#   fox_walk_idle.png:  Survey pose (standing).
+#   fox_walk_walk.png:  Walk pose, legs moving (speed 1 = full Walk).
+#   fox_walk_run.png:   Run pose, body stretched (speed 4 = full Run).
+
+model.spawn fox models/Fox.glb -2 0 1 0.02
+fox.set_speed fox 0
+wait 20
+assert.animation_playing fox Survey
+snapshot fox_walk_idle
+fox.set_speed fox 1
+wait 20
+assert.animation_playing fox Walk
+assert.animation_weight fox Walk 1
+snapshot fox_walk_walk
+# A speed between walk and run blends both clips; the clips keep their time (no restart).
+fox.set_speed fox 2
+wait 1
+assert.animation_playing fox Walk
+assert.animation_playing fox Run
+assert.animation_weight fox Run 0.5
+fox.set_speed fox 4
+wait 20
+assert.animation_playing fox Run
+snapshot fox_walk_run
+quit

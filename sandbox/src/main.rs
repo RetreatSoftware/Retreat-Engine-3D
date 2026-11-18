@@ -32,5 +32,7 @@ fn add_sandbox_plugins(app: &mut App) {
         retreat_module_orbit_camera::OrbitCameraModulePlugin,
         // The sfx module: `sfx.play`, `sfx.music`, key P beeps.
         retreat_module_sfx::SfxModulePlugin,
+        // The fox walk module: `fox.set_speed <model> <speed>` picks and blends clips.
+        retreat_module_fox_walk::FoxWalkModulePlugin,
     ));
 }
