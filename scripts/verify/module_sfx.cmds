@@ -1,0 +1,23 @@
+# The sfx module (retreat_module_sfx, from Retreat-Modules) in the sandbox: its commands and its
+# key P spawn the contract's SoundPlayback; the engine plays and tracks it. Quiet, short tones.
+# Run: cargo run -p retreat_sandbox -- --headless --commands scripts/verify/module_sfx.cmds
+# Expected picture:
+#   module_sfx.png: the usual scene (cube on the green plane) and toolbar; sound draws nothing.
+
+sfx.play sounds/beep.wav
+assert.audio_playing sfx_1
+# Key P is bound to the module's `sfx_beep` action: it starts a second effect.
+input.tap P
+wait 1
+assert.audio_playing sfx_2
+sfx.music sounds/tone.wav
+assert.audio_playing sfx_music
+# Music loops; the effects (0.25 s) are over long before this (3 s of simulation time).
+wait 192
+assert.audio_not_playing sfx_1
+assert.audio_not_playing sfx_2
+assert.audio_playing sfx_music
+snapshot module_sfx
+sfx.music off
+assert.audio_not_playing sfx_music
+quit

@@ -30,5 +30,7 @@ fn add_sandbox_plugins(app: &mut App) {
         retreat_module_spawner::SpawnerModulePlugin,
         // The orbit camera module: `orbit.start`, arrow keys held rotate the sandbox camera.
         retreat_module_orbit_camera::OrbitCameraModulePlugin,
+        // The sfx module: `sfx.play`, `sfx.music`, key P beeps.
+        retreat_module_sfx::SfxModulePlugin,
     ));
 }
