@@ -1,0 +1,31 @@
+# Drives the input mapping with scripted key presses (the same ButtonInput state a keyboard
+# writes) and checks that bindings are data.
+# Run: cargo run -p retreat_sandbox -- --headless --commands scripts/verify/input_actions.cmds
+# Expected pictures:
+#   input_before.png:  the usual scene, no boxes.
+#   input_after.png:   the usual scene with two boxes at rest (box_1 from key B, box_2 from key N
+#                      after it was bound to the same action).
+
+snapshot input_before
+assert.input_not_held drop_box
+# Key B is bound to the sandbox "drop_box" action: one press = one box, however long it is held.
+input.key_down B
+assert.input_held drop_box
+wait 10
+input.key_up B
+wait 1
+assert.input_not_held drop_box
+assert.entity_exists box_1
+# Bindings are data: bind N, unbind B, and only N drops a box now.
+input.bind drop_box N
+input.unbind drop_box B
+input.tap B
+wait 2
+input.tap N
+# 3 s of simulation time: the boxes land and settle.
+wait 192
+assert.entity_exists box_2
+snapshot input_after
+state.hash
+assert.state_hash 0x83d629cc1d00e5a5
+quit

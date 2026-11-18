@@ -13,6 +13,7 @@ mod command_script;
 mod entity_names;
 mod gpu_pipeline_errors;
 mod headless;
+mod input_actions;
 mod launch_options;
 mod material;
 mod model;
@@ -42,6 +43,7 @@ pub use command_script::{
     CommandScript, CommandScriptSystems, PENDING_WORK_TIMEOUT, ScriptProgress,
 };
 pub use headless::HEADLESS_RESOLUTION;
+pub use input_actions::InputActionsPlugin;
 pub use launch_options::{DEFAULT_SEED, LaunchOptions};
 pub use material::{MaterialCommandsPlugin, TEXTURE_FILE_EXTENSIONS};
 pub use model::{
@@ -170,6 +172,7 @@ impl Plugin for RetreatEnginePlugin {
             gpu_pipeline_errors::GpuPipelineErrorsPlugin,
             PhysicsPlugin,
             StateHashPlugin,
+            InputActionsPlugin,
             platform::PlatformPlugin,
         ));
     }

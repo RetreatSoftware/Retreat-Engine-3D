@@ -5,7 +5,8 @@
 use bevy::prelude::*;
 use retreat_engine::{PHYSICS_PROXY_NAME_SUFFIX, spawn_physics_box};
 use retreat_engine_api::{
-    AppCommandExt, CommandArgs, CommandOutcome, CommandResult, SimulationRng,
+    AppCommandExt, AppInputExt, CommandArgs, CommandOutcome, CommandResult, InputAction, InputKey,
+    SimulationRng,
 };
 
 /// Height boxes are dropped from.
@@ -19,11 +20,14 @@ pub struct DropBoxPlugin;
 
 impl Plugin for DropBoxPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<DroppedBoxCount>().register_command(
-            "sandbox.drop_box",
-            "sandbox.drop_box",
-            drop_box_command,
-        );
+        app.init_resource::<DroppedBoxCount>()
+            .register_command("sandbox.drop_box", "sandbox.drop_box", drop_box_command)
+            // Key B drops a box: the first input action (retreat_engine_api::InputAction).
+            .register_action(InputAction {
+                id: "drop_box",
+                command_line: "sandbox.drop_box",
+                default_keys: &[InputKey::B],
+            });
     }
 }
 
