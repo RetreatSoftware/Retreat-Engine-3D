@@ -7,8 +7,10 @@
 
 mod builtin_commands;
 mod command_script;
+mod entity_names;
 mod headless;
 mod launch_options;
+mod model;
 mod pending_command_work;
 mod platform;
 mod snapshot;
@@ -16,6 +18,7 @@ mod snapshot;
 use std::time::Duration;
 
 use bevy::app::ScheduleRunnerPlugin;
+use bevy::asset::UnapprovedPathMode;
 use bevy::prelude::*;
 use bevy::render::RenderPlugin;
 use bevy::render::settings::WgpuSettings;
@@ -27,6 +30,10 @@ pub use builtin_commands::POSITION_TOLERANCE;
 pub use command_script::{CommandScript, PENDING_WORK_TIMEOUT_TICKS};
 pub use headless::HEADLESS_RESOLUTION;
 pub use launch_options::{DEFAULT_SEED, LaunchOptions};
+pub use model::{
+    MODEL_FILE_EXTENSIONS, MODEL_NODE_NAME_SEPARATOR, ModelCommandsPlugin, ModelSource,
+    namespaced_node_name, resolve_model_source,
+};
 pub use pending_command_work::PendingCommandWork;
 pub use snapshot::{SNAPSHOT_DIRECTORY, SnapshotSource, snapshot_file_path};
 
@@ -72,6 +79,15 @@ impl RetreatEnginePlugin {
         })
     }
 
+    /// Assets load from the app's `assets` folder. Paths outside it are refused unless a
+    /// command explicitly overrides that (only `model.spawn` with an absolute path does).
+    fn asset_plugin(&self) -> AssetPlugin {
+        AssetPlugin {
+            unapproved_path_mode: UnapprovedPathMode::Deny,
+            ..default()
+        }
+    }
+
     fn render_plugin(&self) -> RenderPlugin {
         RenderPlugin {
             render_creation: WgpuSettings {
@@ -99,6 +115,7 @@ impl Plugin for RetreatEnginePlugin {
             app.add_plugins(
                 DefaultPlugins
                     .set(window_plugin)
+                    .set(self.asset_plugin())
                     .set(self.render_plugin())
                     // Winit runs the window event loop; there is no window.
                     .disable::<WinitPlugin>(),
@@ -115,11 +132,16 @@ impl Plugin for RetreatEnginePlugin {
                 }),
                 ..default()
             };
-            app.add_plugins(DefaultPlugins.set(window_plugin).set(self.render_plugin()));
+            app.add_plugins(
+                DefaultPlugins
+                    .set(window_plugin)
+                    .set(self.asset_plugin())
+                    .set(self.render_plugin()),
+            );
             app.insert_resource(SnapshotSource::PrimaryWindow);
         }
         self.commands.build(app);
-        app.add_plugins(snapshot::SnapshotPlugin);
+        app.add_plugins((snapshot::SnapshotPlugin, ModelCommandsPlugin));
     }
 }
 

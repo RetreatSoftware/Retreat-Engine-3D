@@ -18,11 +18,15 @@ This is the initial direction and is still subject to change. Status: early stag
 cargo run -p retreat_sandbox
 cargo run -p retreat_sandbox -- --commands scripts/verify/commands_smoke.cmds --seed 0
 cargo run -p retreat_sandbox -- --headless --commands scripts/verify/sandbox_basic.cmds
+cargo run -p retreat_sandbox -- --headless --commands scripts/verify/model_spawn.cmds
 ```
 
 The second line runs a command script (one command per frame) and exits with code 0 if every line passed.
 The third renders without a window and writes `target/snapshots/sandbox_basic.png`.
+The fourth loads a glTF model (`sandbox/assets/models/Fox.glb`) and writes `target/snapshots/model_spawn.png`.
 Add `--software-renderer` to render on the CPU (no GPU needed).
+
+Third-party assets and their licenses are listed in [sandbox/assets/CREDITS.md](sandbox/assets/CREDITS.md).
 
 ## Part of the Retreat ecosystem
 

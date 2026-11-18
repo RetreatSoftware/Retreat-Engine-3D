@@ -1,7 +1,9 @@
 //! Commands every Retreat app has: `wait`, `quit` and the `assert.*` checks.
 
 use bevy::prelude::*;
-use retreat_engine_api::{AppCommandExt, CommandArgs, CommandError, CommandOutcome, CommandResult};
+use retreat_engine_api::{AppCommandExt, CommandArgs, CommandOutcome, CommandResult};
+
+use crate::entity_names::find_unique_entity_by_name;
 
 /// How far (in world units) `assert.position` lets an entity be from the expected point.
 pub const POSITION_TOLERANCE: f32 = 0.001;
@@ -66,28 +68,5 @@ fn assert_position_command(world: &mut World, args: &CommandArgs) -> CommandResu
         Err(args.failure(format!(
             "entity `{name}` is at {actual}, expected {expected} (tolerance {POSITION_TOLERANCE})"
         )))
-    }
-}
-
-/// Commands address entities by their `Name` component. A name must be unique, or the
-/// command could act on the wrong entity.
-fn find_unique_entity_by_name(
-    world: &mut World,
-    args: &CommandArgs,
-    name: &str,
-) -> Result<Entity, CommandError> {
-    let mut query = world.query::<(Entity, &Name)>();
-    let matches: Vec<Entity> = query
-        .iter(world)
-        .filter(|(_, entity_name)| entity_name.as_str() == name)
-        .map(|(entity, _)| entity)
-        .collect();
-    match matches.as_slice() {
-        [entity] => Ok(*entity),
-        [] => Err(args.failure(format!("no entity is named `{name}`"))),
-        _ => Err(args.failure(format!(
-            "{} entities are named `{name}`; give each entity a unique Name",
-            matches.len()
-        ))),
     }
 }

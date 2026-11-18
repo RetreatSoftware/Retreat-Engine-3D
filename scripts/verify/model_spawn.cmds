@@ -1,0 +1,12 @@
+# Loads a glTF model from the sandbox assets folder and saves target/snapshots/model_spawn.png.
+# Run: cargo run -p retreat_sandbox -- --headless --commands scripts/verify/model_spawn.cmds
+# Expected picture: the starting scene plus an orange fox standing on the ground right of the cube.
+# Fox.glb is modeled in centimeters (about 80 units tall), so scale 0.02 makes it about 1.6 m.
+
+model.spawn fox models/Fox.glb 2 0 0 0.02
+assert.entity_exists fox
+assert.position fox 2 0 0
+# Nodes inside the model are named <model>/<node>; the file's own `fox` node becomes `fox/fox`.
+assert.entity_exists fox/fox
+snapshot model_spawn
+quit
