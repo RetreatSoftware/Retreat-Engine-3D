@@ -4994,7 +4994,7 @@ dependencies = [
 [[package]]
 name = "retreat_module_spawner"
 version = "0.1.0"
-source = "git+https://github.com/RetreatSoftware/Retreat-Modules#6bec4a470a6c74bc694afca0e5c730e12094636a"
+source = "git+https://github.com/RetreatSoftware/Retreat-Modules#ec134b50937570bd2f17a9b6ada9ec09bf1e3a9b"
 dependencies = [
  "bevy",
  "retreat_engine_api",

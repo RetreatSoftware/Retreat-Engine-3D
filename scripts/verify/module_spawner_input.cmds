@@ -1,0 +1,14 @@
+# The spawner module's input action in the sandbox: key R (declared by the module through the
+# contract crate) runs `spawner.rain 1`, so one tap drops one blue box.
+# Run: cargo run -p retreat_sandbox -- --headless --commands scripts/verify/module_spawner_input.cmds
+# Expected picture:
+#   module_spawner_input.png: one small blue box at rest on the ground (rain_1) next to the cube.
+
+input.tap R
+# 3 s of simulation time: the box lands and settles.
+wait 192
+assert.entity_exists rain_1
+snapshot module_spawner_input
+state.hash
+assert.state_hash 0x371265e85c3ce1cb
+quit
