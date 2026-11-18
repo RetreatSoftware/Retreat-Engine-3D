@@ -1,0 +1,21 @@
+# Drives the game camera through its commands: the sandbox camera is a retreat_engine_api
+# GameCamera, and the engine builds the real camera from it.
+# Run: cargo run -p retreat_sandbox -- --headless --commands scripts/verify/camera.cmds
+# Expected pictures:
+#   camera_default.png: the usual view: cube in the middle of the green plane, seen from above
+#                       and to the left (identical to the first picture of any other script).
+#   camera_moved.png:   the same scene seen corner-on from the front right and lower (camera at 6, 3, 6),
+#                       the cube still in the middle.
+#   camera_wide.png:    the same position with a 90 degree field of view: everything looks
+#                       smaller and farther away, the plane fills less of the picture.
+
+snapshot camera_default
+camera.set_position sandbox_camera 6 3 6
+camera.look_at sandbox_camera 0 0.5 0
+wait 1
+assert.position sandbox_camera 6 3 6
+snapshot camera_moved
+camera.set_fov sandbox_camera 90
+wait 1
+snapshot camera_wide
+quit

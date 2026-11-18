@@ -10,6 +10,9 @@
 //! Input: named actions bound to keys in data ([`InputAction`], [`InputActions`]); a key press runs
 //! the action's command, and [`InputActions::is_held`] serves continuous input.
 //!
+//! Camera: an entity with a [`GameCamera`] is a perspective camera; the engine maps it onto
+//! Bevy's camera components, modules only edit the description.
+//!
 //! Physics: an entity with a [`PhysicsBody`] becomes a rigid body; the types name no physics
 //! library, so modules do not depend on one.
 
@@ -17,6 +20,7 @@ mod command_args;
 mod command_error;
 mod command_line;
 mod command_registry;
+mod game_camera;
 mod input_actions;
 mod physics_body;
 mod simulation_rng;
@@ -27,8 +31,10 @@ pub use command_line::{ParsedCommandLine, parse_command_line};
 pub use command_registry::{
     AppCommandExt, CommandOutcome, CommandRegistry, CommandResult, run_command_line,
 };
+pub use game_camera::{DEFAULT_FOV_DEGREES, GameCamera, MAX_FOV_DEGREES, MIN_FOV_DEGREES};
 pub use input_actions::{
-    AppInputExt, INPUT_KEY_NAMES, InputAction, InputActionSystems, InputActions, InputKey,
+    AppInputExt, HELD_ONLY, INPUT_KEY_NAMES, InputAction, InputActionSystems, InputActions,
+    InputKey,
 };
 pub use physics_body::{PhysicsBody, PhysicsBodyKind, PhysicsShape};
 pub use simulation_rng::SimulationRng;

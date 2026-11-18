@@ -2,7 +2,7 @@
 //! the cube are fixed (immovable) physics bodies, so boxes from `physics.spawn_box` land on them.
 
 use bevy::prelude::*;
-use retreat_engine_api::{PhysicsBody, PhysicsBodyKind, PhysicsShape};
+use retreat_engine_api::{GameCamera, PhysicsBody, PhysicsBodyKind, PhysicsShape};
 
 /// Spawns the starting scene once, at startup.
 pub struct SandboxScenePlugin;
@@ -66,8 +66,8 @@ fn spawn_sandbox_scene(
 
     commands.spawn((
         Name::new("sandbox_camera"),
-        Camera3d::default(),
-        Transform::from_xyz(-2.5, 4.5, 9.0).looking_at(Vec3::ZERO, Vec3::Y),
+        // The engine creates the real camera from this description (retreat_engine_api::GameCamera).
+        GameCamera::looking_at(Vec3::new(-2.5, 4.5, 9.0), Vec3::ZERO),
     ));
 }
 

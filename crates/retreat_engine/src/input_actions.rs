@@ -297,7 +297,7 @@ fn parse_action(
     world: &World,
 ) -> Result<String, retreat_engine_api::CommandError> {
     let id: String = args.parse(0, "action")?;
-    if world.resource::<InputActions>().command_line(&id).is_none() {
+    if !world.resource::<InputActions>().contains(&id) {
         let ids = world.resource::<InputActions>().ids();
         return Err(args.failure(format!("no action `{id}`; actions: {}", ids.join(", "))));
     }
@@ -336,7 +336,7 @@ fn list_command(world: &mut World, args: &CommandArgs) -> CommandResult {
         info!(
             "input action `{id}`: keys [{}] -> `{}`",
             actions.key_names(id),
-            actions.command_line(id).unwrap_or("")
+            actions.command_line(id).unwrap_or("(held only)")
         );
     }
     Ok(CommandOutcome::Continue)

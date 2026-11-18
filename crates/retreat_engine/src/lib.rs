@@ -8,6 +8,7 @@
 mod asset_paths;
 mod bridge_status;
 mod builtin_commands;
+mod camera;
 mod command_dispatch;
 mod command_script;
 mod entity_names;
@@ -38,6 +39,7 @@ use retreat_engine_api::{CommandRegistry, SimulationRng};
 pub use asset_paths::{AssetLocation, resolve_asset_location};
 pub use bridge_status::script_status_json;
 pub use builtin_commands::POSITION_TOLERANCE;
+pub use camera::GameCameraPlugin;
 pub use command_dispatch::dispatch_command_line;
 pub use command_script::{
     CommandScript, CommandScriptSystems, PENDING_WORK_TIMEOUT, ScriptProgress,
@@ -173,6 +175,7 @@ impl Plugin for RetreatEnginePlugin {
             PhysicsPlugin,
             StateHashPlugin,
             InputActionsPlugin,
+            GameCameraPlugin,
             platform::PlatformPlugin,
         ));
     }

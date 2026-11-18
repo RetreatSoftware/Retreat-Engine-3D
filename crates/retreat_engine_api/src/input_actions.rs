@@ -132,13 +132,18 @@ impl InputKey {
     }
 }
 
+/// The `command_line` of an action that runs no command and is only read as held
+/// ([`InputActions::is_held`]), e.g. continuous camera rotation.
+pub const HELD_ONLY: &str = "";
+
 /// What a module declares for one action.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InputAction {
     /// Unique id, one word (`jump`, `orbit_left`).
     pub id: &'static str,
-    /// The command line run when a bound key goes down (`player.jump`). Its command must be
-    /// registered by the time all plugins are built; the engine checks this at startup.
+    /// The command line run when a bound key goes down (`player.jump`), or [`HELD_ONLY`]. Its
+    /// command must be registered by the time all plugins are built; the engine checks this at
+    /// startup.
     pub command_line: &'static str,
     /// Keys bound until `input.bind` / `input.unbind` change them.
     pub default_keys: &'static [InputKey],
@@ -192,9 +197,17 @@ impl InputActions {
         self.actions.keys().copied().collect()
     }
 
-    /// The command line an action runs, or `None` for an unknown id.
+    /// Whether an action with this id is registered.
+    pub fn contains(&self, id: &str) -> bool {
+        self.actions.contains_key(id)
+    }
+
+    /// The command line an action runs; `None` for an unknown id or a [`HELD_ONLY`] action.
     pub fn command_line(&self, id: &str) -> Option<&'static str> {
-        self.actions.get(id).map(|entry| entry.command_line)
+        self.actions
+            .get(id)
+            .map(|entry| entry.command_line)
+            .filter(|line| !line.is_empty())
     }
 
     /// The keys bound to an action, in key order. Empty for an unknown id.
@@ -257,6 +270,9 @@ impl InputActions {
         self.actions
             .iter()
             .filter_map(|(id, entry)| {
+                if entry.command_line == HELD_ONLY {
+                    return None;
+                }
                 let command_id = entry.command_line.split_whitespace().next().unwrap_or("");
                 (!is_registered(command_id)).then(|| (*id, command_id.to_string()))
             })
@@ -394,6 +410,19 @@ mod tests {
         actions.update_held(|_| false);
         assert!(!actions.is_held("jump"));
         assert!(!actions.is_held("no_such_action"));
+    }
+
+    #[test]
+    fn held_only_actions_have_no_command_and_are_never_unknown() {
+        let mut actions = InputActions::default();
+        actions.register(InputAction {
+            id: "hold",
+            command_line: HELD_ONLY,
+            default_keys: &[InputKey::Q],
+        });
+        assert!(actions.contains("hold"));
+        assert_eq!(actions.command_line("hold"), None);
+        assert!(actions.actions_with_unknown_commands(|_| false).is_empty());
     }
 
     #[test]
