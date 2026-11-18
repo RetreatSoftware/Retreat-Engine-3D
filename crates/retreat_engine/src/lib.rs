@@ -9,12 +9,14 @@ mod asset_paths;
 mod builtin_commands;
 mod command_script;
 mod entity_names;
+mod gpu_pipeline_errors;
 mod headless;
 mod launch_options;
 mod material;
 mod model;
 mod pending_command_work;
 mod platform;
+mod shader_material;
 mod snapshot;
 
 use std::time::Duration;
@@ -38,6 +40,9 @@ pub use model::{
     MODEL_FILE_EXTENSIONS, MODEL_NODE_NAME_SEPARATOR, ModelCommandsPlugin, namespaced_node_name,
 };
 pub use pending_command_work::PendingCommandWork;
+pub use shader_material::{
+    AppShaderMaterialExt, ShaderMaterialCommandsPlugin, ShaderMaterialRegistry,
+};
 pub use snapshot::{SNAPSHOT_DIRECTORY, SnapshotSource, snapshot_file_path};
 
 /// Sets up the Bevy foundation every Retreat game runs on.
@@ -148,6 +153,8 @@ impl Plugin for RetreatEnginePlugin {
             snapshot::SnapshotPlugin,
             ModelCommandsPlugin,
             MaterialCommandsPlugin,
+            ShaderMaterialCommandsPlugin,
+            gpu_pipeline_errors::GpuPipelineErrorsPlugin,
         ));
     }
 }

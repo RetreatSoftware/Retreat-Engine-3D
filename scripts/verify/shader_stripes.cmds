@@ -1,0 +1,16 @@
+# Puts the custom stripes shader on the cube and the fox, and shows that it animates.
+# Run: cargo run -p retreat_sandbox -- --headless --commands scripts/verify/shader_stripes.cmds
+# Expected pictures:
+#   shader_stripes_a.png: cube and fox covered in yellow/purple diagonal stripes; ground still green.
+#   shader_stripes_b.png: same scene 0.5 s of simulation time later: the stripes have slid
+#                         a quarter of a stripe pair along the diagonal (shader reads globals.time).
+
+model.spawn fox models/Fox.glb 2 0 0 0.02
+shader.apply sandbox_cube stripes
+# The whole fox model: every mesh below `fox` gets the stripes.
+shader.apply fox stripes
+snapshot shader_stripes_a
+# 32 ticks at 64 Hz = 0.5 s of simulation time.
+wait 32
+snapshot shader_stripes_b
+quit

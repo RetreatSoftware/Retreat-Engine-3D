@@ -239,9 +239,7 @@ quit
 
 #[test]
 fn simulation_time_is_paused_while_work_is_pending() {
-    let mut app = app_with_script("test.start_work 10 succeed
-quit
-");
+    let mut app = app_with_script("test.start_work 10 succeed\nquit\n");
     // Update 1: no tick. Update 2: tick 1 starts the work, and time pauses at the end of it.
     for _ in 0..UPDATES_BEFORE_FIRST_TICK + 1 {
         app.update();

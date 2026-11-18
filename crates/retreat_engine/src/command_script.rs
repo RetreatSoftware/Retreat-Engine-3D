@@ -164,7 +164,9 @@ fn hold_time_while_script_waits(world: &mut World) {
             return;
         }
         virtual_time.pause();
-        let waiting_since = *script.waiting_for_work_since.get_or_insert_with(Instant::now);
+        let waiting_since = *script
+            .waiting_for_work_since
+            .get_or_insert_with(Instant::now);
         if waiting_since.elapsed() > script.pending_work_timeout {
             let started_by_line = script.last_line_number;
             let message = format!(
@@ -190,6 +192,22 @@ fn fail_script(
     world.write_message(AppExit::error());
 }
 
+/// Fails the running script against its last line, for errors found outside a command (a
+/// shader that fails to compile on the GPU). Does nothing without a script, or when the script
+/// has already failed (only the first error is reported).
+pub(crate) fn fail_running_script(world: &mut World, message: impl std::fmt::Display) {
+    if !world.contains_resource::<CommandScript>() {
+        return;
+    }
+    world.resource_scope(|world, mut script: Mut<CommandScript>| {
+        if script.failure.is_some() {
+            return;
+        }
+        let line_number = script.last_line_number;
+        fail_script(world, &mut script, line_number, message);
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,6 +224,28 @@ mod tests {
             Some((5, "quit".to_string()))
         );
         assert_eq!(script.take_next_command_line(), None);
+    }
+
+    #[test]
+    fn fail_running_script_reports_against_the_last_line_once() {
+        let mut world = World::new();
+        world.init_resource::<Messages<AppExit>>();
+        let mut script = CommandScript::from_text("t.cmds", "wait 1\nquit\n");
+        script.last_line_number = 1;
+        world.insert_resource(script);
+        fail_running_script(&mut world, "shader broke");
+        fail_running_script(&mut world, "second error is ignored");
+        assert_eq!(
+            world.resource::<CommandScript>().failure(),
+            Some("t.cmds:1: shader broke")
+        );
+    }
+
+    #[test]
+    fn fail_running_script_without_a_script_does_nothing() {
+        let mut world = World::new();
+        fail_running_script(&mut world, "shader broke");
+        assert!(!world.contains_resource::<CommandScript>());
     }
 
     #[test]

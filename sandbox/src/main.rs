@@ -4,6 +4,7 @@
 //! the simulation RNG (see `retreat_engine::LaunchOptions`).
 
 mod scene;
+mod stripes_material;
 
 use bevy::prelude::*;
 use retreat_engine::{LaunchOptions, RetreatEnginePlugin};
@@ -22,6 +23,10 @@ fn main() -> AppExit {
         }
     };
     App::new()
-        .add_plugins((engine_plugin, scene::SandboxScenePlugin))
+        .add_plugins((
+            engine_plugin,
+            scene::SandboxScenePlugin,
+            stripes_material::StripesMaterialPlugin,
+        ))
         .run()
 }
