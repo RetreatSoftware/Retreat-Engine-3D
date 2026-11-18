@@ -8,3 +8,9 @@ publish.workspace = true
 [dependencies]
 bevy.workspace = true
 retreat_engine.workspace = true
+
+# Hot reload: on native, Bevy watches `assets/` and reloads a texture, model or shader the
+# moment its file changes on disk. The browser has no file watcher, so this is native-only
+# (resolver "3" applies target-specific features only to that target).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bevy = { workspace = true, features = ["file_watcher"] }

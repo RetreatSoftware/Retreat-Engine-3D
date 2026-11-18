@@ -5,8 +5,6 @@
 //! script's next line runs only once the model is in the world, or the script fails with
 //! the load error.
 
-use std::path::{Component, Path, PathBuf};
-
 use bevy::asset::RecursiveDependencyLoadState;
 use bevy::gltf::GltfAssetLabel;
 use bevy::prelude::*;
@@ -14,6 +12,7 @@ use bevy::world_serialization::WorldInstanceReady;
 use retreat_engine_api::{AppCommandExt, CommandArgs, CommandOutcome, CommandResult};
 
 use crate::PendingCommandWork;
+use crate::asset_paths::{load_asset, resolve_asset_location};
 use crate::entity_names::ensure_name_is_free;
 use crate::platform::HAS_FILE_SYSTEM;
 
@@ -33,53 +32,6 @@ impl Plugin for ModelCommandsPlugin {
         )
         .add_systems(Update, report_failed_model_loads);
     }
-}
-
-/// Where a model file lives.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ModelSource {
-    /// A path inside the app's `assets` folder, e.g. `models/Fox.glb`. Works everywhere
-    /// (in the browser the file is fetched over HTTP).
-    AssetFolder(String),
-    /// An absolute path anywhere on disk, e.g. `C:/art/tree.glb`. Native only.
-    AbsoluteFile(PathBuf),
-}
-
-/// Decides where `path` points, or explains why it is not allowed. Pure, so it is tested
-/// directly; `has_file_system` is `platform::HAS_FILE_SYSTEM` outside tests.
-pub fn resolve_model_source(path: &str, has_file_system: bool) -> Result<ModelSource, String> {
-    let file = Path::new(path);
-    let extension = file
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .map(str::to_ascii_lowercase);
-    let has_model_extension = extension
-        .as_deref()
-        .is_some_and(|extension| MODEL_FILE_EXTENSIONS.contains(&extension));
-    if !has_model_extension {
-        return Err(format!(
-            "`{path}` is not a glTF model; the file name must end in .{}",
-            MODEL_FILE_EXTENSIONS.join(" or .")
-        ));
-    }
-    if file.is_absolute() {
-        return if has_file_system {
-            Ok(ModelSource::AbsoluteFile(file.to_path_buf()))
-        } else {
-            Err(format!(
-                "`{path}` is an absolute path, but the browser has no file system; \
-                 put the model in the assets folder and use a relative path"
-            ))
-        };
-    }
-    if file.components().any(|part| part == Component::ParentDir) {
-        return Err(format!(
-            "`{path}` leaves the assets folder with `..`; use a path inside the assets folder, \
-             or an absolute path (native only)"
-        ));
-    }
-    // Bevy asset paths always use `/`, also on Windows.
-    Ok(ModelSource::AssetFolder(path.replace('\\', "/")))
 }
 
 /// Marks a model entity whose file is still loading. Removed once the model is in the world.
@@ -105,22 +57,14 @@ fn model_spawn_command(world: &mut World, args: &CommandArgs) -> CommandResult {
         return Err(args.failure(format!("scale must be a positive number, got {scale}")));
     }
     ensure_name_is_free(world, args, &name)?;
-    let source =
-        resolve_model_source(&path, HAS_FILE_SYSTEM).map_err(|message| args.failure(message))?;
-
-    // A cheap clone (the server is shared behind a pointer) that ends the borrow of `world`.
-    let asset_server = world.resource::<AssetServer>().clone();
-    let scene: Handle<WorldAsset> = match source {
-        ModelSource::AssetFolder(asset_path) => {
-            asset_server.load(GltfAssetLabel::Scene(0).from_asset(asset_path))
-        }
-        // Files outside the assets folder are "unapproved" for Bevy; the engine sets
-        // `UnapprovedPathMode::Deny`, so only this explicit override may load them.
-        ModelSource::AbsoluteFile(file) => asset_server
-            .load_builder()
-            .override_unapproved()
-            .load(GltfAssetLabel::Scene(0).from_asset(file)),
-    };
+    let location =
+        resolve_asset_location(&path, "glTF model", &MODEL_FILE_EXTENSIONS, HAS_FILE_SYSTEM)
+            .map_err(|message| args.failure(message))?;
+    let is_outside_asset_folder = location.is_outside_asset_folder();
+    // `#Scene0`: only the file's first scene, not the whole file.
+    let scene_path = GltfAssetLabel::Scene(0).from_asset(location.into_asset_path());
+    let asset_server = world.resource::<AssetServer>();
+    let scene: Handle<WorldAsset> = load_asset(asset_server, scene_path, is_outside_asset_folder);
 
     world.resource_mut::<PendingCommandWork>().start();
     world
@@ -194,48 +138,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn relative_paths_point_into_the_asset_folder() {
-        assert_eq!(
-            resolve_model_source("models/Fox.glb", true),
-            Ok(ModelSource::AssetFolder("models/Fox.glb".to_string()))
-        );
-        assert_eq!(
-            resolve_model_source("models\\Tree.GLTF", false),
-            Ok(ModelSource::AssetFolder("models/Tree.GLTF".to_string()))
-        );
-    }
-
-    #[test]
-    fn absolute_paths_work_only_with_a_file_system() {
-        let absolute = if cfg!(windows) {
-            "C:/art/tree.glb"
-        } else {
-            "/art/tree.glb"
-        };
-        assert_eq!(
-            resolve_model_source(absolute, true),
-            Ok(ModelSource::AbsoluteFile(PathBuf::from(absolute)))
-        );
-        let error = resolve_model_source(absolute, false).unwrap_err();
-        assert!(error.contains("browser has no file system"), "{error}");
-    }
-
-    #[test]
-    fn paths_leaving_the_asset_folder_are_rejected() {
-        let error = resolve_model_source("../secrets/x.glb", true).unwrap_err();
-        assert!(error.contains("leaves the assets folder"), "{error}");
-    }
-
-    #[test]
     fn node_names_are_prefixed_with_the_model_name() {
         assert_eq!(namespaced_node_name("fox", "b_Head_05"), "fox/b_Head_05");
-    }
-
-    #[test]
-    fn non_gltf_files_are_rejected() {
-        for path in ["models/Fox.fbx", "models/Fox", "notes.txt"] {
-            let error = resolve_model_source(path, true).unwrap_err();
-            assert!(error.contains("is not a glTF model"), "{path}: {error}");
-        }
     }
 }

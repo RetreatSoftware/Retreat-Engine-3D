@@ -1,14 +1,14 @@
 //! Runs command scripts in a real Bevy app (no window, no GPU) and checks frame timing,
 //! exit codes and error messages.
 
+use std::time::{Duration, Instant};
+
 use bevy::prelude::*;
-use retreat_engine::{
-    CommandScript, PENDING_WORK_TIMEOUT_TICKS, PendingCommandWork, RetreatCommandsPlugin,
-};
+use retreat_engine::{CommandScript, PendingCommandWork, RetreatCommandsPlugin};
 use retreat_engine_api::{AppCommandExt, CommandOutcome, SimulationRng};
 
 /// More updates than any test script needs; a test that reaches it never quit.
-const MAX_UPDATES: u32 = PENDING_WORK_TIMEOUT_TICKS + 100;
+const MAX_UPDATES: u32 = 1000;
 
 /// Bevy starts its clock on the first update, so that update has no fixed tick:
 /// fixed tick N runs during update N + 1.
@@ -51,11 +51,15 @@ fn advance_fake_work(mut work: ResMut<FakeWork>, mut pending: ResMut<PendingComm
 }
 
 fn app_with_script(text: &str) -> App {
+    app_with_command_script(CommandScript::from_text("test.cmds", text))
+}
+
+fn app_with_command_script(script: CommandScript) -> App {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)
         .add_plugins(RetreatCommandsPlugin {
             seed: 9,
-            command_script: Some(CommandScript::from_text("test.cmds", text)),
+            command_script: Some(script),
         })
         .init_resource::<MarkedTicks>()
         .init_resource::<TickCounter>()
@@ -241,22 +245,35 @@ quit
 
 #[test]
 fn pending_work_that_never_finishes_times_out() {
-    let mut app = app_with_script(
+    const SHORT_TIMEOUT: Duration = Duration::from_millis(50);
+    let script = CommandScript::from_text(
+        "test.cmds",
         "test.start_work 0 succeed
 quit
 ",
-    );
-    let (exit, updates) = run_until_exit(&mut app);
-    assert_eq!(exit, AppExit::error());
-    // Tick 1 starts the work; ticks 2..=301 wait; tick 302 exceeds the timeout.
-    assert_eq!(
-        updates,
-        UPDATES_BEFORE_FIRST_TICK + 1 + PENDING_WORK_TIMEOUT_TICKS + 1
+    )
+    .with_pending_work_timeout(SHORT_TIMEOUT);
+    let mut app = app_with_command_script(script);
+    let started = Instant::now();
+    let mut exit = None;
+    for _ in 0..MAX_UPDATES {
+        app.update();
+        exit = app.should_exit();
+        if exit.is_some() {
+            break;
+        }
+        // The timeout is wall-clock time, so let real time pass between updates.
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(exit, Some(AppExit::error()));
+    assert!(
+        started.elapsed() >= SHORT_TIMEOUT,
+        "it must wait the whole timeout first"
     );
     let script = app.world().resource::<CommandScript>();
     let failure = script.failure().expect("the timeout must fail the script");
     assert!(
-        failure.starts_with("test.cmds:1: the work this line started did not finish"),
+        failure.starts_with("test.cmds:1: the work this line started did not finish within 50ms"),
         "{failure}"
     );
 }

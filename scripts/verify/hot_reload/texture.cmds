@@ -1,0 +1,9 @@
+# Driven by scripts/verify/hot_reload_texture.sh, which swaps the file during the run.
+# Kept in a subfolder so the CI loop over scripts/verify/*.cmds does not run it alone.
+material.set_texture sandbox_ground textures/hot_reload_probe.png
+snapshot hot_reload_before
+# The shell script replaces the probe file (checker -> red) once hot_reload_before.png exists.
+texture.wait_for_reload textures/hot_reload_probe.png
+wait 2
+snapshot hot_reload_after
+quit

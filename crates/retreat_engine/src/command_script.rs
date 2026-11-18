@@ -8,16 +8,20 @@
 //! [`PendingCommandWork`] until the work is done.
 
 use std::path::Path;
+use std::time::Duration;
 
+use bevy::platform::time::Instant;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 use retreat_engine_api::{CommandOutcome, parse_command_line, run_command_line};
 
 use crate::PendingCommandWork;
 
-/// How many ticks a script waits for [`PendingCommandWork`] (e.g. a snapshot) before it
-/// fails. A capture normally takes 1-3 ticks; reaching this means the work never finishes.
-pub const PENDING_WORK_TIMEOUT_TICKS: u32 = 300;
+/// How long a script waits for [`PendingCommandWork`] before it fails. Wall-clock time, not
+/// ticks: pending work (a GPU capture, a file read, a file watcher) runs in real time, and a
+/// tick takes 3 ms on a GPU but 250 ms on a software renderer. The timeout only decides when a
+/// stuck script gives up, so it does not affect what a passing script does.
+pub const PENDING_WORK_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A loaded script and how far it has run. Present as a resource only while the app
 /// was launched with `--commands`.
@@ -30,8 +34,10 @@ pub struct CommandScript {
     frames_to_wait: u32,
     /// 1-based number of the last line that ran (0 before the first).
     last_line_number: usize,
-    /// Ticks spent waiting for [`PendingCommandWork`] since it became busy.
-    ticks_waiting_for_work: u32,
+    /// When the script started waiting for [`PendingCommandWork`]; `None` while not waiting.
+    waiting_for_work_since: Option<Instant>,
+    /// See [`PENDING_WORK_TIMEOUT`]; tests shorten it with [`Self::with_pending_work_timeout`].
+    pending_work_timeout: Duration,
     /// The first error, with its `file:line` prefix. Once set, the script stops.
     failure: Option<String>,
 }
@@ -44,7 +50,8 @@ impl CommandScript {
             next_line_index: 0,
             frames_to_wait: 0,
             last_line_number: 0,
-            ticks_waiting_for_work: 0,
+            waiting_for_work_since: None,
+            pending_work_timeout: PENDING_WORK_TIMEOUT,
             failure: None,
         }
     }
@@ -54,6 +61,12 @@ impl CommandScript {
         let text = std::fs::read_to_string(path)
             .map_err(|error| format!("cannot read command script `{}`: {error}", path.display()))?;
         Ok(Self::from_text(path.display().to_string(), &text))
+    }
+
+    /// Replaces [`PENDING_WORK_TIMEOUT`] for this script (tests use a short one).
+    pub fn with_pending_work_timeout(mut self, timeout: Duration) -> Self {
+        self.pending_work_timeout = timeout;
+        self
     }
 
     /// The first error the script hit, if any (`file:line: message`).
@@ -111,17 +124,17 @@ fn run_next_script_line(world: &mut World) {
             return;
         }
         if world.resource::<PendingCommandWork>().is_busy() {
-            script.ticks_waiting_for_work += 1;
-            if script.ticks_waiting_for_work > PENDING_WORK_TIMEOUT_TICKS {
+            let waiting_since = *script.waiting_for_work_since.get_or_insert_with(Instant::now);
+            if waiting_since.elapsed() > script.pending_work_timeout {
                 let message = format!(
-                    "the work this line started did not finish within {PENDING_WORK_TIMEOUT_TICKS} \
-                     ticks (for `snapshot`: is a camera rendering to the window or offscreen image?)"
+                    "the work this line started did not finish within {:?}                      (for `snapshot`: is a camera rendering to the window or offscreen image?)",
+                    script.pending_work_timeout
                 );
                 fail_script(world, &mut script, started_by_line, message);
             }
             return;
         }
-        script.ticks_waiting_for_work = 0;
+        script.waiting_for_work_since = None;
         if script.frames_to_wait > 0 {
             script.frames_to_wait -= 1;
             return;

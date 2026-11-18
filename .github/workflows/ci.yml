@@ -30,6 +30,8 @@ jobs:
             cargo run -p retreat_sandbox -- --headless --software-renderer --commands "$script"
             echo "::endgroup::"
           done
+      - name: Hot reload check (changes a texture file while the app runs)
+        run: scripts/verify/hot_reload_texture.sh --software-renderer
       - name: Upload snapshots
         if: always()
         uses: actions/upload-artifact@v4

@@ -1,0 +1,17 @@
+# Changes colors and textures, with a snapshot before and after.
+# Run: cargo run -p retreat_sandbox -- --headless --commands scripts/verify/material_change.cmds
+# Expected pictures:
+#   material_before.png: blue cube on green ground, orange fox right of the cube.
+#   material_after.png:  orange cube, checkerboard ground, blue-tinted fox, and a second
+#                        (untouched, still orange) fox: copies of one model keep separate materials.
+
+model.spawn fox models/Fox.glb 2 0 0 0.02
+model.spawn fox_twin models/Fox.glb -2 0 1 0.02
+snapshot material_before
+
+material.set_color sandbox_cube 1 0.45 0.1
+material.set_texture sandbox_ground textures/checker.png
+# `fox` is the whole model: every mesh below it is tinted (the texture is multiplied by the color).
+material.set_color fox 0.3 0.6 1
+snapshot material_after
+quit

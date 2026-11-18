@@ -5,11 +5,13 @@
 //! (registry, built-in commands, simulation RNG, command scripts, snapshots), so games
 //! and modules do not configure these themselves.
 
+mod asset_paths;
 mod builtin_commands;
 mod command_script;
 mod entity_names;
 mod headless;
 mod launch_options;
+mod material;
 mod model;
 mod pending_command_work;
 mod platform;
@@ -26,13 +28,14 @@ use bevy::window::ExitCondition;
 use bevy::winit::WinitPlugin;
 use retreat_engine_api::{CommandRegistry, SimulationRng};
 
+pub use asset_paths::{AssetLocation, resolve_asset_location};
 pub use builtin_commands::POSITION_TOLERANCE;
-pub use command_script::{CommandScript, PENDING_WORK_TIMEOUT_TICKS};
+pub use command_script::{CommandScript, PENDING_WORK_TIMEOUT};
 pub use headless::HEADLESS_RESOLUTION;
 pub use launch_options::{DEFAULT_SEED, LaunchOptions};
+pub use material::{MaterialCommandsPlugin, TEXTURE_FILE_EXTENSIONS};
 pub use model::{
-    MODEL_FILE_EXTENSIONS, MODEL_NODE_NAME_SEPARATOR, ModelCommandsPlugin, ModelSource,
-    namespaced_node_name, resolve_model_source,
+    MODEL_FILE_EXTENSIONS, MODEL_NODE_NAME_SEPARATOR, ModelCommandsPlugin, namespaced_node_name,
 };
 pub use pending_command_work::PendingCommandWork;
 pub use snapshot::{SNAPSHOT_DIRECTORY, SnapshotSource, snapshot_file_path};
@@ -141,7 +144,11 @@ impl Plugin for RetreatEnginePlugin {
             app.insert_resource(SnapshotSource::PrimaryWindow);
         }
         self.commands.build(app);
-        app.add_plugins((snapshot::SnapshotPlugin, ModelCommandsPlugin));
+        app.add_plugins((
+            snapshot::SnapshotPlugin,
+            ModelCommandsPlugin,
+            MaterialCommandsPlugin,
+        ));
     }
 }
 
