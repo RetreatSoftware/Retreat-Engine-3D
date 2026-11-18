@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use bevy::prelude::*;
 use bevy::render::render_resource::{CachedPipelineState, PipelineCache};
 use bevy::render::{Render, RenderApp, RenderSystems};
+use bevy::shader::ShaderCacheError;
 
 use crate::command_script::fail_running_script;
 
@@ -44,7 +45,8 @@ struct GpuPipelineErrors(Arc<Mutex<Vec<String>>>);
 #[derive(Resource, Default)]
 struct ReportedPipelines(HashSet<usize>);
 
-/// Render world, after rendering: records every pipeline that newly failed to compile.
+/// Render world, after rendering: records every pipeline that newly failed to compile for
+/// good (see [`is_final_pipeline_error`]).
 fn collect_gpu_pipeline_errors(
     pipeline_cache: Res<PipelineCache>,
     errors: Res<GpuPipelineErrors>,
@@ -52,10 +54,24 @@ fn collect_gpu_pipeline_errors(
 ) {
     for (index, pipeline) in pipeline_cache.pipelines().enumerate() {
         if let CachedPipelineState::Err(error) = &pipeline.state
+            && is_final_pipeline_error(error)
             && reported.0.insert(index)
         {
             let mut messages = errors.0.lock().expect("no thread panics while holding it");
             messages.push(error_with_causes(error));
+        }
+    }
+}
+
+/// True for errors Bevy will not retry: the shader code is wrong. False for "a shader or
+/// import is not loaded yet", which Bevy retries every frame until it loads. A slow software
+/// renderer (lavapipe in CI) queues pipelines before Bevy's own shaders finish loading, so
+/// treating those as failures broke every script there.
+fn is_final_pipeline_error(error: &ShaderCacheError) -> bool {
+    match error {
+        ShaderCacheError::ProcessShaderError(_) | ShaderCacheError::CreateShaderModule(_) => true,
+        ShaderCacheError::ShaderNotLoaded(_) | ShaderCacheError::ShaderImportNotYetAvailable => {
+            false
         }
     }
 }
@@ -115,6 +131,22 @@ mod tests {
                 .as_deref()
                 .map(|cause| cause as &(dyn std::error::Error + 'static))
         }
+    }
+
+    #[test]
+    fn only_errors_bevy_does_not_retry_are_final() {
+        assert!(is_final_pipeline_error(
+            &ShaderCacheError::CreateShaderModule("bad".to_string())
+        ));
+        assert!(is_final_pipeline_error(
+            &ShaderCacheError::ProcessShaderError("bad".to_string())
+        ));
+        assert!(!is_final_pipeline_error(
+            &ShaderCacheError::ShaderNotLoaded(AssetId::default())
+        ));
+        assert!(!is_final_pipeline_error(
+            &ShaderCacheError::ShaderImportNotYetAvailable
+        ));
     }
 
     #[test]
