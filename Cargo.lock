@@ -5001,7 +5001,6 @@ name = "retreat_sandbox"
 version = "0.1.0"
 dependencies = [
  "bevy",
- "bevy_rapier3d",
  "retreat_engine",
  "retreat_engine_api",
 ]

@@ -49,8 +49,8 @@ pub use model::{
 };
 pub use pending_command_work::PendingCommandWork;
 pub use physics::{
-    PHYSICS_PROXY_NAME_SUFFIX, PhysicsBody, PhysicsBox, PhysicsPlugin, PhysicsProxy,
-    PhysicsProxyOf, spawn_physics_box,
+    PHYSICS_PROXY_NAME_SUFFIX, PhysicsBox, PhysicsPlugin, PhysicsProxy, PhysicsProxyOf,
+    spawn_physics_box,
 };
 pub use platform::launch;
 pub use shader_material::{

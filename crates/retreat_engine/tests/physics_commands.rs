@@ -5,9 +5,9 @@
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::{Collider, RapierRigidBodySet, RigidBody};
 use retreat_engine::{
-    CommandScript, LastStateHash, PhysicsBody, PhysicsBox, PhysicsPlugin, RetreatCommandsPlugin,
-    StateHashPlugin,
+    CommandScript, LastStateHash, PhysicsBox, PhysicsPlugin, RetreatCommandsPlugin, StateHashPlugin,
 };
+use retreat_engine_api::{PhysicsBody, PhysicsBodyKind, PhysicsShape};
 
 /// More updates than any test script needs.
 const MAX_UPDATES: u32 = 2000;
@@ -36,8 +36,11 @@ fn test_app(text: &str) -> App {
     app.world_mut().spawn((
         Name::new("ground"),
         PhysicsBody {
-            body: RigidBody::Fixed,
-            collider: Collider::cuboid(10.0, GROUND_HALF_THICKNESS, 10.0),
+            kind: PhysicsBodyKind::Fixed,
+            shape: PhysicsShape::Cuboid {
+                half_extents: Vec3::new(10.0, GROUND_HALF_THICKNESS, 10.0),
+            },
+            shape_offset: Vec3::ZERO,
         },
         Transform::from_xyz(0.0, -GROUND_HALF_THICKNESS, 0.0),
     ));
@@ -238,8 +241,9 @@ quit
 ",
     );
     let body = || PhysicsBody {
-        body: RigidBody::Dynamic,
-        collider: Collider::ball(0.5),
+        kind: PhysicsBodyKind::Dynamic,
+        shape: PhysicsShape::Ball { radius: 0.5 },
+        shape_offset: Vec3::ZERO,
     };
     // Spawned in reverse name order, each with a different set of components.
     app.world_mut().spawn((
@@ -300,8 +304,9 @@ quit
 ",
     );
     app.world_mut().spawn(PhysicsBody {
-        body: RigidBody::Dynamic,
-        collider: Collider::ball(0.5),
+        kind: PhysicsBodyKind::Dynamic,
+        shape: PhysicsShape::Ball { radius: 0.5 },
+        shape_offset: Vec3::ZERO,
     });
     for _ in 0..10 {
         app.update();

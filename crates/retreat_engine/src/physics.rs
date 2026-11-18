@@ -8,7 +8,8 @@
 //! `state.hash` (in `state_hash.rs`) checks that.
 //!
 //! **Engine-owned bodies.** Game code never puts Rapier's `RigidBody` / `Collider` on its own
-//! entities. It adds a [`PhysicsBody`] description; each tick the engine creates one *proxy*
+//! entities. It adds a `retreat_engine_api::PhysicsBody` description (library-neutral, so
+//! modules never name Rapier); each tick the engine creates one *proxy*
 //! entity per new description, **in name order**, and the proxy carries the Rapier components.
 //! After each physics step the proxy's pose is copied back to the game entity.
 //! Why: Rapier numbers bodies in the order bevy_rapier's queries visit them, which follows
@@ -22,7 +23,10 @@ use bevy::prelude::*;
 use bevy_rapier3d::prelude::{
     Collider, NoUserData, PhysicsSet, RapierPhysicsPlugin, RigidBody, TimestepMode,
 };
-use retreat_engine_api::{AppCommandExt, CommandArgs, CommandOutcome, CommandResult};
+use retreat_engine_api::{
+    AppCommandExt, CommandArgs, CommandOutcome, CommandResult, PhysicsBody, PhysicsBodyKind,
+    PhysicsShape,
+};
 
 use crate::command_script::{CommandScriptSystems, fail_running_script};
 use crate::entity_names::ensure_name_is_free;
@@ -79,14 +83,25 @@ impl Plugin for PhysicsPlugin {
     }
 }
 
-/// Makes an entity physical. The entity must have a unique `Name` (it sets the body's place in
-/// the canonical order) and must not have a parent (its `Transform` is its world pose). The
-/// engine reads this once, in the tick it is added; later changes are not applied.
-#[derive(Component, Clone, Debug)]
-#[require(Transform)]
-pub struct PhysicsBody {
-    pub body: RigidBody,
-    pub collider: Collider,
+/// The Rapier body and collider for a contract-crate [`PhysicsBody`]. The only place that maps
+/// the library-neutral description onto Rapier.
+fn rapier_components(physics_body: &PhysicsBody) -> (RigidBody, Collider) {
+    let body = match physics_body.kind {
+        PhysicsBodyKind::Dynamic => RigidBody::Dynamic,
+        PhysicsBodyKind::Fixed => RigidBody::Fixed,
+    };
+    let shape = match physics_body.shape {
+        PhysicsShape::Cuboid { half_extents } => {
+            Collider::cuboid(half_extents.x, half_extents.y, half_extents.z)
+        }
+        PhysicsShape::Ball { radius } => Collider::ball(radius),
+    };
+    let collider = if physics_body.shape_offset == Vec3::ZERO {
+        shape
+    } else {
+        Collider::compound(vec![(physics_body.shape_offset, Quat::IDENTITY, shape)])
+    };
+    (body, collider)
 }
 
 /// On a proxy: the game entity it simulates. Despawning that entity despawns the proxy.
@@ -126,7 +141,7 @@ fn reject_rapier_components_outside_proxies(world: &mut World) {
             world,
             format!(
                 "entity {first} has Rapier's RigidBody/Collider directly; add a \
-                 PhysicsBody {{ body, collider }} instead, so the engine registers bodies in a \
+                 PhysicsBody (retreat_engine_api) instead, so the engine registers bodies in a \
                  deterministic order (see retreat_engine physics.rs)"
             ),
         );
@@ -173,11 +188,12 @@ fn create_physics_proxies(world: &mut World) {
     // The canonical order: by name (names are unique), never by storage order.
     new_bodies.sort_by(|(left, ..), (right, ..)| left.cmp(right));
     for (name, owner, physics_body, transform) in new_bodies {
+        let (body, collider) = rapier_components(&physics_body);
         world.spawn((
             Name::new(format!("{name}{PHYSICS_PROXY_NAME_SUFFIX}")),
             PhysicsProxyOf(owner),
-            physics_body.body,
-            physics_body.collider,
+            body,
+            collider,
             transform,
         ));
     }
@@ -237,15 +253,11 @@ pub fn spawn_physics_box(world: &mut World, name: &str, center: Vec3, size: f32)
     let material = world
         .resource_mut::<Assets<StandardMaterial>>()
         .add(PHYSICS_BOX_COLOR);
-    let half_size = size / 2.0;
     world
         .spawn((
             Name::new(name.to_string()),
             PhysicsBox,
-            PhysicsBody {
-                body: RigidBody::Dynamic,
-                collider: Collider::cuboid(half_size, half_size, half_size),
-            },
+            PhysicsBody::dynamic_cube(size),
             Transform::from_translation(center),
             Mesh3d(mesh),
             MeshMaterial3d(material),

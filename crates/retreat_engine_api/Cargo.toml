@@ -1,6 +1,6 @@
 [package]
 name = "retreat_engine_api"
-description = "Retreat engine contract: the only engine crate gameplay modules may depend on (commands, simulation RNG)."
+description = "Retreat engine contract: the only engine crate gameplay modules may depend on (commands, simulation RNG, physics body descriptions)."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

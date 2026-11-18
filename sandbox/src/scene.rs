@@ -2,8 +2,7 @@
 //! the cube are fixed (immovable) physics bodies, so boxes from `physics.spawn_box` land on them.
 
 use bevy::prelude::*;
-use bevy_rapier3d::prelude::{Collider, RigidBody};
-use retreat_engine::PhysicsBody;
+use retreat_engine_api::{PhysicsBody, PhysicsBodyKind, PhysicsShape};
 
 /// Spawns the starting scene once, at startup.
 pub struct SandboxScenePlugin;
@@ -37,10 +36,7 @@ fn spawn_sandbox_scene(
         SandboxGround,
         Mesh3d(meshes.add(Plane3d::default().mesh().size(GROUND_SIZE, GROUND_SIZE))),
         MeshMaterial3d(materials.add(Color::srgb(0.30, 0.50, 0.30))),
-        PhysicsBody {
-            body: RigidBody::Fixed,
-            collider: ground_collider(),
-        },
+        ground_physics_body(),
     ));
 
     commands.spawn((
@@ -49,8 +45,11 @@ fn spawn_sandbox_scene(
         Mesh3d(meshes.add(Cuboid::new(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE))),
         MeshMaterial3d(materials.add(Color::srgb(0.49, 0.56, 1.0))),
         PhysicsBody {
-            body: RigidBody::Fixed,
-            collider: Collider::cuboid(CUBE_SIZE / 2.0, CUBE_SIZE / 2.0, CUBE_SIZE / 2.0),
+            kind: PhysicsBodyKind::Fixed,
+            shape: PhysicsShape::Cuboid {
+                half_extents: Vec3::splat(CUBE_SIZE / 2.0),
+            },
+            shape_offset: Vec3::ZERO,
         },
         // Lift the cube by half its size so it rests on the ground instead of sinking into it.
         Transform::from_xyz(0.0, CUBE_SIZE / 2.0, 0.0),
@@ -74,14 +73,15 @@ fn spawn_sandbox_scene(
 
 /// A slab under the ground plane: same width as the plane, top face at y = 0. A plane mesh has
 /// no thickness, and a zero-thickness collider lets fast bodies tunnel through.
-fn ground_collider() -> Collider {
-    let half_size = GROUND_SIZE / 2.0;
+fn ground_physics_body() -> PhysicsBody {
     let half_thickness = GROUND_COLLIDER_THICKNESS / 2.0;
-    Collider::compound(vec![(
-        Vec3::new(0.0, -half_thickness, 0.0),
-        Quat::IDENTITY,
-        Collider::cuboid(half_size, half_thickness, half_size),
-    )])
+    PhysicsBody {
+        kind: PhysicsBodyKind::Fixed,
+        shape: PhysicsShape::Cuboid {
+            half_extents: Vec3::new(GROUND_SIZE / 2.0, half_thickness, GROUND_SIZE / 2.0),
+        },
+        shape_offset: Vec3::new(0.0, -half_thickness, 0.0),
+    }
 }
 
 #[cfg(test)]
