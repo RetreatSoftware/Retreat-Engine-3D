@@ -17,9 +17,12 @@ This is the initial direction and is still subject to change. Status: early stag
 ```bash
 cargo run -p retreat_sandbox
 cargo run -p retreat_sandbox -- --commands scripts/verify/commands_smoke.cmds --seed 0
+cargo run -p retreat_sandbox -- --headless --commands scripts/verify/sandbox_basic.cmds
 ```
 
 The second line runs a command script (one command per frame) and exits with code 0 if every line passed.
+The third renders without a window and writes `target/snapshots/sandbox_basic.png`.
+Add `--software-renderer` to render on the CPU (no GPU needed).
 
 ## Part of the Retreat ecosystem
 

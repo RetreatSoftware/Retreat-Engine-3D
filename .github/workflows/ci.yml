@@ -20,6 +20,23 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --all-targets
       - run: cargo test --workspace
+      # Headless snapshot checks on the CPU renderer (lavapipe): CI machines have no GPU.
+      - name: Install the lavapipe software Vulkan driver
+        run: sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers
+      - name: Run scripts/verify headless
+        run: |
+          for script in scripts/verify/*.cmds; do
+            echo "::group::$script"
+            cargo run -p retreat_sandbox -- --headless --software-renderer --commands "$script"
+            echo "::endgroup::"
+          done
+      - name: Upload snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshots
+          path: target/snapshots/
+          if-no-files-found: warn
 
   wasm32:
     runs-on: ubuntu-latest

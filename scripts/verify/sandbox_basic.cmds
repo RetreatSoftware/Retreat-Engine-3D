@@ -1,0 +1,9 @@
+# Renders the starting scene and saves target/snapshots/sandbox_basic.png.
+# Run headless (the default check):
+#   cargo run -p retreat_sandbox -- --headless --commands scripts/verify/sandbox_basic.cmds
+# Expected picture: green ground plane, blue cube on it with a shadow, seen from above-left.
+
+assert.entity_exists sandbox_camera
+wait 2
+snapshot sandbox_basic
+quit

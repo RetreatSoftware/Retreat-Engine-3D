@@ -2,11 +2,13 @@
 //! exit codes and error messages.
 
 use bevy::prelude::*;
-use retreat_engine::{CommandScript, RetreatCommandsPlugin};
+use retreat_engine::{
+    CommandScript, PENDING_WORK_TIMEOUT_TICKS, PendingCommandWork, RetreatCommandsPlugin,
+};
 use retreat_engine_api::{AppCommandExt, CommandOutcome, SimulationRng};
 
 /// More updates than any test script needs; a test that reaches it never quit.
-const MAX_UPDATES: u32 = 100;
+const MAX_UPDATES: u32 = PENDING_WORK_TIMEOUT_TICKS + 100;
 
 /// Bevy starts its clock on the first update, so that update has no fixed tick:
 /// fixed tick N runs during update N + 1.
@@ -24,6 +26,30 @@ fn count_tick(mut counter: ResMut<TickCounter>) {
     counter.0 += 1;
 }
 
+/// Fake work started by `test.start_work <ticks> <succeed|fail>`, standing in for a
+/// snapshot: it finishes after the given number of ticks.
+#[derive(Resource, Default)]
+struct FakeWork {
+    ticks_left: Option<u32>,
+    should_fail: bool,
+}
+
+fn advance_fake_work(mut work: ResMut<FakeWork>, mut pending: ResMut<PendingCommandWork>) {
+    let Some(ticks_left) = work.ticks_left else {
+        return;
+    };
+    if ticks_left > 1 {
+        work.ticks_left = Some(ticks_left - 1);
+        return;
+    }
+    work.ticks_left = None;
+    if work.should_fail {
+        pending.fail("fake work failed");
+    } else {
+        pending.finish();
+    }
+}
+
 fn app_with_script(text: &str) -> App {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)
@@ -33,8 +59,33 @@ fn app_with_script(text: &str) -> App {
         })
         .init_resource::<MarkedTicks>()
         .init_resource::<TickCounter>()
+        .init_resource::<FakeWork>()
         // Count ticks before the script line of the same tick runs.
         .add_systems(FixedPreUpdate, count_tick)
+        .add_systems(FixedPostUpdate, advance_fake_work)
+        .register_command(
+            "test.start_work",
+            "test.start_work <ticks> <succeed|fail>",
+            |world, args| {
+                args.expect_count(2)?;
+                let ticks: u32 = args.parse(0, "ticks")?;
+                let should_fail = match args.parse::<String>(1, "succeed|fail")?.as_str() {
+                    "succeed" => false,
+                    "fail" => true,
+                    other => {
+                        return Err(args.failure(format!("expected succeed or fail, got {other}")));
+                    }
+                };
+                world.resource_mut::<PendingCommandWork>().start();
+                // 0 ticks means "never finishes", to test the timeout.
+                let ticks_left = if ticks == 0 { None } else { Some(ticks) };
+                *world.resource_mut::<FakeWork>() = FakeWork {
+                    ticks_left,
+                    should_fail,
+                };
+                Ok(CommandOutcome::Continue)
+            },
+        )
         .register_command("test.mark", "test.mark", |world, args| {
             args.expect_count(0)?;
             let tick = world.resource::<TickCounter>().0;
@@ -153,4 +204,59 @@ fn simulation_rng_is_seeded_from_the_plugin() {
     let mut expected = SimulationRng::from_seed(9);
     let mut actual = app.world_mut().resource_mut::<SimulationRng>();
     assert_eq!(actual.0.next_u64(), expected.0.next_u64());
+}
+
+#[test]
+fn pending_work_holds_the_next_line_until_it_finishes() {
+    let mut app = app_with_script(
+        "test.mark
+test.start_work 3 succeed
+test.mark
+quit
+",
+    );
+    let (exit, _) = run_until_exit(&mut app);
+    assert_eq!(exit, AppExit::Success);
+    // Tick 2 starts the work; it finishes at the end of tick 4; the next line runs on tick 5.
+    assert_eq!(app.world().resource::<MarkedTicks>().0, vec![1, 5]);
+}
+
+#[test]
+fn failed_pending_work_fails_the_line_that_started_it() {
+    let mut app = app_with_script(
+        "test.start_work 2 fail
+test.mark
+quit
+",
+    );
+    let (exit, _) = run_until_exit(&mut app);
+    assert_eq!(exit, AppExit::error());
+    let script = app.world().resource::<CommandScript>();
+    assert_eq!(script.failure(), Some("test.cmds:1: fake work failed"));
+    assert!(
+        app.world().resource::<MarkedTicks>().0.is_empty(),
+        "no line runs after a failure"
+    );
+}
+
+#[test]
+fn pending_work_that_never_finishes_times_out() {
+    let mut app = app_with_script(
+        "test.start_work 0 succeed
+quit
+",
+    );
+    let (exit, updates) = run_until_exit(&mut app);
+    assert_eq!(exit, AppExit::error());
+    // Tick 1 starts the work; ticks 2..=301 wait; tick 302 exceeds the timeout.
+    assert_eq!(
+        updates,
+        UPDATES_BEFORE_FIRST_TICK + 1 + PENDING_WORK_TIMEOUT_TICKS + 1
+    );
+    let script = app.world().resource::<CommandScript>();
+    let failure = script.failure().expect("the timeout must fail the script");
+    assert!(
+        failure.starts_with("test.cmds:1: the work this line started did not finish"),
+        "{failure}"
+    );
 }

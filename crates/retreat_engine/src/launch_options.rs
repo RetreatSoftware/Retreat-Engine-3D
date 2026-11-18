@@ -6,7 +6,7 @@ use std::path::PathBuf;
 pub const DEFAULT_SEED: u64 = 0;
 
 /// Shown after every launch-argument error.
-const LAUNCH_USAGE: &str = "usage: <app> [--commands <script.cmds>] [--seed <whole number>]";
+const LAUNCH_USAGE: &str = "usage: <app> [--commands <script.cmds>] [--seed <whole number>] [--headless] [--software-renderer]";
 
 /// What the app was asked to do at launch.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,6 +15,11 @@ pub struct LaunchOptions {
     pub commands_file: Option<PathBuf>,
     /// `--seed <n>`: the seed of the `SimulationRng`.
     pub seed: u64,
+    /// `--headless`: no window; cameras render to an offscreen image (native only).
+    pub headless: bool,
+    /// `--software-renderer`: use the CPU fallback GPU adapter (WARP on Windows, lavapipe on
+    /// Linux), so rendering works on machines without a GPU, such as CI.
+    pub software_renderer: bool,
 }
 
 impl Default for LaunchOptions {
@@ -22,6 +27,8 @@ impl Default for LaunchOptions {
         Self {
             commands_file: None,
             seed: DEFAULT_SEED,
+            headless: false,
+            software_renderer: false,
         }
     }
 }
@@ -49,6 +56,8 @@ impl LaunchOptions {
                         format!("--seed `{value}` is not a whole number from 0 to {}: {error}; {LAUNCH_USAGE}", u64::MAX)
                     })?;
                 }
+                "--headless" => options.headless = true,
+                "--software-renderer" => options.software_renderer = true,
                 unknown => {
                     return Err(format!(
                         "unknown launch argument `{unknown}`; {LAUNCH_USAGE}"
@@ -84,6 +93,7 @@ mod tests {
         let expected = LaunchOptions {
             commands_file: Some(PathBuf::from("scripts/verify/a.cmds")),
             seed: 42,
+            ..LaunchOptions::default()
         };
         assert_eq!(
             parse(&["--commands", "scripts/verify/a.cmds", "--seed", "42"]),
@@ -93,6 +103,14 @@ mod tests {
             parse(&["--seed", "42", "--commands", "scripts/verify/a.cmds"]),
             Ok(expected)
         );
+    }
+
+    #[test]
+    fn reads_headless_and_software_renderer_switches() {
+        let options = parse(&["--headless", "--software-renderer"]).expect("valid arguments");
+        assert!(options.headless);
+        assert!(options.software_renderer);
+        assert_eq!(options.commands_file, None);
     }
 
     #[test]
