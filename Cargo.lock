@@ -4992,6 +4992,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "retreat_module_spawner"
+version = "0.1.0"
+source = "git+https://github.com/RetreatSoftware/Retreat-Modules#6bec4a470a6c74bc694afca0e5c730e12094636a"
+dependencies = [
+ "bevy",
+ "retreat_engine_api",
+]
+
+[[package]]
 name = "retreat_rng"
 version = "0.1.0"
 source = "git+https://github.com/RetreatSoftware/Retreat-CoreSDK#ff9008581b13ee304d2a28bd66a54a0d30c1ab12"
@@ -5003,6 +5012,7 @@ dependencies = [
  "bevy",
  "retreat_engine",
  "retreat_engine_api",
+ "retreat_module_spawner",
 ]
 
 [[package]]

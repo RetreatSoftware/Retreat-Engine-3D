@@ -26,5 +26,7 @@ fn add_sandbox_plugins(app: &mut App) {
         stripes_material::StripesMaterialPlugin,
         drop_box::DropBoxPlugin,
         toolbar::SandboxToolbarPlugin,
+        // The first gameplay module (Retreat-Modules): `spawner.rain <count>`.
+        retreat_module_spawner::SpawnerModulePlugin,
     ));
 }

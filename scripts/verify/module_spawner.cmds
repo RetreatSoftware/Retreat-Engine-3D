@@ -1,0 +1,20 @@
+# The first module (retreat_module_spawner, from Retreat-Modules) in the sandbox: its command
+# runs through the same registry, its boxes go through the engine's physics.
+# Run: cargo run -p retreat_sandbox -- --headless --commands scripts/verify/module_spawner.cmds
+# Expected pictures:
+#   module_spawner_falling.png: blue boxes of mixed sizes in the air, the lowest about to land.
+#   module_spawner_rest.png:    the blue boxes at rest on the ground and on the cube.
+
+spawner.rain 12
+# 0.8 s in: the lower boxes have fallen into view.
+wait 50
+snapshot module_spawner_falling
+# 4.5 s more: everything lands and settles (5.3 s in total, as recorded).
+wait 286
+snapshot module_spawner_rest
+# Positions come from SimulationRng (seed 0): the same on every platform. Some boxes are still
+# settling, so the hash changes every tick: the assert's value is the one at its own line (one
+# tick after the `state.hash` print), copied from its failure message when re-recording.
+state.hash
+assert.state_hash 0x6c0164612acaad2f
+quit
