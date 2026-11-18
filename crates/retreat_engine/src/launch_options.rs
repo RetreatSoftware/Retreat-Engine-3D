@@ -69,6 +69,37 @@ impl LaunchOptions {
     }
 }
 
+/// Shown after every URL launch-option error (browser builds).
+const URL_USAGE: &str =
+    "usage: page URL `?commands=<path to .cmds>&seed=<whole number>` (both optional)";
+
+impl LaunchOptions {
+    /// Reads the browser page's URL query, already split into decoded `(key, value)` pairs
+    /// (`?commands=scripts/verify/a.cmds&seed=3`). The script path is fetched relative to the
+    /// page. `--headless` and `--software-renderer` have no browser meaning and are rejected.
+    pub fn from_url_query_pairs(
+        pairs: impl IntoIterator<Item = (String, String)>,
+    ) -> Result<Self, String> {
+        let mut options = Self::default();
+        for (key, value) in pairs {
+            match key.as_str() {
+                "commands" => options.commands_file = Some(PathBuf::from(value)),
+                "seed" => {
+                    options.seed = value.parse().map_err(|error| {
+                        format!("seed `{value}` is not a whole number from 0 to {}: {error}; {URL_USAGE}", u64::MAX)
+                    })?;
+                }
+                unknown => {
+                    return Err(format!(
+                        "unknown URL launch option `{unknown}`; {URL_USAGE}"
+                    ));
+                }
+            }
+        }
+        Ok(options)
+    }
+}
+
 /// Takes the value that must follow `flag`.
 fn next_value(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<String, String> {
     args.next()
@@ -126,6 +157,37 @@ mod tests {
             error.contains("--seed `-1` is not a whole number"),
             "{error}"
         );
+    }
+
+    fn url(pairs: &[(&str, &str)]) -> Result<LaunchOptions, String> {
+        LaunchOptions::from_url_query_pairs(
+            pairs
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string())),
+        )
+    }
+
+    #[test]
+    fn url_query_gives_commands_and_seed() {
+        let options =
+            url(&[("commands", "scripts/verify/a.cmds"), ("seed", "7")]).expect("valid query");
+        assert_eq!(
+            options.commands_file,
+            Some(PathBuf::from("scripts/verify/a.cmds"))
+        );
+        assert_eq!(options.seed, 7);
+        assert_eq!(url(&[]), Ok(LaunchOptions::default()));
+    }
+
+    #[test]
+    fn url_query_rejects_unknown_keys_and_bad_seeds() {
+        let error = url(&[("headless", "1")]).unwrap_err();
+        assert!(
+            error.contains("unknown URL launch option `headless`"),
+            "{error}"
+        );
+        let error = url(&[("seed", "x")]).unwrap_err();
+        assert!(error.contains("seed `x` is not a whole number"), "{error}");
     }
 
     #[test]

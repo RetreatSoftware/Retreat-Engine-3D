@@ -1,0 +1,57 @@
+<!doctype html>
+<!-- Retreat Engine Sandbox, browser build. Built into target/web/ by scripts/web/build.sh.
+     Launch options come from the URL: ?commands=scripts/verify/<name>.cmds&seed=<n>.
+     Agents drive it through window.__retreat (see crates/retreat_engine/src/platform/wasm.rs). -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Retreat Engine Sandbox</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #1e1f22; overflow: hidden; }
+      #retreat-canvas { display: block; width: 100%; height: 100%; outline: none; }
+    </style>
+  </head>
+  <body>
+    <canvas id="retreat-canvas"></canvas>
+    <script type="module">
+      import init, {
+        retreatCommand,
+        retreatStatus,
+        retreatSnapshotPng,
+        retreatSnapshotNames,
+      } from "./retreat_sandbox.js";
+
+      // The agent-facing bridge. Every call goes through the engine's command registry.
+      //   await __retreat.command("physics.spawn_box a 0 3 0 1")  -> "ok" (rejects with the error)
+      //   __retreat.status()        -> {script: "loading" | "starting" | "none" | "running" | "passed" | "failed", ...}
+      //                                ("loading" until the .wasm has loaded and started)
+      //   await __retreat.snapshot("name") -> PNG data URL (runs `snapshot <name>` first)
+      //   __retreat.snapshotPng("name")    -> PNG data URL of a snapshot a script took, or null
+      //   __retreat.snapshotNames()        -> names of stored snapshots
+      const pngDataUrl = (bytes) =>
+        new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.readAsDataURL(new Blob([bytes], { type: "image/png" }));
+        });
+      let loaded = false;
+      window.__retreat = {
+        command: (line) => retreatCommand(line),
+        status: () => (loaded ? JSON.parse(retreatStatus()) : { script: "loading" }),
+        snapshot: async (name = "bridge") => {
+          await retreatCommand(`snapshot ${name}`);
+          return pngDataUrl(retreatSnapshotPng(name));
+        },
+        snapshotPng: async (name) => {
+          const bytes = retreatSnapshotPng(name);
+          return bytes ? pngDataUrl(bytes) : null;
+        },
+        snapshotNames: () => retreatSnapshotNames(),
+      };
+      init().then(() => {
+        loaded = true;
+      });
+    </script>
+  </body>
+</html>

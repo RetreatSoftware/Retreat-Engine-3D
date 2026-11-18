@@ -18,6 +18,8 @@ use bevy::time::TimeUpdateStrategy;
 use retreat_engine_api::{CommandOutcome, parse_command_line, run_command_line};
 
 use crate::PendingCommandWork;
+use crate::builtin_commands::QuitRequested;
+use crate::platform::SCRIPT_END_EXITS_APP;
 
 /// How long a script waits for [`PendingCommandWork`] before it fails. Wall-clock time, not
 /// ticks: pending work (a GPU capture, a file read, a file watcher) runs in real time, and a
@@ -90,11 +92,43 @@ impl CommandScript {
         None
     }
 
+    /// Where the script is: still running (with the last line that ran), passed (every line
+    /// ran and `work_is_busy` is false), or failed. The browser bridge reports this.
+    pub fn progress(&self, work_is_busy: bool) -> ScriptProgress {
+        if let Some(failure) = &self.failure {
+            return ScriptProgress::Failed(failure.clone());
+        }
+        let has_lines_left = self.lines[self.next_line_index..]
+            .iter()
+            .any(|line| parse_command_line(line).is_some());
+        if has_lines_left || self.frames_to_wait > 0 || work_is_busy {
+            ScriptProgress::Running {
+                last_line: self.last_line_number,
+            }
+        } else {
+            ScriptProgress::Passed
+        }
+    }
+
+    /// Ends the script without a failure (after `quit`): no further line runs.
+    fn end(&mut self) {
+        self.next_line_index = self.lines.len();
+        self.frames_to_wait = 0;
+    }
+
     fn stop_with_failure(&mut self, message: String) {
         self.failure = Some(message);
         self.next_line_index = self.lines.len();
         self.frames_to_wait = 0;
     }
+}
+
+/// See [`CommandScript::progress`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScriptProgress {
+    Running { last_line: usize },
+    Passed,
+    Failed(String),
 }
 
 /// The system that runs script lines (in `FixedUpdate`). Other plugins order against it:
@@ -148,7 +182,11 @@ fn run_next_script_line(world: &mut World) {
         };
         script.last_line_number = line_number;
         match run_command_line(world, &text) {
-            Ok(CommandOutcome::Continue) => {}
+            Ok(CommandOutcome::Continue) => {
+                if world.remove_resource::<QuitRequested>().is_some() {
+                    script.end();
+                }
+            }
             Ok(CommandOutcome::WaitFrames(frames)) => script.frames_to_wait = frames,
             Err(error) => fail_script(world, &mut script, line_number, error),
         }
@@ -187,7 +225,8 @@ fn hold_time_while_script_waits(world: &mut World) {
     });
 }
 
-/// Logs `file:line: message`, stops the script and asks the app to exit with an error code.
+/// Logs `file:line: message`, stops the script and (on native) asks the app to exit with an
+/// error code; in the browser the page stays up and `__retreat.status()` reports the failure.
 fn fail_script(
     world: &mut World,
     script: &mut CommandScript,
@@ -197,7 +236,9 @@ fn fail_script(
     let located = format!("{}:{line_number}: {message}", script.source_name);
     error!("{located}");
     script.stop_with_failure(located);
-    world.write_message(AppExit::error());
+    if SCRIPT_END_EXITS_APP {
+        world.write_message(AppExit::error());
+    }
 }
 
 /// Fails the running script against its last line, for errors found outside a command (a

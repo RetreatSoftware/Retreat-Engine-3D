@@ -34,6 +34,23 @@ Add `--software-renderer` to render on the CPU (no GPU needed).
 
 Third-party assets and their licenses are listed in [sandbox/assets/CREDITS.md](sandbox/assets/CREDITS.md).
 
+
+## Run the sandbox in the browser
+
+Needs the `wasm32-unknown-unknown` target, `wasm-bindgen-cli` at the version `Cargo.lock` pins
+(`cargo install wasm-bindgen-cli --version 0.2.130 --locked`), Python (to serve) or Node 22+
+(to run scripts headless), and Chrome or Edge.
+
+```bash
+scripts/web/build.sh
+python -m http.server 8090 --directory target/web
+node scripts/web/run_in_browser.mjs scripts/verify/physics_boxes.cmds
+```
+
+Open `http://localhost:8090/` to play, or `http://localhost:8090/?commands=scripts/verify/physics_boxes.cmds`
+to watch a script. In the browser console, `__retreat.command("sandbox.drop_box")` runs a command and
+`__retreat.status()` reports the script.
+
 ## Part of the Retreat ecosystem
 
 - [Retreat-CoreSDK](https://github.com/RetreatSoftware/Retreat-CoreSDK) — shared SDK

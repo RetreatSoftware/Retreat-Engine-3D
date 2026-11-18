@@ -49,3 +49,39 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --target wasm32-unknown-unknown
+
+  # The browser build, driven like a player's browser: every scripts/verify script runs in
+  # headless Chrome (SwiftShader WebGL2) through window.__retreat; scripts that assert a
+  # state.hash must match the native value, which proves native/WASM determinism.
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Install wasm-bindgen-cli (the version Cargo.lock pins)
+        run: |
+          version=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')
+          if ! wasm-bindgen --version 2>/dev/null | grep -qx "wasm-bindgen $version"; then
+            cargo install wasm-bindgen-cli --version "$version" --locked
+          fi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: scripts/web/build.sh
+      - name: Run scripts/verify in headless Chrome
+        run: |
+          for script in scripts/verify/*.cmds; do
+            echo "::group::$script"
+            node scripts/web/run_in_browser.mjs "$script"
+            echo "::endgroup::"
+          done
+      - name: Upload browser snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-snapshots
+          path: target/snapshots/web/
+          if-no-files-found: warn

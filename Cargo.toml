@@ -37,3 +37,9 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+
+# Browser builds (scripts/web/build.sh): the dev settings without debug info, so the browser
+# does not download it (build.sh also drops the function-name section with wasm-bindgen).
+[profile.web-dev]
+inherits = "dev"
+debug = false

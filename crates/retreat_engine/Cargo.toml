@@ -9,3 +9,15 @@ publish.workspace = true
 bevy.workspace = true
 bevy_rapier3d.workspace = true
 retreat_engine_api.workspace = true
+# Encodes snapshots as PNG on every platform (native writes the file, the browser keeps it in
+# memory). Same version and features Bevy already uses.
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+# The browser bridge (src/platform/wasm.rs): JS bindings, fetch, and running async startup.
+# Versions match what Bevy and winit already pull in (see Cargo.lock).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2.130"
+wasm-bindgen-futures = "0.4.80"
+js-sys = "0.3.107"
+web-sys = { version = "0.3.107", features = ["Window", "Location", "Response", "UrlSearchParams", "console"] }
+

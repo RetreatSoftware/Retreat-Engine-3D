@@ -6,6 +6,7 @@
 //! and modules do not configure these themselves.
 
 mod asset_paths;
+mod bridge_status;
 mod builtin_commands;
 mod command_dispatch;
 mod command_script;
@@ -34,9 +35,12 @@ use bevy::winit::WinitPlugin;
 use retreat_engine_api::{CommandRegistry, SimulationRng};
 
 pub use asset_paths::{AssetLocation, resolve_asset_location};
+pub use bridge_status::script_status_json;
 pub use builtin_commands::POSITION_TOLERANCE;
 pub use command_dispatch::dispatch_command_line;
-pub use command_script::{CommandScript, CommandScriptSystems, PENDING_WORK_TIMEOUT};
+pub use command_script::{
+    CommandScript, CommandScriptSystems, PENDING_WORK_TIMEOUT, ScriptProgress,
+};
 pub use headless::HEADLESS_RESOLUTION;
 pub use launch_options::{DEFAULT_SEED, LaunchOptions};
 pub use material::{MaterialCommandsPlugin, TEXTURE_FILE_EXTENSIONS};
@@ -48,6 +52,7 @@ pub use physics::{
     PHYSICS_PROXY_NAME_SUFFIX, PhysicsBody, PhysicsBox, PhysicsPlugin, PhysicsProxy,
     PhysicsProxyOf, spawn_physics_box,
 };
+pub use platform::launch;
 pub use shader_material::{
     AppShaderMaterialExt, ShaderMaterialCommandsPlugin, ShaderMaterialRegistry,
 };
@@ -78,16 +83,15 @@ impl RetreatEnginePlugin {
         }
     }
 
-    /// Applies every launch option. Fails if the script file cannot be read.
+    /// Applies every launch option. `command_script` is the already loaded `--commands` /
+    /// `?commands=` script: the platform layer reads it (a file natively, an HTTP fetch in the
+    /// browser) because only it knows how.
     pub fn from_launch_options(
         window_title: impl Into<String>,
         options: &LaunchOptions,
-    ) -> Result<Self, String> {
-        let command_script = match &options.commands_file {
-            Some(path) => Some(CommandScript::read_file(path)?),
-            None => None,
-        };
-        Ok(Self {
+        command_script: Option<CommandScript>,
+    ) -> Self {
+        Self {
             window_title: window_title.into(),
             headless: options.headless,
             software_renderer: options.software_renderer,
@@ -95,7 +99,7 @@ impl RetreatEnginePlugin {
                 seed: options.seed,
                 command_script,
             },
-        })
+        }
     }
 
     /// Assets load from the app's `assets` folder. Paths outside it are refused unless a
@@ -103,6 +107,7 @@ impl RetreatEnginePlugin {
     fn asset_plugin(&self) -> AssetPlugin {
         AssetPlugin {
             unapproved_path_mode: UnapprovedPathMode::Deny,
+            meta_check: platform::asset_meta_check(),
             ..default()
         }
     }
@@ -145,10 +150,7 @@ impl Plugin for RetreatEnginePlugin {
             app.add_plugins(headless::HeadlessRenderPlugin);
         } else {
             let window_plugin = WindowPlugin {
-                primary_window: Some(Window {
-                    title: self.window_title.clone(),
-                    ..default()
-                }),
+                primary_window: Some(platform::primary_window(&self.window_title)),
                 ..default()
             };
             app.add_plugins(
@@ -168,6 +170,7 @@ impl Plugin for RetreatEnginePlugin {
             gpu_pipeline_errors::GpuPipelineErrorsPlugin,
             PhysicsPlugin,
             StateHashPlugin,
+            platform::PlatformPlugin,
         ));
     }
 }

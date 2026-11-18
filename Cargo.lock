@@ -4975,7 +4975,12 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy_rapier3d",
+ "image",
+ "js-sys",
  "retreat_engine_api",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

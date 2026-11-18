@@ -4,6 +4,7 @@ use bevy::prelude::*;
 use retreat_engine_api::{AppCommandExt, CommandArgs, CommandOutcome, CommandResult};
 
 use crate::entity_names::find_unique_entity_by_name;
+use crate::platform::SCRIPT_END_EXITS_APP;
 
 /// How far (in world units) `assert.position` lets an entity be from the expected point.
 pub const POSITION_TOLERANCE: f32 = 0.001;
@@ -30,12 +31,21 @@ fn wait_command(_world: &mut World, args: &CommandArgs) -> CommandResult {
     Ok(CommandOutcome::WaitFrames(frames))
 }
 
-/// `quit`: exits the app successfully at the end of this frame.
+/// `quit`: ends the script. On native it also exits the app successfully at the end of this
+/// frame; in the browser the page stays up so `__retreat.status()` can report the result.
 fn quit_command(world: &mut World, args: &CommandArgs) -> CommandResult {
     args.expect_count(0)?;
-    world.write_message(AppExit::Success);
+    if SCRIPT_END_EXITS_APP {
+        world.write_message(AppExit::Success);
+    }
+    // Ends the running script (the runner reads it); in the browser the page stays up.
+    world.insert_resource(QuitRequested);
     Ok(CommandOutcome::Continue)
 }
+
+/// Set by `quit`: the script runner ends the script after this line (no more lines run).
+#[derive(Resource)]
+pub(crate) struct QuitRequested;
 
 /// `assert.entity_exists <name>`: fails unless exactly one entity has this `Name`.
 fn assert_entity_exists_command(world: &mut World, args: &CommandArgs) -> CommandResult {
