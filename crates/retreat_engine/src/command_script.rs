@@ -4,8 +4,10 @@
 //! tick (`TimeUpdateStrategy::FixedTimesteps(1)`), except the very first update, where Bevy
 //! starts its clock and runs none. The runner runs in `FixedUpdate`, so the N-th command
 //! line always runs on fixed tick N (plus any `wait`), however fast the machine is.
-//! A line that starts work finishing later (`snapshot`) holds the script through
-//! [`PendingCommandWork`] until the work is done.
+//! A line that starts work finishing later (`snapshot`, `model.spawn`) holds the script through
+//! [`PendingCommandWork`] until the work is done. While it holds, simulation time is paused
+//! (`Time<Virtual>`), so no fixed tick runs and nothing that reads time (physics, animated
+//! shaders) moves: pending work costs zero ticks, however long it takes on this machine.
 
 use std::path::Path;
 use std::time::Duration;
@@ -104,37 +106,31 @@ impl Plugin for CommandScriptPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(self.script.clone())
             .insert_resource(TimeUpdateStrategy::FixedTimesteps(1))
-            .add_systems(FixedUpdate, run_next_script_line);
+            .add_systems(FixedUpdate, run_next_script_line)
+            .add_systems(Last, hold_time_while_script_waits);
     }
 }
 
-/// Runs at most one command line per fixed tick, and none while [`PendingCommandWork`] is
-/// busy. On the first error it logs `file:line: message`, stops the script and exits the
-/// app with an error code, so a failing check fails the process (and CI).
+/// Runs at most one command line per fixed tick. On the first error it logs
+/// `file:line: message`, stops the script and exits the app with an error code, so a failing
+/// check fails the process (and CI). Waiting for [`PendingCommandWork`] is done by
+/// [`hold_time_while_script_waits`], which stops ticks entirely while work is in flight.
 fn run_next_script_line(world: &mut World) {
     world.resource_scope(|world, mut script: Mut<CommandScript>| {
         if script.failure.is_some() {
             return;
         }
-        // Failures and timeouts of pending work are reported against the line that started it.
-        let started_by_line = script.last_line_number;
+        // Failures of pending work are reported against the line that started it.
         let pending_failure = world.resource_mut::<PendingCommandWork>().take_failure();
         if let Some(failure) = pending_failure {
+            let started_by_line = script.last_line_number;
             fail_script(world, &mut script, started_by_line, failure);
             return;
         }
         if world.resource::<PendingCommandWork>().is_busy() {
-            let waiting_since = *script.waiting_for_work_since.get_or_insert_with(Instant::now);
-            if waiting_since.elapsed() > script.pending_work_timeout {
-                let message = format!(
-                    "the work this line started did not finish within {:?}                      (for `snapshot`: is a camera rendering to the window or offscreen image?)",
-                    script.pending_work_timeout
-                );
-                fail_script(world, &mut script, started_by_line, message);
-            }
+            // Work started outside the script; the hold system pauses time until it is done.
             return;
         }
-        script.waiting_for_work_since = None;
         if script.frames_to_wait > 0 {
             script.frames_to_wait -= 1;
             return;
@@ -147,6 +143,36 @@ fn run_next_script_line(world: &mut World) {
             Ok(CommandOutcome::Continue) => {}
             Ok(CommandOutcome::WaitFrames(frames)) => script.frames_to_wait = frames,
             Err(error) => fail_script(world, &mut script, line_number, error),
+        }
+    });
+}
+
+/// Runs at the end of every update (`Last`). While [`PendingCommandWork`] is busy it pauses
+/// `Time<Virtual>`: the next updates still load assets and render, but run no fixed tick and
+/// advance no simulation time. When the work is done it unpauses, and the next update runs the
+/// next tick. Fails the script if the work takes longer than the (wall-clock) timeout.
+fn hold_time_while_script_waits(world: &mut World) {
+    world.resource_scope(|world, mut script: Mut<CommandScript>| {
+        if script.failure.is_some() {
+            return;
+        }
+        let is_busy = world.resource::<PendingCommandWork>().is_busy();
+        let mut virtual_time = world.resource_mut::<Time<Virtual>>();
+        if !is_busy {
+            virtual_time.unpause();
+            script.waiting_for_work_since = None;
+            return;
+        }
+        virtual_time.pause();
+        let waiting_since = *script.waiting_for_work_since.get_or_insert_with(Instant::now);
+        if waiting_since.elapsed() > script.pending_work_timeout {
+            let started_by_line = script.last_line_number;
+            let message = format!(
+                "the work this line started did not finish within {:?} \
+                 (for `snapshot`: is a camera rendering to the window or offscreen image?)",
+                script.pending_work_timeout
+            );
+            fail_script(world, &mut script, started_by_line, message);
         }
     });
 }

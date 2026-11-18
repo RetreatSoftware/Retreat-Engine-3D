@@ -26,23 +26,25 @@ fn count_tick(mut counter: ResMut<TickCounter>) {
     counter.0 += 1;
 }
 
-/// Fake work started by `test.start_work <ticks> <succeed|fail>`, standing in for a
-/// snapshot: it finishes after the given number of ticks.
+/// Fake work started by `test.start_work <updates> <succeed|fail>`, standing in for a
+/// snapshot: it finishes after the given number of app updates. It counts updates, not
+/// ticks, because real pending work (GPU capture, file loading) runs in real frames while
+/// the script holds simulation time.
 #[derive(Resource, Default)]
 struct FakeWork {
-    ticks_left: Option<u32>,
+    updates_left: Option<u32>,
     should_fail: bool,
 }
 
 fn advance_fake_work(mut work: ResMut<FakeWork>, mut pending: ResMut<PendingCommandWork>) {
-    let Some(ticks_left) = work.ticks_left else {
+    let Some(updates_left) = work.updates_left else {
         return;
     };
-    if ticks_left > 1 {
-        work.ticks_left = Some(ticks_left - 1);
+    if updates_left > 1 {
+        work.updates_left = Some(updates_left - 1);
         return;
     }
-    work.ticks_left = None;
+    work.updates_left = None;
     if work.should_fail {
         pending.fail("fake work failed");
     } else {
@@ -66,13 +68,13 @@ fn app_with_command_script(script: CommandScript) -> App {
         .init_resource::<FakeWork>()
         // Count ticks before the script line of the same tick runs.
         .add_systems(FixedPreUpdate, count_tick)
-        .add_systems(FixedPostUpdate, advance_fake_work)
+        .add_systems(Update, advance_fake_work)
         .register_command(
             "test.start_work",
-            "test.start_work <ticks> <succeed|fail>",
+            "test.start_work <updates> <succeed|fail>",
             |world, args| {
                 args.expect_count(2)?;
-                let ticks: u32 = args.parse(0, "ticks")?;
+                let updates: u32 = args.parse(0, "updates")?;
                 let should_fail = match args.parse::<String>(1, "succeed|fail")?.as_str() {
                     "succeed" => false,
                     "fail" => true,
@@ -81,10 +83,10 @@ fn app_with_command_script(script: CommandScript) -> App {
                     }
                 };
                 world.resource_mut::<PendingCommandWork>().start();
-                // 0 ticks means "never finishes", to test the timeout.
-                let ticks_left = if ticks == 0 { None } else { Some(ticks) };
+                // 0 updates means "never finishes", to test the timeout.
+                let updates_left = if updates == 0 { None } else { Some(updates) };
                 *world.resource_mut::<FakeWork>() = FakeWork {
-                    ticks_left,
+                    updates_left,
                     should_fail,
                 };
                 Ok(CommandOutcome::Continue)
@@ -211,18 +213,50 @@ fn simulation_rng_is_seeded_from_the_plugin() {
 }
 
 #[test]
-fn pending_work_holds_the_next_line_until_it_finishes() {
+fn pending_work_holds_the_next_line_and_costs_no_tick() {
     let mut app = app_with_script(
         "test.mark
-test.start_work 3 succeed
+test.start_work 5 succeed
 test.mark
 quit
 ",
     );
-    let (exit, _) = run_until_exit(&mut app);
+    let (exit, updates) = run_until_exit(&mut app);
     assert_eq!(exit, AppExit::Success);
-    // Tick 2 starts the work; it finishes at the end of tick 4; the next line runs on tick 5.
-    assert_eq!(app.world().resource::<MarkedTicks>().0, vec![1, 5]);
+    // Tick 2 starts the work. Simulation time is paused while it runs (5 updates), so the
+    // next line runs on tick 3, exactly as if the work had been instant.
+    assert_eq!(app.world().resource::<MarkedTicks>().0, vec![1, 3]);
+    assert!(
+        updates > UPDATES_BEFORE_FIRST_TICK + 4,
+        "the app must have run extra updates while waiting, got {updates}"
+    );
+    assert_eq!(
+        app.world().resource::<TickCounter>().0,
+        4,
+        "four lines, four ticks: waiting added none"
+    );
+}
+
+#[test]
+fn simulation_time_is_paused_while_work_is_pending() {
+    let mut app = app_with_script("test.start_work 10 succeed
+quit
+");
+    // Update 1: no tick. Update 2: tick 1 starts the work, and time pauses at the end of it.
+    for _ in 0..UPDATES_BEFORE_FIRST_TICK + 1 {
+        app.update();
+    }
+    let elapsed_at_start = app.world().resource::<Time<Virtual>>().elapsed();
+    for _ in 0..5 {
+        app.update();
+    }
+    assert!(app.world().resource::<Time<Virtual>>().is_paused());
+    assert_eq!(
+        app.world().resource::<Time<Virtual>>().elapsed(),
+        elapsed_at_start,
+        "no simulation time may pass while the script holds"
+    );
+    assert_eq!(app.world().resource::<TickCounter>().0, 1);
 }
 
 #[test]
