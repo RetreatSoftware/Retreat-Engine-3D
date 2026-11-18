@@ -20,7 +20,7 @@ wait 256
 snapshot physics_rest
 # Recorded on Windows; CI checks the same value on Linux (enhanced-determinism).
 state.hash
-assert.state_hash 0x2e070c0193fb9c18
+assert.state_hash 0x87d7014beecb659e
 physics.reset
 snapshot physics_reset
 quit

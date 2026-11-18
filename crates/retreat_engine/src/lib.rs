@@ -42,7 +42,9 @@ pub use model::{
     MODEL_FILE_EXTENSIONS, MODEL_NODE_NAME_SEPARATOR, ModelCommandsPlugin, namespaced_node_name,
 };
 pub use pending_command_work::PendingCommandWork;
-pub use physics::{PhysicsBox, PhysicsPlugin};
+pub use physics::{
+    PHYSICS_PROXY_NAME_SUFFIX, PhysicsBody, PhysicsBox, PhysicsPlugin, PhysicsProxy, PhysicsProxyOf,
+};
 pub use shader_material::{
     AppShaderMaterialExt, ShaderMaterialCommandsPlugin, ShaderMaterialRegistry,
 };

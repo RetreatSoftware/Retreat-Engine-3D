@@ -3,6 +3,7 @@
 
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::{Collider, RigidBody};
+use retreat_engine::PhysicsBody;
 
 /// Spawns the starting scene once, at startup.
 pub struct SandboxScenePlugin;
@@ -36,8 +37,10 @@ fn spawn_sandbox_scene(
         SandboxGround,
         Mesh3d(meshes.add(Plane3d::default().mesh().size(GROUND_SIZE, GROUND_SIZE))),
         MeshMaterial3d(materials.add(Color::srgb(0.30, 0.50, 0.30))),
-        RigidBody::Fixed,
-        ground_collider(),
+        PhysicsBody {
+            body: RigidBody::Fixed,
+            collider: ground_collider(),
+        },
     ));
 
     commands.spawn((
@@ -45,8 +48,10 @@ fn spawn_sandbox_scene(
         SandboxCube,
         Mesh3d(meshes.add(Cuboid::new(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE))),
         MeshMaterial3d(materials.add(Color::srgb(0.49, 0.56, 1.0))),
-        RigidBody::Fixed,
-        Collider::cuboid(CUBE_SIZE / 2.0, CUBE_SIZE / 2.0, CUBE_SIZE / 2.0),
+        PhysicsBody {
+            body: RigidBody::Fixed,
+            collider: Collider::cuboid(CUBE_SIZE / 2.0, CUBE_SIZE / 2.0, CUBE_SIZE / 2.0),
+        },
         // Lift the cube by half its size so it rests on the ground instead of sinking into it.
         Transform::from_xyz(0.0, CUBE_SIZE / 2.0, 0.0),
     ));
