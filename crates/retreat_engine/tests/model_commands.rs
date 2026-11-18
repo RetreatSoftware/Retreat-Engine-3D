@@ -11,6 +11,7 @@ fn run_script(text: &str, prepare: impl FnOnce(&mut World)) -> (AppExit, Option<
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, AssetPlugin::default()))
         .init_asset::<WorldAsset>()
+        .init_asset::<bevy::gltf::Gltf>()
         .add_plugins(RetreatCommandsPlugin {
             seed: 0,
             command_script: Some(CommandScript::from_text("test.cmds", text)),
