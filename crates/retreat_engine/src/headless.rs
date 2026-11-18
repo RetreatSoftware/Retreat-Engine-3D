@@ -30,7 +30,10 @@ impl Plugin for HeadlessRenderPlugin {
         );
         let handle = app.world_mut().resource_mut::<Assets<Image>>().add(image);
         app.insert_resource(SnapshotSource::OffscreenImage(handle))
-            .add_systems(PreUpdate, render_new_cameras_offscreen);
+            .add_systems(
+                PreUpdate,
+                (render_new_cameras_offscreen, choose_default_ui_camera).chain(),
+            );
         app.sub_app_mut(RenderApp).add_systems(
             Render,
             wait_for_gpu_to_finish_frame.in_set(RenderSystems::Cleanup),
@@ -53,6 +56,10 @@ fn targets_primary_window(target: &RenderTarget) -> bool {
     matches!(target, RenderTarget::Window(WindowRef::Primary))
 }
 
+/// Marks a camera that would have rendered to the window and now renders offscreen.
+#[derive(Component)]
+struct RedirectedWindowCamera;
+
 /// Points each new window camera at the offscreen image. It also marks the camera as a
 /// `ShadowLodOrigin`: Bevy picks the shadow detail origin from "cameras that render to a
 /// window", and the marker keeps that choice identical to a windowed run.
@@ -67,9 +74,49 @@ fn render_new_cameras_offscreen(
     for (camera, mut target) in &mut new_cameras {
         if targets_primary_window(&target) {
             *target = RenderTarget::Image(image.clone().into());
-            commands.entity(camera).insert(ShadowLodOrigin);
+            commands
+                .entity(camera)
+                .insert((ShadowLodOrigin, RedirectedWindowCamera));
         }
     }
+}
+
+/// Makes UI render in headless runs. bevy_ui draws onto its default camera, which it picks
+/// among cameras that render to the primary window (highest `order`, ties broken by `Entity`'s
+/// ordering);
+/// headless has no window, so UI would draw nowhere. This applies the same rule to the
+/// redirected cameras and marks the winner `IsDefaultUiCamera`. A camera the game marked
+/// itself (not redirected) always wins.
+fn choose_default_ui_camera(
+    mut commands: Commands,
+    redirected: Query<(Entity, &Camera, Has<IsDefaultUiCamera>), With<RedirectedWindowCamera>>,
+    marked_by_game: Query<(), (With<IsDefaultUiCamera>, Without<RedirectedWindowCamera>)>,
+) {
+    let chosen = if marked_by_game.is_empty() {
+        default_ui_camera_among(
+            redirected
+                .iter()
+                .map(|(entity, camera, _)| (entity, camera.order)),
+        )
+    } else {
+        None
+    };
+    for (entity, _, is_marked) in &redirected {
+        let should_be_marked = Some(entity) == chosen;
+        if should_be_marked && !is_marked {
+            commands.entity(entity).insert(IsDefaultUiCamera);
+        } else if !should_be_marked && is_marked {
+            commands.entity(entity).remove::<IsDefaultUiCamera>();
+        }
+    }
+}
+
+/// Bevy's rule for the default UI camera: highest `order`, ties broken by `Entity`'s `Ord`
+/// (the same `max_by_key((order, entity))` Bevy uses, so the choice matches a windowed run).
+fn default_ui_camera_among(cameras: impl Iterator<Item = (Entity, isize)>) -> Option<Entity> {
+    cameras
+        .max_by_key(|(entity, order)| (*order, *entity))
+        .map(|(entity, _)| entity)
 }
 
 #[cfg(test)]
@@ -104,5 +151,38 @@ mod tests {
             "camera must render to the offscreen image, got {target:?}"
         );
         assert!(app.world().get::<ShadowLodOrigin>(camera).is_some());
+    }
+
+    #[test]
+    fn the_highest_order_camera_is_the_default_ui_camera() {
+        let first = Entity::from_raw_u32(1).expect("valid index");
+        let second = Entity::from_raw_u32(2).expect("valid index");
+        // The higher `order` wins, whatever the entities.
+        assert_eq!(
+            default_ui_camera_among([(second, 0), (first, 5)].into_iter()),
+            Some(first)
+        );
+        // A tie goes to the greater `Entity` by its own ordering, exactly as in Bevy.
+        assert_eq!(
+            default_ui_camera_among([(first, 0), (second, 0)].into_iter()),
+            Some(first.max(second))
+        );
+        assert_eq!(default_ui_camera_among(std::iter::empty()), None);
+    }
+
+    #[test]
+    fn a_redirected_camera_becomes_the_default_ui_camera() {
+        let image = Handle::<Image>::default();
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(SnapshotSource::OffscreenImage(image))
+            .add_systems(
+                PreUpdate,
+                (render_new_cameras_offscreen, choose_default_ui_camera).chain(),
+            );
+        let camera = app.world_mut().spawn(Camera3d::default()).id();
+        app.update();
+        app.update();
+        assert!(app.world().get::<IsDefaultUiCamera>(camera).is_some());
     }
 }

@@ -7,6 +7,7 @@
 
 mod asset_paths;
 mod builtin_commands;
+mod command_dispatch;
 mod command_script;
 mod entity_names;
 mod gpu_pipeline_errors;
@@ -34,6 +35,7 @@ use retreat_engine_api::{CommandRegistry, SimulationRng};
 
 pub use asset_paths::{AssetLocation, resolve_asset_location};
 pub use builtin_commands::POSITION_TOLERANCE;
+pub use command_dispatch::dispatch_command_line;
 pub use command_script::{CommandScript, CommandScriptSystems, PENDING_WORK_TIMEOUT};
 pub use headless::HEADLESS_RESOLUTION;
 pub use launch_options::{DEFAULT_SEED, LaunchOptions};
@@ -43,7 +45,8 @@ pub use model::{
 };
 pub use pending_command_work::PendingCommandWork;
 pub use physics::{
-    PHYSICS_PROXY_NAME_SUFFIX, PhysicsBody, PhysicsBox, PhysicsPlugin, PhysicsProxy, PhysicsProxyOf,
+    PHYSICS_PROXY_NAME_SUFFIX, PhysicsBody, PhysicsBox, PhysicsPlugin, PhysicsProxy,
+    PhysicsProxyOf, spawn_physics_box,
 };
 pub use shader_material::{
     AppShaderMaterialExt, ShaderMaterialCommandsPlugin, ShaderMaterialRegistry,

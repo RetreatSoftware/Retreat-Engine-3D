@@ -223,6 +223,14 @@ fn spawn_box_command(world: &mut World, args: &CommandArgs) -> CommandResult {
     ensure_name_is_free(world, args, &name)?;
     ensure_name_is_free(world, args, &format!("{name}{PHYSICS_PROXY_NAME_SUFFIX}"))?;
 
+    spawn_physics_box(world, &name, Vec3::new(x, y, z), size);
+    Ok(CommandOutcome::Continue)
+}
+
+/// Spawns a dynamic box (game entity with mesh and [`PhysicsBody`], marked [`PhysicsBox`]).
+/// The caller checks that `name` and `<name>/physics` are free and that `size` is positive;
+/// `physics.spawn_box` does, and so must any other caller (e.g. a toolbar button).
+pub fn spawn_physics_box(world: &mut World, name: &str, center: Vec3, size: f32) -> Entity {
     let mesh = world
         .resource_mut::<Assets<Mesh>>()
         .add(Cuboid::new(size, size, size));
@@ -230,18 +238,19 @@ fn spawn_box_command(world: &mut World, args: &CommandArgs) -> CommandResult {
         .resource_mut::<Assets<StandardMaterial>>()
         .add(PHYSICS_BOX_COLOR);
     let half_size = size / 2.0;
-    world.spawn((
-        Name::new(name),
-        PhysicsBox,
-        PhysicsBody {
-            body: RigidBody::Dynamic,
-            collider: Collider::cuboid(half_size, half_size, half_size),
-        },
-        Transform::from_xyz(x, y, z),
-        Mesh3d(mesh),
-        MeshMaterial3d(material),
-    ));
-    Ok(CommandOutcome::Continue)
+    world
+        .spawn((
+            Name::new(name.to_string()),
+            PhysicsBox,
+            PhysicsBody {
+                body: RigidBody::Dynamic,
+                collider: Collider::cuboid(half_size, half_size, half_size),
+            },
+            Transform::from_translation(center),
+            Mesh3d(mesh),
+            MeshMaterial3d(material),
+        ))
+        .id()
 }
 
 /// `physics.reset`: removes every box made by `physics.spawn_box` (and so their proxies). The
