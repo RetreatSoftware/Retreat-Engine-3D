@@ -1,0 +1,35 @@
+# Drives audio playback without listening: the engine decides what is "playing" from the fixed
+# simulation clock, so assertions are the same on every machine and in the browser.
+# (Sounds are quiet, volume 0.2, and short; a machine with speakers will hear two quiet tones.)
+# Run: cargo run -p retreat_sandbox -- --headless --commands scripts/verify/audio.cmds
+# Expected picture:
+#   audio_playing.png: the usual scene (cube on the green plane) and the toolbar: sound does
+#                      not change what is drawn.
+
+audio.status
+# beep.wav lasts 0.25 s = 16 fixed ticks.
+audio.play click sounds/beep.wav 0.2 once
+assert.audio_playing click
+audio.music theme sounds/tone.wav 0.2
+assert.audio_playing theme
+audio.volume theme 0.1
+assert.audio_volume theme 0.1
+wait 8
+assert.audio_playing click
+snapshot audio_playing
+wait 16
+# The one-shot is over, the looping music goes on.
+assert.audio_not_playing click
+assert.audio_playing theme
+# New music replaces the old music.
+audio.music theme2 sounds/beep.wav 0.2
+wait 1
+assert.audio_not_playing theme
+assert.audio_playing theme2
+audio.status
+audio.stop_all
+assert.audio_not_playing theme2
+# Sound has no effect on the simulation: only the sandbox's ground and cube have bodies.
+state.hash
+assert.state_hash 0x8e09235baaf959dc
+quit

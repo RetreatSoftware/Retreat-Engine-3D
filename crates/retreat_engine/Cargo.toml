@@ -6,7 +6,8 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
-bevy.workspace = true
+# `wav`: Bevy decodes only .ogg by default; the sandbox test sounds are .wav (adds the `hound` crate).
+bevy = { workspace = true, features = ["wav"] }
 bevy_rapier3d.workspace = true
 retreat_engine_api.workspace = true
 # Encodes snapshots as PNG on every platform (native writes the file, the browser keeps it in

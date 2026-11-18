@@ -3,6 +3,8 @@
 //!
 //! `native.rs` and `wasm.rs` provide the same items with the same signatures; exactly one of
 //! them is compiled. Each provides:
+//! - `AUDIO_NEEDS_USER_GESTURE`: browsers keep audio silent until the player clicks or presses a
+//!   key on the page (`web/index.html` resumes the audio contexts then); native output starts at once.
 //! - `HAS_FILE_SYSTEM`: native builds can read and write files; the browser cannot.
 //! - `SCRIPT_END_EXITS_APP`: on native, `quit` and a failed script exit the process (so the
 //!   exit code reaches CI); in the browser the page stays up so `__retreat.status()` can be read.
@@ -19,8 +21,8 @@ mod native;
 pub use native::launch;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use native::{
-    HAS_FILE_SYSTEM, PlatformPlugin, SCRIPT_END_EXITS_APP, asset_meta_check, primary_window,
-    store_snapshot,
+    AUDIO_NEEDS_USER_GESTURE, HAS_FILE_SYSTEM, PlatformPlugin, SCRIPT_END_EXITS_APP,
+    asset_meta_check, primary_window, store_snapshot,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -29,6 +31,6 @@ mod wasm;
 pub use wasm::launch;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use wasm::{
-    HAS_FILE_SYSTEM, PlatformPlugin, SCRIPT_END_EXITS_APP, asset_meta_check, primary_window,
-    store_snapshot,
+    AUDIO_NEEDS_USER_GESTURE, HAS_FILE_SYSTEM, PlatformPlugin, SCRIPT_END_EXITS_APP,
+    asset_meta_check, primary_window, store_snapshot,
 };

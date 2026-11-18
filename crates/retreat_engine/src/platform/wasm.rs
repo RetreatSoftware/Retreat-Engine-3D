@@ -28,6 +28,10 @@ use crate::bridge_status::script_status_json;
 use crate::command_script::ScriptProgress;
 use crate::{CommandScript, LaunchOptions, PendingCommandWork, RetreatEnginePlugin};
 
+/// Browsers keep audio silent until the first click or key press on the page; `web/index.html`
+/// resumes the page's audio contexts then.
+pub(crate) const AUDIO_NEEDS_USER_GESTURE: bool = true;
+
 pub(crate) const HAS_FILE_SYSTEM: bool = false;
 
 pub(crate) const SCRIPT_END_EXITS_APP: bool = false;

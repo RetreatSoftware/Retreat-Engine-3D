@@ -6,6 +6,9 @@ use bevy::prelude::*;
 use crate::snapshot::snapshot_file_path;
 use crate::{CommandScript, LaunchOptions, RetreatEnginePlugin};
 
+/// Native audio output starts at once.
+pub(crate) const AUDIO_NEEDS_USER_GESTURE: bool = false;
+
 pub(crate) const HAS_FILE_SYSTEM: bool = true;
 
 pub(crate) const SCRIPT_END_EXITS_APP: bool = true;

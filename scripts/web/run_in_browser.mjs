@@ -193,6 +193,20 @@ async function main() {
     console.log(`run_in_browser: snapshot ${file}`);
   }
 
+  // Browser audio waits for a user gesture: report the audio contexts before and after a real
+  // key press (a trusted input event), so the page's resume-on-gesture handling is visible.
+  const audioBefore = await evaluate("window.__retreat.audioState()").catch(() => []);
+  if (audioBefore.length > 0) {
+    for (const type of ["keyDown", "keyUp"]) {
+      await devtools.call("Input.dispatchKeyEvent", { type, key: "a", code: "KeyA", text: "a" }, sessionId);
+    }
+    await new Promise((wait) => setTimeout(wait, 300));
+    const audioAfter = await evaluate("window.__retreat.audioState()").catch(() => []);
+    console.log(
+      `run_in_browser: audio contexts before a key press ${JSON.stringify(audioBefore)}, after ${JSON.stringify(audioAfter)}`,
+    );
+  }
+
   devtools.close();
   browser.kill();
   server.close();

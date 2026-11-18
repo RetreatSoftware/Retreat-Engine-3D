@@ -13,6 +13,9 @@
 //! Camera: an entity with a [`GameCamera`] is a perspective camera; the engine maps it onto
 //! Bevy's camera components, modules only edit the description.
 //!
+//! Audio: an entity with a [`SoundPlayback`] is a sound that plays; whether it is playing is
+//! decided by simulation time, so scripts can assert it without hearing it.
+//!
 //! Physics: an entity with a [`PhysicsBody`] becomes a rigid body; the types name no physics
 //! library, so modules do not depend on one.
 
@@ -24,6 +27,7 @@ mod game_camera;
 mod input_actions;
 mod physics_body;
 mod simulation_rng;
+mod sound_playback;
 
 pub use command_args::CommandArgs;
 pub use command_error::CommandError;
@@ -38,3 +42,4 @@ pub use input_actions::{
 };
 pub use physics_body::{PhysicsBody, PhysicsBodyKind, PhysicsShape};
 pub use simulation_rng::SimulationRng;
+pub use sound_playback::{MAX_SOUND_VOLUME, SoundKind, SoundPlayback};

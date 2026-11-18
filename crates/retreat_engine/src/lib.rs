@@ -6,6 +6,7 @@
 //! and modules do not configure these themselves.
 
 mod asset_paths;
+mod audio;
 mod bridge_status;
 mod builtin_commands;
 mod camera;
@@ -37,6 +38,9 @@ use bevy::winit::WinitPlugin;
 use retreat_engine_api::{CommandRegistry, SimulationRng};
 
 pub use asset_paths::{AssetLocation, resolve_asset_location};
+pub use audio::{
+    AudioCommandsPlugin, SOUND_FILE_EXTENSIONS, add_sound_assets_without_audio_device,
+};
 pub use bridge_status::script_status_json;
 pub use builtin_commands::POSITION_TOLERANCE;
 pub use camera::GameCameraPlugin;
@@ -176,6 +180,7 @@ impl Plugin for RetreatEnginePlugin {
             StateHashPlugin,
             InputActionsPlugin,
             GameCameraPlugin,
+            AudioCommandsPlugin,
             platform::PlatformPlugin,
         ));
     }

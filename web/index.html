@@ -14,6 +14,30 @@
   </head>
   <body>
     <canvas id="retreat-canvas"></canvas>
+    <!-- Audio and the browser's autoplay rule: a page may not make sound until the player has
+         clicked or pressed a key on it. Audio contexts the engine creates start "suspended";
+         this wraps the AudioContext constructor (before the engine starts) to remember them and
+         resumes them on the first gesture. Sounds are still "playing" for scripts meanwhile
+         (the engine decides that from simulation time). __retreat.audioState() lists the states. -->
+    <script>
+      (() => {
+        const Original = window.AudioContext || window.webkitAudioContext;
+        const contexts = [];
+        if (Original) {
+          window.AudioContext = class extends Original {
+            constructor(...args) {
+              super(...args);
+              contexts.push(this);
+            }
+          };
+        }
+        const resumeAll = () => contexts.forEach((context) => context.state === "suspended" && context.resume());
+        for (const type of ["pointerdown", "keydown", "touchend"]) {
+          window.addEventListener(type, resumeAll, { capture: true });
+        }
+        window.__retreatAudioStates = () => contexts.map((context) => context.state);
+      })();
+    </script>
     <script type="module">
       import init, {
         retreatCommand,
@@ -29,6 +53,7 @@
       //   await __retreat.snapshot("name") -> PNG data URL (runs `snapshot <name>` first)
       //   __retreat.snapshotPng("name")    -> PNG data URL of a snapshot a script took, or null
       //   __retreat.snapshotNames()        -> names of stored snapshots
+      //   __retreat.audioState()           -> state of each audio context ("suspended" until a gesture)
       const pngDataUrl = (bytes) =>
         new Promise((resolve) => {
           const reader = new FileReader();
@@ -48,6 +73,7 @@
           return bytes ? pngDataUrl(bytes) : null;
         },
         snapshotNames: () => retreatSnapshotNames(),
+        audioState: () => window.__retreatAudioStates(), // e.g. ["suspended"] until a click or key press
       };
       init().then(() => {
         loaded = true;
