@@ -4998,6 +4998,7 @@ dependencies = [
  "bevy",
  "bevy_rapier3d",
  "retreat_engine",
+ "retreat_engine_api",
 ]
 
 [[package]]

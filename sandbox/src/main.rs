@@ -3,8 +3,10 @@
 //! Launch arguments: `--commands <script.cmds>` runs a command script, `--seed <n>` seeds
 //! the simulation RNG (see `retreat_engine::LaunchOptions`).
 
+mod drop_box;
 mod scene;
 mod stripes_material;
+mod toolbar;
 
 use bevy::prelude::*;
 use retreat_engine::{LaunchOptions, RetreatEnginePlugin};
@@ -27,6 +29,8 @@ fn main() -> AppExit {
             engine_plugin,
             scene::SandboxScenePlugin,
             stripes_material::StripesMaterialPlugin,
+            drop_box::DropBoxPlugin,
+            toolbar::SandboxToolbarPlugin,
         ))
         .run()
 }

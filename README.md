@@ -22,6 +22,7 @@ cargo run -p retreat_sandbox -- --headless --commands scripts/verify/model_spawn
 cargo run -p retreat_sandbox -- --headless --commands scripts/verify/material_change.cmds
 cargo run -p retreat_sandbox -- --headless --commands scripts/verify/shader_stripes.cmds
 cargo run -p retreat_sandbox -- --headless --commands scripts/verify/physics_boxes.cmds
+cargo run -p retreat_sandbox -- --headless --commands scripts/verify/toolbar.cmds
 scripts/verify/hot_reload_texture.sh
 ```
 

@@ -1,0 +1,29 @@
+# Drives the toolbar through its buttons (toolbar.press fires the same Activate event a click
+# does) and checks that hiding a button re-flows the others.
+# Run: cargo run -p retreat_sandbox -- --headless --commands scripts/verify/toolbar.cmds
+# Expected pictures:
+#   toolbar_all.png:            four buttons in a row at the top left: Drop box, Reset boxes,
+#                               Stripes, Checker floor; the usual scene below.
+#   toolbar_pressed.png:        striped cube, checkerboard floor, three red boxes at rest.
+#   toolbar_without_reset.png:  three buttons, Drop box then Stripes then Checker floor, with no
+#                               gap where Reset boxes was.
+#   toolbar_reset.png:          four buttons again; the boxes are gone.
+
+snapshot toolbar_all
+toolbar.press stripes
+toolbar.press checker
+toolbar.press drop_box
+toolbar.press drop_box
+toolbar.press drop_box
+# 3 s of simulation time: the boxes land and settle.
+wait 192
+snapshot toolbar_pressed
+# Box positions come from SimulationRng (seed 0), so the result is the same everywhere.
+state.hash
+assert.state_hash 0xbe175a10a2f52629
+toolbar.hide reset
+snapshot toolbar_without_reset
+toolbar.show reset
+toolbar.press reset
+snapshot toolbar_reset
+quit

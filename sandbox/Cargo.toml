@@ -9,6 +9,7 @@ publish.workspace = true
 bevy.workspace = true
 bevy_rapier3d.workspace = true
 retreat_engine.workspace = true
+retreat_engine_api.workspace = true
 
 # Hot reload: on native, Bevy watches `assets/` and reloads a texture, model or shader the
 # moment its file changes on disk. The browser has no file watcher, so this is native-only
