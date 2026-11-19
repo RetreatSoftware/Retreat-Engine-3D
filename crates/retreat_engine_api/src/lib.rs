@@ -22,6 +22,9 @@
 //! Saving: [`SaveStore`] keeps one versioned JSON document per module; the engine decides where
 //! it lives (file, browser storage, memory).
 //!
+//! UI: [`UiPanel`] declares a panel of buttons that run command lines; its layout is the pure
+//! [`compute_panel_layout`].
+//!
 //! Physics: an entity with a [`PhysicsBody`] becomes a rigid body; the types name no physics
 //! library, so modules do not depend on one.
 
@@ -36,6 +39,7 @@ mod physics_body;
 mod save_store;
 mod simulation_rng;
 mod sound_playback;
+mod ui_panel;
 
 pub use animation_playback::{AnimationPlayback, ClipPlayback, MAX_CLIP_SPEED};
 pub use command_args::CommandArgs;
@@ -56,3 +60,8 @@ pub use save_store::{
 };
 pub use simulation_rng::SimulationRng;
 pub use sound_playback::{MAX_SOUND_VOLUME, SoundKind, SoundPlayback};
+pub use ui_panel::{
+    AppUiExt, BUTTON_HEIGHT, ButtonRect, COLUMN_BUTTON_WIDTH, MIN_BUTTON_HEIGHT, PANEL_GAP,
+    PANEL_MARGIN, PanelAnchor, PanelDirection, PanelLayout, PanelRect, ROW_MAX_BUTTON_WIDTH,
+    TITLE_HEIGHT, UiButtonEntry, UiPanel, UiPanels, compute_panel_layout, visible_entries,
+};

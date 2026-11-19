@@ -1,4 +1,4 @@
-# Drives the toolbar through its buttons (toolbar.press fires the same Activate event a click
+# Drives the toolbar through its buttons (ui.press toolbar fires the same Activate event a click
 # does) and checks that hiding a button re-flows the others.
 # Run: cargo run -p retreat_sandbox -- --headless --commands scripts/verify/toolbar.cmds
 # Expected pictures:
@@ -10,20 +10,20 @@
 #   toolbar_reset.png:          four buttons again; the boxes are gone.
 
 snapshot toolbar_all
-toolbar.press stripes
-toolbar.press checker
-toolbar.press drop_box
-toolbar.press drop_box
-toolbar.press drop_box
+ui.press toolbar stripes
+ui.press toolbar checker
+ui.press toolbar drop_box
+ui.press toolbar drop_box
+ui.press toolbar drop_box
 # 3 s of simulation time: the boxes land and settle.
 wait 192
 snapshot toolbar_pressed
 # Box positions come from SimulationRng (seed 0), so the result is the same everywhere.
 state.hash
 assert.state_hash 0xbe175a10a2f52629
-toolbar.hide reset
+ui.hide_entry toolbar reset
 snapshot toolbar_without_reset
-toolbar.show reset
-toolbar.press reset
+ui.show_entry toolbar reset
+ui.press toolbar reset
 snapshot toolbar_reset
 quit

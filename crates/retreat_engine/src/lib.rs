@@ -27,6 +27,7 @@ mod shader_material;
 mod snapshot;
 mod state_hash;
 mod storage;
+mod ui_panels;
 
 use std::time::Duration;
 
@@ -72,6 +73,7 @@ pub use state_hash::{
     LastStateHash, StateHashPlugin, compute_state_hash, format_state_hash, parse_state_hash,
 };
 pub use storage::StorageCommandsPlugin;
+pub use ui_panels::UiPanelsPlugin;
 
 /// Sets up the Bevy foundation every Retreat game runs on.
 pub struct RetreatEnginePlugin {
@@ -187,6 +189,7 @@ impl Plugin for RetreatEnginePlugin {
             AudioCommandsPlugin,
             AnimationCommandsPlugin,
             StorageCommandsPlugin,
+            UiPanelsPlugin,
             platform::PlatformPlugin,
         ));
     }
