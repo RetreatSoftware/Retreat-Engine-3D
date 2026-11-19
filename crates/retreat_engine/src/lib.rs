@@ -22,6 +22,7 @@ mod material;
 mod model;
 mod pending_command_work;
 mod physics;
+mod physics_snapshot;
 mod platform;
 mod shader_material;
 mod snapshot;
@@ -64,6 +65,7 @@ pub use physics::{
     PHYSICS_PROXY_NAME_SUFFIX, PhysicsBox, PhysicsPlugin, PhysicsProxy, PhysicsProxyOf,
     spawn_physics_box,
 };
+pub use physics_snapshot::{PhysicsSnapshot, capture_physics, restore_physics};
 pub use platform::launch;
 pub use shader_material::{
     AppShaderMaterialExt, ShaderMaterialCommandsPlugin, ShaderMaterialRegistry,
