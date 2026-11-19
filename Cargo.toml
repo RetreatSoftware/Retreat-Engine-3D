@@ -34,6 +34,7 @@ retreat_module_orbit_camera = { git = "https://github.com/RetreatSoftware/Retrea
 retreat_module_sfx = { git = "https://github.com/RetreatSoftware/Retreat-Modules" }
 retreat_module_fox_walk = { git = "https://github.com/RetreatSoftware/Retreat-Modules" }
 retreat_module_highscore = { git = "https://github.com/RetreatSoftware/Retreat-Modules" }
+retreat_module_menu = { git = "https://github.com/RetreatSoftware/Retreat-Modules" }
 # Physics. 0.37 is the release for Bevy 0.20. Default features are off: they add a debug
 # renderer, picking and async mesh colliders we do not use. `enhanced-determinism` makes
 # the simulation bit-identical across platforms (native and WASM), which `state.hash` checks.

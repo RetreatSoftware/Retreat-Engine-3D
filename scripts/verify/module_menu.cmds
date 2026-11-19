@@ -1,0 +1,30 @@
+# The menu module (retreat_module_menu, from Retreat-Modules): a pause menu declared with the UI
+# toolkit, toggled with Escape, whose buttons run command lines.
+# Run: cargo run -p retreat_sandbox -- --headless --commands scripts/verify/module_menu.cmds
+# Expected pictures:
+#   menu_hidden.png:   the usual scene and toolbar, no menu.
+#   menu_shown.png:    a centered column: the title "Paused" and three buttons, Resume, Reset boxes,
+#                      Quit, one under the other; the toolbar and the scene behind it.
+#   menu_reflowed.png: the same menu without the "Reset boxes" button: two buttons, the panel
+#                      smaller and still centered (no gap where the button was).
+#   menu_closed.png:   no menu again, after the Resume button closed it, and two boxes at rest.
+
+snapshot menu_hidden
+# Escape is bound to the module action menu_toggle, which runs menu.toggle.
+input.tap Escape
+wait 2
+snapshot menu_shown
+ui.hide_entry pause_menu reset
+wait 2
+snapshot menu_reflowed
+ui.show_entry pause_menu reset
+# Boxes first (toolbar button), then the Resume button closes the menu.
+ui.press toolbar drop_box
+ui.press toolbar drop_box
+wait 2
+ui.press pause_menu resume
+wait 192
+snapshot menu_closed
+state.hash
+assert.state_hash 0x83d629cc1d00e5a5
+quit

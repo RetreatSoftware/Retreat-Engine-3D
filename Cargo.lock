@@ -5001,7 +5001,7 @@ dependencies = [
 [[package]]
 name = "retreat_module_fox_walk"
 version = "0.1.0"
-source = "git+https://github.com/RetreatSoftware/Retreat-Modules#c4adedfbd8216a1fd9f1739382df2f04bcb1f43c"
+source = "git+https://github.com/RetreatSoftware/Retreat-Modules#5a4c3ed1b356d062fe5ac58e672b81695a850edf"
 dependencies = [
  "bevy",
  "retreat_engine_api",
@@ -5010,7 +5010,16 @@ dependencies = [
 [[package]]
 name = "retreat_module_highscore"
 version = "0.1.0"
-source = "git+https://github.com/RetreatSoftware/Retreat-Modules#c4adedfbd8216a1fd9f1739382df2f04bcb1f43c"
+source = "git+https://github.com/RetreatSoftware/Retreat-Modules#5a4c3ed1b356d062fe5ac58e672b81695a850edf"
+dependencies = [
+ "bevy",
+ "retreat_engine_api",
+]
+
+[[package]]
+name = "retreat_module_menu"
+version = "0.1.0"
+source = "git+https://github.com/RetreatSoftware/Retreat-Modules#5a4c3ed1b356d062fe5ac58e672b81695a850edf"
 dependencies = [
  "bevy",
  "retreat_engine_api",
@@ -5019,7 +5028,7 @@ dependencies = [
 [[package]]
 name = "retreat_module_orbit_camera"
 version = "0.1.0"
-source = "git+https://github.com/RetreatSoftware/Retreat-Modules#c4adedfbd8216a1fd9f1739382df2f04bcb1f43c"
+source = "git+https://github.com/RetreatSoftware/Retreat-Modules#5a4c3ed1b356d062fe5ac58e672b81695a850edf"
 dependencies = [
  "bevy",
  "retreat_engine_api",
@@ -5028,7 +5037,7 @@ dependencies = [
 [[package]]
 name = "retreat_module_sfx"
 version = "0.1.0"
-source = "git+https://github.com/RetreatSoftware/Retreat-Modules#c4adedfbd8216a1fd9f1739382df2f04bcb1f43c"
+source = "git+https://github.com/RetreatSoftware/Retreat-Modules#5a4c3ed1b356d062fe5ac58e672b81695a850edf"
 dependencies = [
  "bevy",
  "retreat_engine_api",
@@ -5037,7 +5046,7 @@ dependencies = [
 [[package]]
 name = "retreat_module_spawner"
 version = "0.1.0"
-source = "git+https://github.com/RetreatSoftware/Retreat-Modules#c4adedfbd8216a1fd9f1739382df2f04bcb1f43c"
+source = "git+https://github.com/RetreatSoftware/Retreat-Modules#5a4c3ed1b356d062fe5ac58e672b81695a850edf"
 dependencies = [
  "bevy",
  "retreat_engine_api",
@@ -5057,6 +5066,7 @@ dependencies = [
  "retreat_engine_api",
  "retreat_module_fox_walk",
  "retreat_module_highscore",
+ "retreat_module_menu",
  "retreat_module_orbit_camera",
  "retreat_module_sfx",
  "retreat_module_spawner",
