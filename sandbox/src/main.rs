@@ -34,5 +34,7 @@ fn add_sandbox_plugins(app: &mut App) {
         retreat_module_sfx::SfxModulePlugin,
         // The fox walk module: `fox.set_speed <model> <speed>` picks and blends clips.
         retreat_module_fox_walk::FoxWalkModulePlugin,
+        // The highscore module: `score.add|save|load`, a versioned save through SaveStore.
+        retreat_module_highscore::HighscoreModulePlugin,
     ));
 }

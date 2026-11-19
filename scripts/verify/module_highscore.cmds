@@ -1,0 +1,33 @@
+# The highscore module (retreat_module_highscore, from Retreat-Modules) saving and loading through
+# the contract SaveStore, on the platform backend (a file natively, localStorage in the browser),
+# including migration of a version 1 save and refusal of a newer one.
+# Run: cargo run -p retreat_sandbox -- --headless --commands scripts/verify/module_highscore.cmds
+# Expected picture:
+#   module_highscore.png: the usual scene (cube on the green plane) and toolbar.
+
+save.use_platform_backend
+save.delete highscore
+score.add 30
+score.add 12
+score.save
+assert.save_version highscore 2
+assert.save_field highscore score 42
+assert.save_field highscore best 42
+# A later run: the score is gone, loading brings it back.
+score.reset
+score.add 1
+score.load
+score.show
+assert.save_field highscore score 42
+# A version 1 save (older module) is migrated: points become score and best.
+save.write highscore 1 {"points":55}
+score.load
+score.save
+assert.save_version highscore 2
+assert.save_field highscore score 55
+assert.save_field highscore best 55
+# Clean up the real backend.
+save.delete highscore
+assert.save_absent highscore
+snapshot module_highscore
+quit
