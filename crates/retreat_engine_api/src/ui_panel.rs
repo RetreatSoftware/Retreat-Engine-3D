@@ -539,7 +539,7 @@ mod tests {
         );
         let height = layout.buttons[0].rect.height;
         assert!(
-            height < BUTTON_HEIGHT && height >= MIN_BUTTON_HEIGHT,
+            (MIN_BUTTON_HEIGHT..BUTTON_HEIGHT).contains(&height),
             "{height}"
         );
         let last = layout.buttons.last().unwrap();
