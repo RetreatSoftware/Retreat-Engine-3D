@@ -80,7 +80,7 @@ Vision documents live in the `Retreat` repository: [FRAMEWORK.md](https://github
 
 ## Open decisions (do not assume an answer)
 
-- Netcode model (server-authoritative with prediction versus deterministic lockstep).
+- Netcode details: the model is decided (server-authoritative with client prediction, FRAMEWORK.md §12); transport, serialization, replication contract and test harness are open. Do not implement networking before they are decided.
 - Asset pipeline beyond glTF loading (import, compression, packaging).
 - Distribution of crates across repositories beyond today's git dependencies (versioned releases, private registry or crates.io).
 - 2D/3D scope beyond 3D, and the exact minimum combination that always yields a playable game.
