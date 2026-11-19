@@ -20,6 +20,8 @@ publish = false
 
 [workspace.dependencies]
 bevy = "0.20.1"
+# JSON for the save format (retreat_engine_api re-exports it; already in Cargo.lock through Bevy).
+serde_json = "1"
 retreat_engine_api = { path = "crates/retreat_engine_api" }
 retreat_engine = { path = "crates/retreat_engine" }
 # CoreSDK is a separate repository. Cargo.lock pins the exact commit, so builds are

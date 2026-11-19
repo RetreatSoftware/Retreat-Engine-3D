@@ -19,6 +19,9 @@
 //! Animation: an entity with an [`AnimationPlayback`] plays the listed glTF clips (one clip, or a
 //! weighted blend) on simulation time; the engine maps it onto Bevy's animation.
 //!
+//! Saving: [`SaveStore`] keeps one versioned JSON document per module; the engine decides where
+//! it lives (file, browser storage, memory).
+//!
 //! Physics: an entity with a [`PhysicsBody`] becomes a rigid body; the types name no physics
 //! library, so modules do not depend on one.
 
@@ -30,6 +33,7 @@ mod command_registry;
 mod game_camera;
 mod input_actions;
 mod physics_body;
+mod save_store;
 mod simulation_rng;
 mod sound_playback;
 
@@ -46,5 +50,9 @@ pub use input_actions::{
     InputKey,
 };
 pub use physics_body::{PhysicsBody, PhysicsBodyKind, PhysicsShape};
+pub use save_store::{
+    MemorySaveBackend, SAVE_FORMAT_VERSION, SaveBackend, SaveError, SaveStore, SavedData,
+    decode_save, encode_save, is_valid_module_id, serde_json,
+};
 pub use simulation_rng::SimulationRng;
 pub use sound_playback::{MAX_SOUND_VOLUME, SoundKind, SoundPlayback};

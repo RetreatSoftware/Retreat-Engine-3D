@@ -294,3 +294,75 @@ pub fn retreat_snapshot_names() -> Array {
             .collect()
     })
 }
+
+/// What `save.status` tells the player about where saves live.
+pub(crate) const SAVE_LOCATION: &str =
+    "the browser's localStorage (keys start with `retreat.save.`)";
+
+/// The save backend of this platform: the page's `localStorage`.
+pub(crate) fn platform_save_backend() -> Box<dyn retreat_engine_api::SaveBackend> {
+    Box::new(LocalStorageSaveBackend)
+}
+
+/// Saves in `localStorage` under `retreat.save.<key>`. `localStorage` holds text and belongs to
+/// the page's origin, so saves survive reloads but are not shared between sites. It can be
+/// unavailable (private windows, blocked site data): every call then returns an error that says
+/// so, never a panic.
+pub(crate) struct LocalStorageSaveBackend;
+
+const LOCAL_STORAGE_PREFIX: &str = "retreat.save.";
+
+fn local_storage() -> Result<web_sys::Storage, String> {
+    web_sys::window()
+        .ok_or("there is no browser window")?
+        .local_storage()
+        .map_err(describe_js_error)?
+        .ok_or_else(|| {
+            "localStorage is not available (private window or blocked site data?)".to_string()
+        })
+}
+
+impl retreat_engine_api::SaveBackend for LocalStorageSaveBackend {
+    fn read(&self, key: &str) -> Result<Option<String>, String> {
+        local_storage()?
+            .get_item(&format!("{LOCAL_STORAGE_PREFIX}{key}"))
+            .map_err(describe_js_error)
+    }
+
+    fn write(&mut self, key: &str, text: &str) -> Result<(), String> {
+        local_storage()?
+            .set_item(&format!("{LOCAL_STORAGE_PREFIX}{key}"), text)
+            .map_err(|error| {
+                format!(
+                    "cannot store `{key}` (storage full?): {}",
+                    describe_js_error(error)
+                )
+            })
+    }
+
+    fn remove(&mut self, key: &str) -> Result<bool, String> {
+        let storage = local_storage()?;
+        let full_key = format!("{LOCAL_STORAGE_PREFIX}{key}");
+        let existed = storage
+            .get_item(&full_key)
+            .map_err(describe_js_error)?
+            .is_some();
+        storage.remove_item(&full_key).map_err(describe_js_error)?;
+        Ok(existed)
+    }
+
+    fn keys(&self) -> Result<Vec<String>, String> {
+        let storage = local_storage()?;
+        let count = storage.length().map_err(describe_js_error)?;
+        let mut keys = Vec::new();
+        for index in 0..count {
+            if let Some(full_key) = storage.key(index).map_err(describe_js_error)?
+                && let Some(key) = full_key.strip_prefix(LOCAL_STORAGE_PREFIX)
+            {
+                keys.push(key.to_string());
+            }
+        }
+        keys.sort();
+        Ok(keys)
+    }
+}

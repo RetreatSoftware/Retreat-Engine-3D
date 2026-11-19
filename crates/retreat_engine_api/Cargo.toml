@@ -8,3 +8,4 @@ publish.workspace = true
 [dependencies]
 bevy.workspace = true
 retreat_rng.workspace = true
+serde_json.workspace = true

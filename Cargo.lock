@@ -4995,6 +4995,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "retreat_rng",
+ "serde_json",
 ]
 
 [[package]]

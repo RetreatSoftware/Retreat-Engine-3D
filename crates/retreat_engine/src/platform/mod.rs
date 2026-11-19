@@ -5,6 +5,8 @@
 //! them is compiled. Each provides:
 //! - `AUDIO_NEEDS_USER_GESTURE`: browsers keep audio silent until the player clicks or presses a
 //!   key on the page (`web/index.html` resumes the audio contexts then); native output starts at once.
+//! - `SAVE_LOCATION` and `platform_save_backend()`: where saves live (files natively, `localStorage`
+//!   in the browser) and the `SaveBackend` that stores them.
 //! - `HAS_FILE_SYSTEM`: native builds can read and write files; the browser cannot.
 //! - `SCRIPT_END_EXITS_APP`: on native, `quit` and a failed script exit the process (so the
 //!   exit code reaches CI); in the browser the page stays up so `__retreat.status()` can be read.
@@ -21,8 +23,8 @@ mod native;
 pub use native::launch;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use native::{
-    AUDIO_NEEDS_USER_GESTURE, HAS_FILE_SYSTEM, PlatformPlugin, SCRIPT_END_EXITS_APP,
-    asset_meta_check, primary_window, store_snapshot,
+    AUDIO_NEEDS_USER_GESTURE, HAS_FILE_SYSTEM, PlatformPlugin, SAVE_LOCATION, SCRIPT_END_EXITS_APP,
+    asset_meta_check, platform_save_backend, primary_window, store_snapshot,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -31,6 +33,6 @@ mod wasm;
 pub use wasm::launch;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use wasm::{
-    AUDIO_NEEDS_USER_GESTURE, HAS_FILE_SYSTEM, PlatformPlugin, SCRIPT_END_EXITS_APP,
-    asset_meta_check, primary_window, store_snapshot,
+    AUDIO_NEEDS_USER_GESTURE, HAS_FILE_SYSTEM, PlatformPlugin, SAVE_LOCATION, SCRIPT_END_EXITS_APP,
+    asset_meta_check, platform_save_backend, primary_window, store_snapshot,
 };

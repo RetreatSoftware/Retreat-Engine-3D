@@ -1,0 +1,27 @@
+# Saving through the platform backend: a file in the saves folder natively, localStorage in the
+# browser. The same script runs on both and must pass on both. (A script normally keeps saves
+# in memory; save.use_platform_backend opts in to the real backend, and the script cleans up.)
+# Run: cargo run -p retreat_sandbox -- --headless --commands scripts/verify/storage.cmds
+# Expected picture:
+#   storage.png: the usual scene (cube on the green plane) and toolbar; saving draws nothing.
+
+save.status
+# In memory first: nothing is left behind when the script ends.
+save.write memory_check 1 {"a":1}
+assert.save_field memory_check a 1
+save.use_platform_backend
+save.delete sandbox_check
+assert.save_absent sandbox_check
+save.write sandbox_check 3 {"coins":12,"level":"intro"}
+assert.save_version sandbox_check 3
+assert.save_field sandbox_check coins 12
+assert.save_field sandbox_check level "intro"
+save.list
+# Writing again replaces the document (and the module may change its data version).
+save.write sandbox_check 4 {"coins":13}
+assert.save_version sandbox_check 4
+assert.save_field sandbox_check coins 13
+save.delete sandbox_check
+assert.save_absent sandbox_check
+snapshot storage
+quit
