@@ -10,6 +10,7 @@ publish.workspace = true
 bevy = { workspace = true, features = ["wav"] }
 bevy_rapier3d.workspace = true
 retreat_engine_api.workspace = true
+retreat_rng.workspace = true
 # Encodes snapshots as PNG on every platform (native writes the file, the browser keeps it in
 # memory). Same version and features Bevy already uses.
 image = { version = "0.25", default-features = false, features = ["png"] }

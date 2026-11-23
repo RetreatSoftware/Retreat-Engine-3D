@@ -4984,6 +4984,7 @@ dependencies = [
  "image",
  "js-sys",
  "retreat_engine_api",
+ "retreat_rng",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",

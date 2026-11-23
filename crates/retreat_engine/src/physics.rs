@@ -20,6 +20,7 @@
 //! everywhere. Direct use of `RigidBody` / `Collider` is rejected with an error.
 
 use bevy::prelude::*;
+use bevy_rapier3d::plugin::context::RapierRigidBodySet;
 use bevy_rapier3d::prelude::{
     Collider, NoUserData, PhysicsSet, RapierPhysicsPlugin, RigidBody, TimestepMode,
 };
@@ -29,7 +30,7 @@ use retreat_engine_api::{
 };
 
 use crate::command_script::{CommandScriptSystems, fail_running_script};
-use crate::entity_names::ensure_name_is_free;
+use crate::entity_names::{ensure_name_is_free, find_unique_entity_by_name};
 
 /// Color of boxes spawned by `physics.spawn_box`.
 const PHYSICS_BOX_COLOR: Color = Color::srgb(0.85, 0.35, 0.25);
@@ -79,7 +80,12 @@ impl Plugin for PhysicsPlugin {
                 "physics.spawn_box <name> <x> <y> <z> <size>",
                 spawn_box_command,
             )
-            .register_command("physics.reset", "physics.reset", reset_command);
+            .register_command("physics.reset", "physics.reset", reset_command)
+            .register_command(
+                "physics.push",
+                "physics.push <name> <vx> <vy> <vz>",
+                push_command,
+            );
     }
 }
 
@@ -276,5 +282,43 @@ fn reset_command(world: &mut World, args: &CommandArgs) -> CommandResult {
     for entity in boxes {
         world.despawn(entity);
     }
+    Ok(CommandOutcome::Continue)
+}
+
+/// `physics.push <name> <vx> <vy> <vz>`: adds a velocity change (units per second) to a dynamic
+/// body and wakes it. It is the engine's simplest "player acts on the world" command, and what the
+/// networking harness uses as an input.
+fn push_command(world: &mut World, args: &CommandArgs) -> CommandResult {
+    args.expect_count(4)?;
+    let name: String = args.parse(0, "name")?;
+    let change = Vec3::new(
+        args.parse(1, "vx")?,
+        args.parse(2, "vy")?,
+        args.parse(3, "vz")?,
+    );
+    if !change.is_finite() {
+        return Err(args.failure(format!("the velocity change must be finite, got {change}")));
+    }
+    let owner = find_unique_entity_by_name(world, args, &name)?;
+    let Some(proxy) = world.get::<PhysicsProxy>(owner).map(PhysicsProxy::entity) else {
+        return Err(args.failure(format!(
+            "`{name}` has no physics body yet (a body is created on the tick after it is spawned)"
+        )));
+    };
+    let mut sets = world.query::<&mut RapierRigidBodySet>();
+    let mut set = sets
+        .single_mut(world)
+        .map_err(|error| args.failure(format!("there is no physics world: {error}")))?;
+    let handle = set.entity2body().get(&proxy).copied();
+    let Some(body) = handle.and_then(|handle| set.bodies.get_mut(handle)) else {
+        return Err(args.failure(format!(
+            "`{name}` is not simulated yet (its body appears on the next tick)"
+        )));
+    };
+    if !body.is_dynamic() {
+        return Err(args.failure(format!("`{name}` is a fixed body and cannot be pushed")));
+    }
+    let velocity = body.linvel() + change;
+    body.set_linvel(velocity, true);
     Ok(CommandOutcome::Continue)
 }

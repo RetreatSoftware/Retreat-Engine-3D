@@ -20,6 +20,7 @@ mod input_actions;
 mod launch_options;
 mod material;
 mod model;
+pub mod net;
 mod pending_command_work;
 mod physics;
 mod physics_snapshot;

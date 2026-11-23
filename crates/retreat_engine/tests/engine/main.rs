@@ -15,6 +15,7 @@ mod command_script_runner;
 mod input_actions_commands;
 mod material_commands;
 mod model_commands;
+mod net_harness;
 mod physics_commands;
 mod physics_rollback;
 mod shader_material_commands;
