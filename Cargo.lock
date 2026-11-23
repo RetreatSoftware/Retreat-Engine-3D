@@ -5055,7 +5055,7 @@ dependencies = [
 [[package]]
 name = "retreat_rng"
 version = "0.1.0"
-source = "git+https://github.com/RetreatSoftware/Retreat-CoreSDK#ff9008581b13ee304d2a28bd66a54a0d30c1ab12"
+source = "git+https://github.com/RetreatSoftware/Retreat-CoreSDK#c0baf38adf54767162bd340f259ebbd27f31cd62"
 
 [[package]]
 name = "retreat_sandbox"

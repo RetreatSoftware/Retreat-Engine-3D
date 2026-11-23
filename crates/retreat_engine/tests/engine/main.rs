@@ -16,6 +16,7 @@ mod input_actions_commands;
 mod material_commands;
 mod model_commands;
 mod physics_commands;
+mod physics_rollback;
 mod shader_material_commands;
 mod storage_commands;
 mod ui_commands;

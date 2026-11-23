@@ -80,7 +80,7 @@ Vision documents live in the `Retreat` repository: [FRAMEWORK.md](https://github
 
 ## Open decisions (do not assume an answer)
 
-- Netcode details (decisions: WebTransport if testable without a certificate, binary messages, transforms and physics bodies replicated first, see FRAMEWORK.md §12; rollback spike in `physics_snapshot.rs`): the model is decided (server-authoritative with client prediction, FRAMEWORK.md §12); transport, serialization, replication contract and test harness are open. Do not implement networking before they are decided.
+- Netcode details (decisions: WebTransport if testable without a certificate, binary messages, transforms and physics bodies replicated first, see FRAMEWORK.md §12; rollback in `physics_snapshot.rs`: `capture_physics` / `restore_physics` rewind Rapier, rigid-body transforms and `SimulationRng`; bodies spawned in the window are removed, bodies despawned in the window refuse the restore with `RollbackError::BodiesDespawned`, so destruction must be deferred past the window): the model is decided (server-authoritative with client prediction, FRAMEWORK.md §12); transport, serialization, replication contract and test harness are open. Do not implement networking before they are decided.
 - Asset pipeline beyond glTF loading (import, compression, packaging).
 - Distribution of crates across repositories beyond today's git dependencies (versioned releases, private registry or crates.io).
 - 2D/3D scope beyond 3D, and the exact minimum combination that always yields a playable game.

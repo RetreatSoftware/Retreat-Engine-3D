@@ -7,8 +7,8 @@ use std::time::Instant;
 
 use bevy::prelude::*;
 use retreat_engine::{
-    CommandScript, PhysicsPlugin, RetreatCommandsPlugin, StateHashPlugin, capture_physics,
-    compute_state_hash, restore_physics, spawn_physics_box,
+    CommandScript, PhysicsPlugin, RetreatCommandsPlugin, RollbackError, StateHashPlugin,
+    capture_physics, compute_state_hash, restore_physics, spawn_physics_box,
 };
 use retreat_engine_api::{PhysicsBody, PhysicsBodyKind, PhysicsShape};
 
@@ -136,4 +136,88 @@ fn rolling_back_twice_to_the_same_snapshot_gives_the_same_result_both_times() {
     restore_physics(app.world_mut(), &snapshot).expect("restore again");
     run_ticks(&mut app, 50);
     assert_eq!(hash(&mut app), first);
+}
+
+#[test]
+fn bodies_spawned_inside_the_window_are_removed_and_the_replay_spawns_them_again() {
+    let mut app = test_app();
+    drop_boxes(&mut app, 8);
+    run_ticks(&mut app, 10);
+    let snapshot = capture_physics(app.world_mut()).expect("capture");
+    let hash_at_capture = hash(&mut app);
+
+    // The window: five ticks, then a new body, then twenty more.
+    let play_window = |app: &mut App| {
+        run_ticks(app, 5);
+        spawn_physics_box(app.world_mut(), "late_box", Vec3::new(0.0, 4.0, 0.0), 0.8);
+        run_ticks(app, 20);
+    };
+    play_window(&mut app);
+    let hash_after_first_run = hash(&mut app);
+
+    restore_physics(app.world_mut(), &snapshot).expect("restore");
+    assert_eq!(
+        hash(&mut app),
+        hash_at_capture,
+        "the body spawned in the window is gone after the restore"
+    );
+    // The replay of the same inputs spawns it again, under the same name.
+    play_window(&mut app);
+    assert_eq!(hash(&mut app), hash_after_first_run);
+}
+
+#[test]
+fn bodies_despawned_inside_the_window_refuse_the_restore_and_change_nothing() {
+    let mut app = test_app();
+    drop_boxes(&mut app, 8);
+    run_ticks(&mut app, 10);
+    let snapshot = capture_physics(app.world_mut()).expect("capture");
+    run_ticks(&mut app, 5);
+
+    let mut query = app.world_mut().query::<(Entity, &Name)>();
+    let doomed = query
+        .iter(app.world())
+        .find(|(_, name)| name.as_str() == "box_0003")
+        .map(|(entity, _)| entity)
+        .expect("box_0003 exists");
+    app.world_mut().despawn(doomed);
+    run_ticks(&mut app, 2);
+    let hash_before = hash(&mut app);
+
+    let error = restore_physics(app.world_mut(), &snapshot).unwrap_err();
+    assert_eq!(
+        error,
+        RollbackError::BodiesDespawned(vec![
+            "box_0003".to_string(),
+            "box_0003/physics".to_string()
+        ])
+    );
+    assert!(
+        error.to_string().contains("delay despawning bodies"),
+        "{error}"
+    );
+    assert_eq!(
+        hash(&mut app),
+        hash_before,
+        "a refused restore changes nothing"
+    );
+}
+
+#[test]
+fn the_simulation_rng_is_rewound_with_the_physics() {
+    use retreat_engine_api::SimulationRng;
+    let mut app = test_app();
+    drop_boxes(&mut app, 4);
+    run_ticks(&mut app, 3);
+    let snapshot = capture_physics(app.world_mut()).expect("capture");
+    let draw = |app: &mut App| app.world_mut().resource_mut::<SimulationRng>().0.next_u64();
+    let first = draw(&mut app);
+    let second = draw(&mut app);
+    restore_physics(app.world_mut(), &snapshot).expect("restore");
+    assert_eq!(
+        draw(&mut app),
+        first,
+        "the RNG replays the same numbers after a restore"
+    );
+    assert_eq!(draw(&mut app), second);
 }

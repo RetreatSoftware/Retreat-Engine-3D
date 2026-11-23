@@ -6,12 +6,17 @@
 //! parameters (all public fields of `bevy_rapier3d`'s context components), plus the `Transform` of
 //! every rigid-body entity (the state hash reads those). Restoring writes them back.
 //!
-//! **Limits of this spike (checked by tests):** the set of bodies must be the same when restoring as when
-//! capturing: bodies spawned or despawned inside the rollback window are not handled yet, because
-//! `bevy_rapier`'s entity-to-handle maps are rebuilt only for bodies it knows. Restoring is exact
-//! when that holds: the same inputs resimulate to the same `state.hash`.
+//! **Bodies that appear or disappear inside the rollback window.**
+//! - A body spawned after the capture is despawned by `restore_physics` (with its proxy): the replay
+//!   of the same inputs spawns it again, under the same `Name`.
+//! - A body despawned after the capture cannot be brought back (its game entity's other components are
+//!   not ours to recreate), so `restore_physics` refuses with [`RollbackError::BodiesDespawned`] and
+//!   changes nothing. Whoever opens a rollback window must therefore delay destroying bodies until the
+//!   window has passed (deferred destruction, the netcode layer's job).
+//!
+//! Restoring is exact when those rules hold: the same inputs resimulate to the same `state.hash`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use bevy::prelude::*;
 use bevy_rapier3d::plugin::context::{
@@ -20,6 +25,7 @@ use bevy_rapier3d::plugin::context::{
 use bevy_rapier3d::prelude::RigidBody;
 use bevy_rapier3d::rapier::dynamics::{CCDSolver, IntegrationParameters, IslandManager};
 use bevy_rapier3d::rapier::geometry::{DefaultBroadPhase, NarrowPhase};
+use retreat_engine_api::{PhysicsBody, SimulationRng};
 
 /// Everything needed to rewind the physics world to the moment of capture.
 pub struct PhysicsSnapshot {
@@ -32,7 +38,41 @@ pub struct PhysicsSnapshot {
     colliders: RapierContextColliders,
     joints: RapierContextJoints,
     transforms: BTreeMap<Entity, Transform>,
+    /// The simulation RNG: a replay that spawns or rolls random values must see the same numbers.
+    rng: Option<SimulationRng>,
+    /// Game entities with a `PhysicsBody` at capture time.
+    game_bodies: BTreeSet<Entity>,
+    /// Their names, for error messages after they are gone.
+    names: BTreeMap<Entity, String>,
+    /// Entities with a Rapier `RigidBody` (the proxies) at capture time.
+    proxies: BTreeSet<Entity>,
 }
+
+/// Why a snapshot could not be restored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RollbackError {
+    /// There is not exactly one Rapier context.
+    NoPhysicsContext(String),
+    /// Bodies that existed at capture time are gone (names, sorted).
+    BodiesDespawned(Vec<String>),
+}
+
+impl std::fmt::Display for RollbackError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RollbackError::NoPhysicsContext(reason) => {
+                write!(f, "there is not exactly one Rapier context: {reason}")
+            }
+            RollbackError::BodiesDespawned(names) => write!(
+                f,
+                "physics bodies {} were despawned after the snapshot was captured and cannot be                  brought back; delay despawning bodies until the rollback window has passed",
+                names.join(", ")
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RollbackError {}
 
 /// Captures the physics state, or says why that is not possible (no physics context yet).
 pub fn capture_physics(world: &mut World) -> Result<PhysicsSnapshot, String> {
@@ -58,6 +98,18 @@ pub fn capture_physics(world: &mut World) -> Result<PhysicsSnapshot, String> {
     for (entity, transform) in bodies_query.iter(world) {
         transforms.insert(entity, *transform);
     }
+    let mut game_query = world.query_filtered::<Entity, With<PhysicsBody>>();
+    let game_bodies: BTreeSet<Entity> = game_query.iter(world).collect();
+    let mut proxy_query = world.query_filtered::<Entity, With<RigidBody>>();
+    let proxies: BTreeSet<Entity> = proxy_query.iter(world).collect();
+    let mut names = BTreeMap::new();
+    let mut name_query = world.query::<(Entity, &Name)>();
+    for (entity, name) in name_query.iter(world) {
+        if game_bodies.contains(&entity) || proxies.contains(&entity) {
+            names.insert(entity, name.as_str().to_string());
+        }
+    }
+    let rng = world.get_resource::<SimulationRng>().cloned();
     Ok(PhysicsSnapshot {
         islands,
         broad_phase,
@@ -68,11 +120,50 @@ pub fn capture_physics(world: &mut World) -> Result<PhysicsSnapshot, String> {
         colliders,
         joints,
         transforms,
+        rng,
+        game_bodies,
+        names,
+        proxies,
     })
 }
 
 /// Rewinds the physics state to `snapshot`.
-pub fn restore_physics(world: &mut World, snapshot: &PhysicsSnapshot) -> Result<(), String> {
+pub fn restore_physics(world: &mut World, snapshot: &PhysicsSnapshot) -> Result<(), RollbackError> {
+    let mut game_query = world.query_filtered::<Entity, With<PhysicsBody>>();
+    let game_now: BTreeSet<Entity> = game_query.iter(world).collect();
+    let mut proxy_query = world.query_filtered::<Entity, With<RigidBody>>();
+    let proxies_now: BTreeSet<Entity> = proxy_query.iter(world).collect();
+    let missing: Vec<Entity> = snapshot
+        .game_bodies
+        .difference(&game_now)
+        .chain(snapshot.proxies.difference(&proxies_now))
+        .copied()
+        .collect();
+    if !missing.is_empty() {
+        let mut names: Vec<String> = missing
+            .iter()
+            .map(|entity| {
+                snapshot
+                    .names
+                    .get(entity)
+                    .cloned()
+                    .unwrap_or_else(|| format!("{entity}"))
+            })
+            .collect();
+        names.sort();
+        names.dedup();
+        return Err(RollbackError::BodiesDespawned(names));
+    }
+    // Spawned after the capture: remove them (a proxy goes with its game entity; a proxy whose
+    // game entity is already gone is removed itself).
+    for entity in game_now.difference(&snapshot.game_bodies) {
+        world.despawn(*entity);
+    }
+    for entity in proxies_now.difference(&snapshot.proxies) {
+        if world.get_entity(*entity).is_ok() {
+            world.despawn(*entity);
+        }
+    }
     let mut contexts = world.query::<(
         &mut RapierContextSimulation,
         &mut RapierRigidBodySet,
@@ -81,7 +172,7 @@ pub fn restore_physics(world: &mut World, snapshot: &PhysicsSnapshot) -> Result<
     )>();
     let (mut simulation, mut bodies, mut colliders, mut joints) = contexts
         .single_mut(world)
-        .map_err(|error| format!("there is not exactly one Rapier context to restore: {error}"))?;
+        .map_err(|error| RollbackError::NoPhysicsContext(error.to_string()))?;
     simulation.islands = snapshot.islands.clone();
     simulation.broad_phase = snapshot.broad_phase.clone();
     simulation.narrow_phase = snapshot.narrow_phase.clone();
@@ -90,6 +181,9 @@ pub fn restore_physics(world: &mut World, snapshot: &PhysicsSnapshot) -> Result<
     *bodies = snapshot.bodies.clone();
     *colliders = snapshot.colliders.clone();
     *joints = snapshot.joints.clone();
+    if let Some(rng) = &snapshot.rng {
+        world.insert_resource(rng.clone());
+    }
     for (entity, transform) in &snapshot.transforms {
         if let Some(mut current) = world.get_mut::<Transform>(*entity) {
             *current = *transform;
