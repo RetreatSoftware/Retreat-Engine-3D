@@ -57,8 +57,10 @@ pub struct ServerStats {
     pub inputs_rate_limited: u64,
     /// Inputs with too many lines or a line too long.
     pub inputs_bad_shape: u64,
-    /// Inputs whose tick was too far from the server's.
+    /// Inputs whose tick was too far ahead of the server's (a violation).
     pub inputs_bad_tick: u64,
+    /// Inputs whose tick was too far behind the server's (dropped; not a violation).
+    pub inputs_too_old: u64,
     /// Hellos whose token was too long.
     pub tokens_too_long: u64,
     /// Times a connection was muted (see `limits.rs`).
@@ -236,6 +238,7 @@ fn count_refusal(stats: &mut ServerStats, refusal: Refusal) {
         Refusal::Undecodable => {}
         Refusal::InputShape => stats.inputs_bad_shape += 1,
         Refusal::InputTick => stats.inputs_bad_tick += 1,
+        Refusal::InputTooOld => stats.inputs_too_old += 1,
         Refusal::TokenTooLong => stats.tokens_too_long += 1,
     }
 }
@@ -362,6 +365,10 @@ fn handle_packet(
                 return;
             }
             if let Some(refusal) = check_input_content(&limits, next, tick, &lines) {
+                if refusal == Refusal::InputTooOld {
+                    server.stats.inputs_too_old += 1;
+                    return;
+                }
                 refuse_content(world, server, transport, next, from, refusal);
                 return;
             }

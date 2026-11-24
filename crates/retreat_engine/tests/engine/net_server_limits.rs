@@ -258,3 +258,24 @@ fn the_default_identity_check_accepts_everyone_and_a_long_token_is_refused() {
     assert_eq!(harness.server().stats.tokens_too_long, 1);
     assert_eq!(harness.server().client_count(), 1);
 }
+
+#[test]
+fn a_client_far_behind_real_time_is_dropped_input_by_input_but_never_kicked() {
+    let limits = small_limits();
+    let mut harness = harness_with(limits, 0);
+    let mut raw = joined_raw(&mut harness);
+    // Run the server far past the old tick, then send many inputs stamped with it.
+    harness.run_idle(limits.max_ticks_behind + 50);
+    for _ in 0..(limits.violations_before_mute * 3) {
+        raw.send(input_bytes(1, &["physics.spawn_box slow 0 3 0 1"]));
+        harness.run_idle(1);
+    }
+    let stats = harness.server().stats;
+    assert_eq!(
+        stats.inputs_too_old,
+        u64::from(limits.violations_before_mute * 3)
+    );
+    assert_eq!(stats.connections_muted, 0);
+    assert_eq!(stats.connections_kicked, 0);
+    assert_eq!(harness.server().client_count(), 1);
+}

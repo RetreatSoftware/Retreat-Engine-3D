@@ -30,8 +30,10 @@ pub struct ServerLimits {
     pub max_token_bytes: usize,
     /// How far ahead of the server's next tick an input's tick may be.
     pub max_ticks_ahead: u64,
-    /// How far behind the server's next tick an input's tick may be (older inputs are refused, newer
-    /// late ones still run late).
+    /// How far behind the server's next tick an input's tick may be. A newer late input still runs, late;
+    /// an older one is dropped and counted but is *not* a violation: a client on a slow machine falls
+    /// further behind real time without being abusive (a software-rendered browser client in CI lagged
+    /// more than 512 ticks and was kicked when this was a violation).
     pub max_ticks_behind: u64,
     /// Violations inside one window that mute a connection.
     pub violations_before_mute: u32,
@@ -57,7 +59,7 @@ impl Default for ServerLimits {
             max_line_bytes: 256,
             max_token_bytes: 512,
             max_ticks_ahead: super::MAX_HISTORY_TICKS,
-            max_ticks_behind: super::MAX_HISTORY_TICKS,
+            max_ticks_behind: 4096,
             violations_before_mute: 16,
             mute_ticks: 128,
             mutes_before_disconnect: 3,
@@ -82,8 +84,10 @@ pub enum Refusal {
     Undecodable,
     /// An input has more lines than `max_lines_per_input` or a line longer than `max_line_bytes`.
     InputShape,
-    /// An input's tick is outside the window around the server's tick.
+    /// An input's tick is too far ahead of the server's tick (a violation).
     InputTick,
+    /// An input's tick is too far behind the server's tick (dropped, not a violation).
+    InputTooOld,
     /// A hello's token is longer than `max_token_bytes`.
     TokenTooLong,
 }
@@ -190,10 +194,11 @@ pub fn check_input_content(
     {
         return Some(Refusal::InputShape);
     }
-    let too_far_ahead = tick > next_tick.saturating_add(limits.max_ticks_ahead);
-    let too_far_behind = tick.saturating_add(limits.max_ticks_behind) < next_tick;
-    if too_far_ahead || too_far_behind {
+    if tick > next_tick.saturating_add(limits.max_ticks_ahead) {
         return Some(Refusal::InputTick);
+    }
+    if tick.saturating_add(limits.max_ticks_behind) < next_tick {
+        return Some(Refusal::InputTooOld);
     }
     None
 }
@@ -335,8 +340,8 @@ mod tests {
             Some(Refusal::InputTick)
         );
         assert_eq!(
-            check_input_content(&limits, 1000, 1000 - limits.max_ticks_behind - 1, &ok),
-            Some(Refusal::InputTick)
+            check_input_content(&limits, 10_000, 10_000 - limits.max_ticks_behind - 1, &ok),
+            Some(Refusal::InputTooOld)
         );
         assert_eq!(
             check_input_content(&limits, 100, u64::MAX, &ok),
