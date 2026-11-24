@@ -4,9 +4,11 @@
 // all three worlds agree.
 //
 // Run from Retreat-Engine-3D after `cargo build -p retreat_sandbox`:
-//   node scripts/verify/network/run.mjs [--software-renderer] [--browser] [--scenario players]
+//   node scripts/verify/network/run.mjs [--software-renderer] [--browser] [--scenario players|preset_players]
 // The default scenario spawns and pushes boxes with `net.send`; `--scenario players` uses the players
 // module: each client holds a movement key and the engine predicts and sends the movement.
+// `--scenario preset_players` is the first tested preset (engine + players + orbit_camera + menu): one
+// client that renders (so it writes PNGs) moves its player; the check asserts the player moved.
 // With --browser, client B is the browser build (headless Chrome through scripts/web/run_in_browser.mjs,
 // WebTransport from the page): run scripts/web/build.sh first.
 // Exit code 0 = every process exited cleanly and the three worlds agree (positions within 0.05).
@@ -39,11 +41,12 @@ if (!existsSync(exe)) {
 const extra = process.argv.includes("--software-renderer") ? ["--software-renderer"] : [];
 const browserClient = process.argv.includes("--browser");
 const scenario = process.argv.includes("--scenario") ? process.argv[process.argv.indexOf("--scenario") + 1] : "boxes";
-if (scenario !== "boxes" && scenario !== "players") die(`unknown scenario ${scenario}; use boxes or players`);
+if (!["boxes", "players", "preset_players"].includes(scenario)) die(`unknown scenario ${scenario}; use boxes, players or preset_players`);
+const isPreset = scenario === "preset_players";
 const TOLERANCE = 0.05;
 // The browser variant waits much longer (the page needs many seconds to load) and its scripts too.
 const TIMEOUT_MS = browserClient ? 240_000 : 90_000;
-const scenarioFolder = scenario === "players" ? "players" : browserClient ? "browser" : "";
+const scenarioFolder = scenario === "players" || isPreset ? scenario : browserClient ? "browser" : "";
 const scriptDir = join(here, scenarioFolder);
 const webScriptDir = `scripts/verify/network${scenarioFolder ? `/${scenarioFolder}` : ""}`;
 
@@ -104,13 +107,16 @@ try {
     return match ? { port: match[1], hash: match[2] } : undefined;
   });
   console.log(`network check: server listening on port ${listening.port}`);
+  // Client b is the browser with --browser. In the preset it also renders natively (PNGs), while client a
+  // (the mover) does not.
   for (const name of ["a", "b"]) {
-    if (name === "b" && browserClient) {
+    const scriptName = `client_${name}`;
+    if (browserClient && name === "b") {
       const query = `connect=${encodeURIComponent(`https://127.0.0.1:${listening.port}`)}&cert_hash=${listening.hash}&real_time=1`;
       processes.push(
         start(
           "browser client b",
-          [`${webScriptDir}/client_b.cmds`, "--query", query],
+          [`${webScriptDir}/${scriptName}.cmds`, "--query", query],
           process.execPath,
           [join(root, "scripts", "web", "run_in_browser.mjs")],
         ),
@@ -118,11 +124,16 @@ try {
       continue;
     }
     processes.push(
-      start(`client ${name}`, [
-        "--connect", `https://127.0.0.1:${listening.port}`,
-        "--cert-hash", listening.hash,
-        "--commands", join(scriptDir, `client_${name}.cmds`),
-      ]),
+      start(
+        `client ${name}`,
+        [
+          "--connect", `https://127.0.0.1:${listening.port}`,
+          "--cert-hash", listening.hash,
+          "--commands", join(scriptDir, `${scriptName}.cmds`),
+        ],
+        exe,
+        isPreset && name === "b" ? ["--headless", "--real-time", ...extra] : undefined,
+      ),
     );
   }
   // The timer is cleared when the processes finish, otherwise it keeps node alive for TIMEOUT_MS after a pass.
@@ -141,8 +152,9 @@ try {
   if (!failure) {
     const views = processes.map((p) => ({ name: p.name, bodies: bodies(p.output) }));
     const reference = views[0].bodies;
-    const expectedNames =
-      scenario === "players"
+    const expectedNames = isPreset
+      ? ["player_0", "player_1", "sandbox_cube", "sandbox_ground"]
+      : scenario === "players"
         ? ["player_0", "player_1", "sandbox_cube", "sandbox_ground"]
         : // The sandbox always has the players module, so each joined client has its player body.
           ["net_a", "net_b", "player_0", "player_1", "sandbox_cube", "sandbox_ground"];
@@ -161,6 +173,21 @@ try {
       }
       if (failure) break;
     }
+    if (!failure && isPreset) {
+      // Exactly one player must have moved forward (client a held ArrowUp, which is -z), the idle one stays at
+      // its spawn. Forward, not sideways: players spawn in a row along x and a sideways mover pushes its neighbour.
+      const SPAWN_Z = 2;
+      const MIN_MOVE = 0.5;
+      const IDLE_MAX = 0.05;
+      for (const view of views) {
+        const moves = ["player_0", "player_1"].map((name) => [name, SPAWN_Z - view.bodies.get(name)[2]]);
+        const movers = moves.filter(([, delta]) => delta > MIN_MOVE);
+        const idle = moves.filter(([, delta]) => Math.abs(delta) < IDLE_MAX);
+        if (movers.length !== 1 || idle.length !== 1) {
+          failure = `${view.name}: expected one player moved more than ${MIN_MOVE} forward of its spawn and one idle, got ${JSON.stringify(moves)}`;
+        }
+      }
+    }
     if (!failure) {
       // The traffic counters each process printed with `net.stats` (their limits are asserted in the scripts).
       for (const p of processes) {
@@ -168,7 +195,7 @@ try {
         if (p.name === "server") console.log((p.output.match(/net-stats-detail .*/g) ?? []).pop());
         console.log(`network check: ${p.name}: ${stats ? stats[1].replace(/\[[0-9;]*m/g, "").trim() : "no net-stats line"}`);
       }
-      for (const [name, position] of reference) console.log(`network check: ${name} at ${position.join(" ")} on all three`);
+      for (const [name, position] of reference) console.log(`network check: ${name} at ${position.join(" ")} on every process`);
     }
   }
 } catch (error) {

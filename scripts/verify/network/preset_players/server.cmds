@@ -1,0 +1,15 @@
+# Server of the preset check `preset_players` (see ../run.mjs --scenario preset_players): the players
+# module spawns each client's body; the client holds a key and the body moves. The server prints
+# what it sees at the end, while the client is still connected (a browser client leaving cleanly
+# would make the server retire its player body at once).
+# The client needs real time to join (seconds in a browser) and to draw snapshots: wait for it, then
+# give it longer than its own script needs to move, settle and print.
+wait_until 20000 assert.net_clients 2
+wait 1500
+net.bodies
+net.stats
+# Traffic budget (measured below 60 KB sent, 5 KB received) with headroom, and no refusals: the client is honest.
+assert.net_bytes_below sent 300000
+assert.net_bytes_below received 100000
+assert.net_refusals_at_most 0
+quit

@@ -1,0 +1,39 @@
+# Viewer of the preset check `preset_players`: the first tested preset, engine + players + orbit_camera
+# + menu, seen by a client that renders (natively with --software-renderer, or the browser build).
+#   node scripts/verify/network/run.mjs --scenario preset_players [--browser]
+# It turns the camera with the orbit module (rebound to Q/E, because the players module and the
+# orbit module both default to the arrow keys), opens the pause menu and writes PNGs. The other
+# client (client_a.cmds, no renderer) holds ArrowUp (forward, -z) for 16 ticks (a longer hold slides the cube off the ground: players module tuning); run.mjs asserts that exactly that player moved
+# and that every process agrees on every body.
+# Why two clients: a rendering client on a software renderer ticks slower than 64 Hz and its snapshots
+# pause the fixed clock, so its own held-key inputs reach the server at the wrong ticks and its
+# prediction cannot converge (see CLAUDE.md, Networking, clocks). A viewer sends no inputs, so it cannot suffer.
+# Expected pictures (target/snapshots/ natively, target/snapshots/web/ in the browser):
+#   preset_start.png:  the sandbox scene and toolbar, seen before this client joined.
+#   preset_moved.png:  the blue sandbox cube and two red player cubes: the viewer's own (idle at its spawn point) and the other
+#                      player's (moved forward, away from the camera, at rest); the view turned by the orbit
+#                      camera (key E held for 0.5 s).
+#   preset_menu.png:   the same scene with the centered "Paused" menu (Resume, Reset boxes, Quit).
+input.unbind orbit_left ArrowLeft
+input.unbind orbit_right ArrowRight
+input.bind orbit_left Q
+input.bind orbit_right E
+orbit.start sandbox_camera 8 4
+snapshot preset_start
+wait_until 3000 assert.net_joined
+input.key_down E
+wait 32
+input.key_up E
+# Time for the other client to move its player and for the cube to come to rest.
+wait 1000
+net.bodies
+net.stats
+assert.net_bytes_below sent 20000
+assert.net_bytes_below received 100000
+snapshot preset_moved
+input.tap Escape
+wait 2
+snapshot preset_menu
+# Stay connected until the server has printed (see server.cmds).
+wait 1400
+quit

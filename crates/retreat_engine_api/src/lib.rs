@@ -52,7 +52,9 @@ pub use command_line::{ParsedCommandLine, parse_command_line};
 pub use command_registry::{
     AppCommandExt, CommandOutcome, CommandRegistry, CommandResult, run_command_line,
 };
-pub use game_camera::{DEFAULT_FOV_DEGREES, GameCamera, MAX_FOV_DEGREES, MIN_FOV_DEGREES};
+pub use game_camera::{
+    CameraProjection, DEFAULT_FOV_DEGREES, GameCamera, MAX_FOV_DEGREES, MIN_FOV_DEGREES,
+};
 pub use input_actions::{
     AppInputExt, HELD_ONLY, INPUT_KEY_NAMES, InputAction, InputActionSystems, InputActions,
     InputKey,

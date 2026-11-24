@@ -11,7 +11,8 @@
 
 use bevy::prelude::*;
 use retreat_engine_api::{
-    AppCommandExt, CommandArgs, CommandError, CommandOutcome, CommandResult, GameCamera,
+    AppCommandExt, CameraProjection, CommandArgs, CommandError, CommandOutcome, CommandResult,
+    GameCamera,
 };
 
 use crate::command_script::fail_running_script;
@@ -57,10 +58,17 @@ fn sync_game_cameras(
         }
         *transform =
             Transform::from_translation(camera.position).looking_at(camera.target, camera.up);
-        let fov = camera.fov_degrees.to_radians();
-        match projection.as_mut() {
-            Projection::Perspective(perspective) => perspective.fov = fov,
-            other => *other = Projection::Perspective(PerspectiveProjection { fov, ..default() }),
+        // The one place a `CameraProjection` becomes Bevy's `Projection`: add a new mode here.
+        match camera.projection {
+            CameraProjection::Perspective { fov_degrees } => {
+                let fov = fov_degrees.to_radians();
+                match projection.as_mut() {
+                    Projection::Perspective(perspective) => perspective.fov = fov,
+                    other => {
+                        *other = Projection::Perspective(PerspectiveProjection { fov, ..default() })
+                    }
+                }
+            }
         }
     }
 }
@@ -123,5 +131,9 @@ fn look_at_command(world: &mut World, args: &CommandArgs) -> CommandResult {
 fn set_fov_command(world: &mut World, args: &CommandArgs) -> CommandResult {
     args.expect_count(2)?;
     let degrees: f32 = args.parse(1, "degrees")?;
-    change_camera(world, args, |camera| camera.fov_degrees = degrees)
+    change_camera(world, args, |camera| {
+        camera.projection = CameraProjection::Perspective {
+            fov_degrees: degrees,
+        }
+    })
 }

@@ -19,6 +19,39 @@ pub const DEFAULT_FOV_DEGREES: f32 = 45.0;
 /// the view direction and `up`: below these the camera has no usable orientation.
 const MIN_GEOMETRY_EPSILON: f32 = 1.0e-4;
 
+/// How a camera turns the 3D scene into a picture. A closed list so that a new mode is one new
+/// variant plus one new arm in `validate` and one in the engine's mapping (`camera.rs`): the
+/// product is 3D only (decided: 2D is out of scope), and the only mode today is perspective.
+/// To add one later (for example `Orthographic { height }`): add the variant, validate its numbers
+/// here (pure, with tests), map it in `camera.rs::sync_game_cameras`, add a command that sets it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CameraProjection {
+    /// Perspective with a vertical field of view in degrees, from [`MIN_FOV_DEGREES`] to
+    /// [`MAX_FOV_DEGREES`].
+    Perspective { fov_degrees: f32 },
+}
+
+impl CameraProjection {
+    /// Checks the projection's own numbers.
+    pub fn validate(&self) -> Result<(), String> {
+        match self {
+            CameraProjection::Perspective { fov_degrees } => {
+                if !fov_degrees.is_finite() {
+                    return Err(format!(
+                        "camera fov must be a finite number, got {fov_degrees}"
+                    ));
+                }
+                if !(MIN_FOV_DEGREES..=MAX_FOV_DEGREES).contains(fov_degrees) {
+                    return Err(format!(
+                        "camera fov must be from {MIN_FOV_DEGREES} to {MAX_FOV_DEGREES} degrees, got {fov_degrees}"
+                    ));
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
 /// A camera that looks from `position` at `target`. Read again every time it changes.
 #[derive(Component, Clone, Debug, PartialEq)]
 #[require(Camera3d, Transform)]
@@ -29,8 +62,8 @@ pub struct GameCamera {
     pub target: Vec3,
     /// Which way is up for the camera (usually `Vec3::Y`). Must not be parallel to the view.
     pub up: Vec3,
-    /// Vertical field of view in degrees, from [`MIN_FOV_DEGREES`] to [`MAX_FOV_DEGREES`].
-    pub fov_degrees: f32,
+    /// How the scene is projected (today only perspective).
+    pub projection: CameraProjection,
 }
 
 impl GameCamera {
@@ -40,29 +73,24 @@ impl GameCamera {
             position,
             target,
             up: Vec3::Y,
-            fov_degrees: DEFAULT_FOV_DEGREES,
+            projection: CameraProjection::Perspective {
+                fov_degrees: DEFAULT_FOV_DEGREES,
+            },
         }
     }
 
     /// `Ok` when the camera has a usable orientation, otherwise a message saying what is wrong.
     /// The engine and its commands check this before applying a change.
     pub fn validate(&self) -> Result<(), String> {
-        let all_finite = self.position.is_finite()
-            && self.target.is_finite()
-            && self.up.is_finite()
-            && self.fov_degrees.is_finite();
+        let all_finite =
+            self.position.is_finite() && self.target.is_finite() && self.up.is_finite();
         if !all_finite {
             return Err(format!(
-                "camera values must be finite numbers, got position {}, target {}, up {}, fov {}",
-                self.position, self.target, self.up, self.fov_degrees
+                "camera values must be finite numbers, got position {}, target {}, up {}",
+                self.position, self.target, self.up
             ));
         }
-        if !(MIN_FOV_DEGREES..=MAX_FOV_DEGREES).contains(&self.fov_degrees) {
-            return Err(format!(
-                "camera fov must be from {MIN_FOV_DEGREES} to {MAX_FOV_DEGREES} degrees, got {}",
-                self.fov_degrees
-            ));
-        }
+        self.projection.validate()?;
         let view = self.target - self.position;
         if view.length() < MIN_GEOMETRY_EPSILON {
             return Err(format!(
@@ -94,7 +122,12 @@ mod tests {
     #[test]
     fn a_normal_camera_is_valid() {
         assert_eq!(camera().validate(), Ok(()));
-        assert_eq!(camera().fov_degrees, DEFAULT_FOV_DEGREES);
+        assert_eq!(
+            camera().projection,
+            CameraProjection::Perspective {
+                fov_degrees: DEFAULT_FOV_DEGREES
+            }
+        );
         assert_eq!(camera().up, Vec3::Y);
     }
 
@@ -119,7 +152,7 @@ mod tests {
     fn fov_outside_the_range_is_rejected() {
         for fov in [0.0, 0.5, 180.0, 400.0] {
             let mut bad = camera();
-            bad.fov_degrees = fov;
+            bad.projection = CameraProjection::Perspective { fov_degrees: fov };
             let error = bad.validate().unwrap_err();
             assert!(error.contains("fov must be from 1 to 179"), "{error}");
         }
@@ -131,7 +164,9 @@ mod tests {
         bad.position.x = f32::NAN;
         assert!(bad.validate().unwrap_err().contains("finite"));
         let mut bad = camera();
-        bad.fov_degrees = f32::INFINITY;
+        bad.projection = CameraProjection::Perspective {
+            fov_degrees: f32::INFINITY,
+        };
         assert!(bad.validate().unwrap_err().contains("finite"));
     }
 }

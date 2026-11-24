@@ -1,0 +1,18 @@
+# Mover of the preset check `preset_players` (see ../run.mjs --scenario preset_players): a client
+# without a renderer (`--no-render`, a true 64 Hz) that holds ArrowUp, so the players module moves
+# its body. The rendering client (client_b.cmds) watches. Join takes real time: wait for it.
+wait_until 3000 assert.net_joined
+wait 64
+input.key_down ArrowUp
+wait 16
+input.key_up ArrowUp
+# Let the cube come to rest.
+wait 600
+net.bodies
+net.stats
+assert.net_bytes_below sent 20000
+assert.net_bytes_below received 100000
+assert.net_corrections_at_most 200
+# Stay connected until the server has printed (see server.cmds).
+wait 1700
+quit
