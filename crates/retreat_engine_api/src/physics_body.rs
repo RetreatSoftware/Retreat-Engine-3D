@@ -6,9 +6,10 @@
 //! working if the engine changes physics library (Avian is the recorded fallback).
 
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 /// Makes an entity physical. Read once, in the tick it is added; later edits are ignored.
-#[derive(Component, Clone, Debug, PartialEq)]
+#[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[require(Transform)]
 pub struct PhysicsBody {
     pub kind: PhysicsBodyKind,
@@ -19,7 +20,7 @@ pub struct PhysicsBody {
 }
 
 /// Whether the body moves.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PhysicsBodyKind {
     /// Moved by gravity and collisions.
     Dynamic,
@@ -28,7 +29,7 @@ pub enum PhysicsBodyKind {
 }
 
 /// The collision shape, in the entity's local units.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum PhysicsShape {
     /// A box; `half_extents` go from the center to each face.
     Cuboid { half_extents: Vec3 },

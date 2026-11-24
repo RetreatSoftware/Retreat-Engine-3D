@@ -18,10 +18,12 @@
 //! **Limits.** Bodies created from server state start with zero velocity until the next correction;
 //! a body the client despawned inside its own history window refuses the rollback (see
 //! `physics_snapshot.rs`) and the client keeps its state until the next server state arrives.
-//! Messages are Rust values here; the binary encoding and the real transport come later.
+//! Messages cross the links as bytes (`wire.rs`: a version byte plus postcard); the real transport
+//! (WebTransport) comes later.
 
 pub mod body_state;
 pub mod link;
+pub mod wire;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -34,6 +36,7 @@ use crate::physics_snapshot::{PhysicsSnapshot, capture_physics, restore_physics}
 use body_state::{BodyState, apply_body_states, read_body_states};
 use link::{LinkConditions, SimulatedLink};
 use retreat_engine_api::PhysicsShape;
+use serde::{Deserialize, Serialize};
 
 /// Largest distance (world units) between predicted and server positions that still counts as
 /// "the same".
@@ -44,7 +47,7 @@ pub const VELOCITY_TOLERANCE: f32 = 1.0e-2;
 pub const MAX_HISTORY_TICKS: u64 = 512;
 
 /// What a client sends.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ClientMessage {
     /// Command lines to run at server tick `tick`.
     Input {
@@ -55,7 +58,7 @@ pub enum ClientMessage {
 }
 
 /// What the server sends.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ServerMessage {
     /// The state of every physics body after the server simulated `tick`.
     State { tick: u64, bodies: Vec<BodyState> },
@@ -377,8 +380,15 @@ pub struct HarnessConfig {
 pub struct NetHarness {
     pub server: ServerNode,
     pub clients: Vec<ClientNode>,
-    up_links: Vec<SimulatedLink<ClientMessage>>,
-    down_links: Vec<SimulatedLink<ServerMessage>>,
+    /// Links carry bytes: every message is encoded by `wire.rs` on send and decoded on arrival.
+    up_links: Vec<SimulatedLink<Vec<u8>>>,
+    down_links: Vec<SimulatedLink<Vec<u8>>>,
+    /// Bytes handed to the links so far (before loss), client to server and server to clients.
+    pub bytes_up: u64,
+    pub bytes_down: u64,
+    /// Messages that arrived but could not be decoded (never happens on these links; counted so a
+    /// wire bug shows up in tests).
+    pub undecodable_messages: u64,
     /// Ticks stepped so far (the server's tick equals this).
     pub global_tick: u64,
     config: HarnessConfig,
@@ -413,6 +423,9 @@ impl NetHarness {
             clients,
             up_links,
             down_links,
+            bytes_up: 0,
+            bytes_down: 0,
+            undecodable_messages: 0,
             global_tick: 0,
             config,
         }
@@ -426,23 +439,38 @@ impl NetHarness {
         // Server: take what arrived, simulate, broadcast.
         let mut arrived = Vec::new();
         for link in &mut self.up_links {
-            arrived.extend(link.deliver(now));
+            for bytes in link.deliver(now) {
+                match wire::decode_client_message(&bytes) {
+                    Ok(message) => arrived.push(message),
+                    Err(_) => self.undecodable_messages += 1,
+                }
+            }
         }
         if let Some(message) = self.server.step(arrived) {
+            let bytes = wire::encode_server_message(&message);
             for link in &mut self.down_links {
-                link.send(now, message.clone());
+                self.bytes_down += bytes.len() as u64;
+                link.send(now, bytes.clone());
             }
         }
         // Clients: take server states, predict, send inputs.
         for (index, client) in self.clients.iter_mut().enumerate() {
-            let incoming = self.down_links[index].deliver(now);
+            let mut incoming = Vec::new();
+            for bytes in self.down_links[index].deliver(now) {
+                match wire::decode_server_message(&bytes) {
+                    Ok(message) => incoming.push(message),
+                    Err(_) => self.undecodable_messages += 1,
+                }
+            }
             let lines: Vec<String> = inputs
                 .iter()
                 .filter(|(who, _)| *who == index)
                 .flat_map(|(_, lines)| lines.clone())
                 .collect();
             let message = client.step(lines, incoming);
-            self.up_links[index].send(now, message);
+            let bytes = wire::encode_client_message(&message);
+            self.bytes_up += bytes.len() as u64;
+            self.up_links[index].send(now, bytes);
         }
     }
 

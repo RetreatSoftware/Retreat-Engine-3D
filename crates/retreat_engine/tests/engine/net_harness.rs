@@ -299,3 +299,23 @@ fn physics_push_changes_a_bodys_velocity_and_refuses_fixed_or_unsimulated_bodies
     let error = run_command_line(app.world_mut(), "physics.push a 1 0").unwrap_err();
     assert!(error.to_string().contains("usage: physics.push"), "{error}");
 }
+
+#[test]
+fn messages_cross_the_links_as_bytes_and_the_bandwidth_is_small() {
+    let mut harness = harness(config(8, link(3, 1, 0.0), link(3, 1, 0.0)), 2);
+    run_plan(&mut harness, &two_box_plan(), 640);
+    assert_eq!(harness.undecodable_messages, 0);
+    // 640 ticks = 10 seconds of game time, two clients, a few bodies, a state every second tick.
+    let seconds = 10;
+    let down_per_client = harness.bytes_down / 2 / seconds;
+    let up_per_client = harness.bytes_up / 2 / seconds;
+    println!(
+        "bandwidth: server to each client {down_per_client} B/s, each client to server {up_per_client} B/s"
+    );
+    assert!(
+        down_per_client < 20_000,
+        "{down_per_client} B/s down per client"
+    );
+    assert!(up_per_client < 2_000, "{up_per_client} B/s up per client");
+    assert!(harness.bytes_up > 0 && harness.bytes_down > 0);
+}

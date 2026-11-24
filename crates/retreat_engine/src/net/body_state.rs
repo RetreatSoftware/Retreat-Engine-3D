@@ -8,11 +8,12 @@
 use bevy::prelude::*;
 use bevy_rapier3d::plugin::context::RapierRigidBodySet;
 use retreat_engine_api::PhysicsBody;
+use serde::{Deserialize, Serialize};
 
 use crate::physics::PhysicsProxy;
 
 /// One body's replicated state.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BodyState {
     /// `Name` of the game entity (unique; the key on every machine).
     pub name: String,

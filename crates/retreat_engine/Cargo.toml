@@ -7,7 +7,9 @@ publish.workspace = true
 
 [dependencies]
 # `wav`: Bevy decodes only .ogg by default; the sandbox test sounds are .wav (adds the `hound` crate).
-bevy = { workspace = true, features = ["wav"] }
+bevy = { workspace = true, features = ["wav", "serialize"] }
+postcard.workspace = true
+serde.workspace = true
 bevy_rapier3d.workspace = true
 retreat_engine_api.workspace = true
 retreat_rng.workspace = true
