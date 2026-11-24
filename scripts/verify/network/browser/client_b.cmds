@@ -1,10 +1,17 @@
 # Browser client B of the network check: joins, spawns its own box, pushes it the other way and waits for
-# the world to settle. It must still be connected when the server prints (server.cmds waits 5200 ticks), however fast the page loads: a client that left earlier is removed from the server's world.
-wait 150
-assert.net_joined
+# the world to settle.
+# Join takes real time that a tick count cannot predict (a slow browser needs seconds): wait for it.
+wait_until 3000 assert.net_joined
 net.send physics.spawn_box net_b 2 4 0 1
 wait 40
 net.send physics.push net_b -2 0 0
-wait 3800
+# Stay connected until the server has printed (see server.cmds).
+wait 3000
 net.bodies
+net.stats
+# Traffic budget (measured: about 11-19 KB sent, 13-57 KB received) with headroom. Corrections depend
+# on real timing; the bound only catches a prediction that stopped converging.
+assert.net_bytes_below sent 20000
+assert.net_bytes_below received 100000
+assert.net_corrections_at_most 200
 quit

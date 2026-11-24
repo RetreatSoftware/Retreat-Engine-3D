@@ -309,3 +309,80 @@ quit
         "{failure}"
     );
 }
+
+/// Ticks counted for the `wait_until` tests; `test.ready` succeeds once `READY_AFTER_TICKS` passed.
+#[derive(Resource, Default)]
+struct WaitUntilTicks(u32);
+
+const READY_AFTER_TICKS: u32 = 6;
+
+fn run_wait_until_script(text: &str) -> (Option<String>, u32) {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .add_plugins(RetreatCommandsPlugin {
+            seed: 0,
+            command_script: Some(CommandScript::from_text("wait.cmds", text)),
+        })
+        .init_resource::<WaitUntilTicks>()
+        .add_systems(FixedFirst, |mut ticks: ResMut<WaitUntilTicks>| ticks.0 += 1)
+        .register_command("test.ready", "test.ready", |world, args| {
+            if world.resource::<WaitUntilTicks>().0 >= READY_AFTER_TICKS {
+                Ok(CommandOutcome::Continue)
+            } else {
+                Err(args.failure("not ready yet"))
+            }
+        });
+    for _ in 0..MAX_UPDATES {
+        app.update();
+        if app.should_exit().is_some() {
+            break;
+        }
+    }
+    let ticks = app.world().resource::<WaitUntilTicks>().0;
+    let failure = app
+        .world()
+        .resource::<CommandScript>()
+        .failure()
+        .map(String::from);
+    (failure, ticks)
+}
+
+#[test]
+fn wait_until_retries_a_line_every_tick_until_it_succeeds() {
+    let (failure, ticks) = run_wait_until_script("wait_until 50 test.ready\nquit\n");
+    assert_eq!(failure, None);
+    assert!(
+        (READY_AFTER_TICKS..READY_AFTER_TICKS + 3).contains(&ticks),
+        "the script went on soon after the condition held, ticks = {ticks}"
+    );
+}
+
+#[test]
+fn wait_until_fails_with_the_commands_own_error_when_the_limit_passes() {
+    let (failure, _) = run_wait_until_script("wait_until 2 test.ready\nquit\n");
+    let failure = failure.expect("the script must fail");
+    assert!(failure.starts_with("wait.cmds:1:"), "{failure}");
+    assert!(
+        failure.contains("still failing after waiting 2 ticks"),
+        "{failure}"
+    );
+    assert!(failure.contains("not ready yet"), "{failure}");
+}
+
+#[test]
+fn wait_until_checks_its_own_arguments() {
+    let (failure, _) = run_wait_until_script("wait_until test.ready\nquit\n");
+    assert!(failure.expect("fails").contains("usage: wait_until"));
+    let (failure, _) = run_wait_until_script("wait_until many test.ready\nquit\n");
+    assert!(
+        failure
+            .expect("fails")
+            .contains("`many` is not a whole number")
+    );
+    let (failure, _) = run_wait_until_script("wait_until 5\nquit\n");
+    assert!(
+        failure
+            .expect("fails")
+            .contains("needs a tick limit and a command line")
+    );
+}

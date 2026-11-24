@@ -1,10 +1,16 @@
 # Client B of the network check: joins a little later than A, spawns its own box and pushes it the
 # other way, waits for the world to settle and prints what it sees.
-wait 150
-assert.net_joined
+# Join takes real time that a tick count cannot predict (a slow browser needs seconds): wait for it.
+wait_until 3000 assert.net_joined
 net.send physics.spawn_box net_b 2 4 0 1
 wait 40
 net.send physics.push net_b -2 0 0
 wait 380
 net.bodies
+net.stats
+# Traffic budget (measured: about 3 KB sent, 13-23 KB received) with headroom. Corrections depend
+# on real timing; the bound only catches a prediction that stopped converging.
+assert.net_bytes_below sent 20000
+assert.net_bytes_below received 100000
+assert.net_corrections_at_most 200
 quit

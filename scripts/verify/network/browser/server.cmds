@@ -1,8 +1,16 @@
 # Server of the network check with a browser client (see ../run.mjs --browser): the browser build needs
 # many seconds to load, so every script waits much longer than the native variants before it prints what
-# it sees, giving all bodies time to come to rest first.
-wait 5200
+# it sees, giving all bodies time to come to rest first. The server must print while the browser client
+# is still connected: Chrome closes its session cleanly on exit, so the server would remove that
+# client's player body at once, and a native client leaves silently (the server notices much later).
+wait 3300
 # (No client count here: the native client has already left by now. That both clients took part shows in
 # the bodies: net_a came from the native client and net_b from the browser client.)
 net.bodies
+net.stats
+# Traffic budget (measured: about 60-120 KB sent, 5-30 KB received) with 3x headroom, and no refusals:
+# every client here is honest, so any refusal is a bug in the client or in the limits.
+assert.net_bytes_below sent 400000
+assert.net_bytes_below received 100000
+assert.net_refusals_at_most 0
 quit

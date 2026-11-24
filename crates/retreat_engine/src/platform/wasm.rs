@@ -101,8 +101,7 @@ pub fn launch(window_title: &str, add_game_plugins: fn(&mut App)) -> AppExit {
 
 async fn load_engine_plugin(title: &str) -> Result<(RetreatEnginePlugin, LaunchOptions), String> {
     let window = web_sys::window().ok_or("there is no browser window")?;
-    let query = window.location().search().map_err(describe_js_error)?;
-    let options = LaunchOptions::from_url_query_pairs(url_query_pairs(&query)?)?;
+    let options = page_launch_options()?;
     let script = match &options.commands_file {
         Some(path) => {
             let path = path.to_string_lossy().to_string();
@@ -113,6 +112,13 @@ async fn load_engine_plugin(title: &str) -> Result<(RetreatEnginePlugin, LaunchO
     };
     let engine = RetreatEnginePlugin::from_launch_options(title, &options, script);
     Ok((engine, options))
+}
+
+/// The launch options the page URL asks for (`?commands=...&seed=...`).
+fn page_launch_options() -> Result<LaunchOptions, String> {
+    let window = web_sys::window().ok_or("there is no browser window")?;
+    let query = window.location().search().map_err(describe_js_error)?;
+    LaunchOptions::from_url_query_pairs(url_query_pairs(&query)?)
 }
 
 /// The decoded `(key, value)` pairs of a URL query such as `?commands=a.cmds&seed=3`.
@@ -374,3 +380,8 @@ impl retreat_engine_api::SaveBackend for LocalStorageSaveBackend {
         Ok(keys)
     }
 }
+
+// Tests that need a real browser (run by `scripts/web/test_wasm.sh`, CI's `browser` job).
+#[cfg(test)]
+#[path = "wasm_tests.rs"]
+mod wasm_tests;

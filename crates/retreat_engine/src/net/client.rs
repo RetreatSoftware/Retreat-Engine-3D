@@ -70,6 +70,10 @@ pub struct ClientStats {
     pub refused_rollbacks: u64,
     /// Ticks replayed in all corrections.
     pub replayed_ticks: u64,
+    /// Bytes of every datagram received from the server.
+    pub bytes_received: u64,
+    /// Bytes of every datagram sent to the server.
+    pub bytes_sent: u64,
 }
 
 /// One tick of a client's history.
@@ -120,6 +124,8 @@ pub struct NetClient {
     pub states_discarded: u64,
     /// Whether each partial tick is a full state (the flag is the same on every chunk of a tick).
     partial_full: BTreeMap<u64, bool>,
+    /// The transport reported `Connected`. Hellos (and the round-trip clock) start only then.
+    connected: bool,
 }
 
 impl NetClient {
@@ -229,6 +235,7 @@ pub fn install_client(
         assembler: StateAssembler::default(),
         states_discarded: 0,
         partial_full: BTreeMap::new(),
+        connected: false,
     })
     .insert_non_send(ClientTransportBox(Box::new(transport)))
     .add_systems(FixedFirst, client_before_tick)
@@ -246,9 +253,15 @@ fn pump_transport(world: &mut World) {
     };
     let mut client = world.resource_mut::<NetClient>();
     for event in transport.0.poll() {
-        let ClientEvent::Packet(bytes) = event else {
-            continue;
+        let bytes = match event {
+            ClientEvent::Packet(bytes) => bytes,
+            ClientEvent::Connected => {
+                client.connected = true;
+                continue;
+            }
+            ClientEvent::Disconnected(_) => continue,
         };
+        client.stats.bytes_received += bytes.len() as u64;
         match wire::decode_server_message(&bytes) {
             Ok(ServerMessage::Welcome {
                 nonce,
@@ -275,7 +288,10 @@ fn pump_transport(world: &mut World) {
             Err(_) => client.undecodable_packets += 1,
         }
     }
-    if client.phase == ClientPhase::Connecting {
+    // The round trip is measured from the first Hello, so Hellos wait for the connection: a browser
+    // needs seconds to open a WebTransport session, and counting them as round trip made the client
+    // start hundreds of ticks ahead of the server, far outside the window the server accepts.
+    if client.phase == ClientPhase::Connecting && client.connected {
         let due = match client.hello_first_sent_at {
             None => true,
             Some(first) => (client.steps - first).is_multiple_of(HELLO_RESEND_TICKS),
@@ -287,7 +303,9 @@ fn pump_transport(world: &mut World) {
                 nonce: client.nonce,
                 token: client.token.clone(),
             };
-            transport.0.send(wire::encode_client_message(&hello));
+            let hello_bytes = wire::encode_client_message(&hello);
+            client.stats.bytes_sent += hello_bytes.len() as u64;
+            transport.0.send(hello_bytes);
         }
     }
     client.steps += 1;
@@ -301,6 +319,9 @@ fn client_before_tick(world: &mut World) {
     let lines = {
         let mut client = world.resource_mut::<NetClient>();
         if client.phase != ClientPhase::Running {
+            // Input made before joining is dropped (see `queue_input`), including what modules
+            // queued: it would otherwise pile up and go out as one oversized `Input` on joining.
+            world.resource_mut::<NetInputQueue>().lines.clear();
             return;
         }
         if client.replaying {
@@ -363,6 +384,7 @@ fn client_after_tick(world: &mut World) {
             lines: inputs,
         });
         if let Some(mut transport) = world.remove_non_send::<ClientTransportBox>() {
+            world.resource_mut::<NetClient>().stats.bytes_sent += message.len() as u64;
             transport.0.send(message);
             world.insert_non_send(transport);
         }
@@ -454,11 +476,18 @@ fn correct(world: &mut World, server_tick: u64, server_bodies: &[BodyState]) {
         client.tick = server_tick;
         client.replaying = true;
     }
+    // Module systems keep queueing lines in `NetInputQueue` while ticks replay, but a replay runs
+    // the recorded inputs instead. Set aside the lines queued for the next real tick and put them
+    // back afterwards; without this the replay's lines pile up and go out as one oversized `Input`
+    // that the server refuses (found by `net.stats` on the players scenario).
+    let queued_for_next_tick = std::mem::take(&mut world.resource_mut::<NetInputQueue>().lines);
     for (_, lines) in replay_inputs {
         world.resource_mut::<NetClient>().replay_lines = lines;
         simulate_tick(world);
         world.resource_mut::<NetClient>().stats.replayed_ticks += 1;
+        world.resource_mut::<NetInputQueue>().lines.clear();
     }
+    world.resource_mut::<NetInputQueue>().lines = queued_for_next_tick;
     let mut client = world.resource_mut::<NetClient>();
     client.replaying = false;
     client.replay_lines.clear();

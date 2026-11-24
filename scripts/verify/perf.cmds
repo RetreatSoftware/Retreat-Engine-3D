@@ -1,0 +1,18 @@
+# Performance budgets (see crates/retreat_engine/src/perf.rs). Frame time is wall-clock, so the
+# budget is generous (it must hold on a software renderer in CI and in the browser); the counts are
+# exact. Measured first: perf.counts prints the real numbers.
+# Warm-up: the first frames compile shaders (seconds on a software renderer); measure after them.
+wait 120
+wait 60
+perf.frame_time
+perf.counts
+assert.frame_time_below 1000
+assert.entities_below 700
+assert.visible_meshes_below 3
+physics.spawn_box perf_box_a 0 3 0 1
+physics.spawn_box perf_box_b 2 3 0 1
+wait 30
+perf.counts
+assert.visible_meshes_below 5
+snapshot perf_scene
+quit

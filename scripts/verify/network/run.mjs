@@ -47,7 +47,11 @@ const scenarioFolder = scenario === "players" ? "players" : browserClient ? "bro
 const scriptDir = join(here, scenarioFolder);
 const webScriptDir = `scripts/verify/network${scenarioFolder ? `/${scenarioFolder}` : ""}`;
 
-function start(name, args, command = exe, fixedArgs = ["--headless", "--real-time", ...extra]) {
+// The native processes only simulate, so they draw nothing (`--no-render`): rendering on a software
+// GPU made them tick slower than the 64 Hz of the browser client, and processes whose tick numbers
+// drift apart get refused by the server (see CLAUDE.md, Networking). `--software-renderer` is still
+// passed, but unused without a renderer; it stays so that a changed flag set cannot reintroduce a GPU.
+function start(name, args, command = exe, fixedArgs = ["--headless", "--no-render", "--real-time", ...extra]) {
   const child = spawn(command, [...fixedArgs, ...args], { cwd: root });
   child.on("error", (error) => die(`cannot start ${name} (${command}): ${error.message}`));
   const process_ = { name, child, output: "", exited: null };
@@ -121,10 +125,14 @@ try {
       ]),
     );
   }
+  // The timer is cleared when the processes finish, otherwise it keeps node alive for TIMEOUT_MS after a pass.
+  let giveUp;
   const codes = await Promise.race([
     Promise.all(processes.map((p) => p.done)),
-    new Promise((_, reject) => setTimeout(() => reject(new Error("the processes did not finish in time")), TIMEOUT_MS)),
-  ]);
+    new Promise((_, reject) => {
+      giveUp = setTimeout(() => reject(new Error("the processes did not finish in time")), TIMEOUT_MS);
+    }),
+  ]).finally(() => clearTimeout(giveUp));
   processes.forEach((p, index) => {
     if (codes[index] !== 0) {
       failure = `${p.name} exited with code ${codes[index]}:\n${p.output.split("\n").filter((l) => /ERROR|error|panicked/.test(l)).join("\n")}`;
@@ -154,6 +162,12 @@ try {
       if (failure) break;
     }
     if (!failure) {
+      // The traffic counters each process printed with `net.stats` (their limits are asserted in the scripts).
+      for (const p of processes) {
+        const stats = [...p.output.matchAll(/net-stats (role=\S+ .*)/g)].pop();
+        if (p.name === "server") console.log((p.output.match(/net-stats-detail .*/g) ?? []).pop());
+        console.log(`network check: ${p.name}: ${stats ? stats[1].replace(/\[[0-9;]*m/g, "").trim() : "no net-stats line"}`);
+      }
       for (const [name, position] of reference) console.log(`network check: ${name} at ${position.join(" ")} on all three`);
     }
   }

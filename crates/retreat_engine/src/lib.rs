@@ -22,6 +22,7 @@ mod material;
 mod model;
 pub mod net;
 mod pending_command_work;
+mod perf;
 mod physics;
 mod physics_snapshot;
 mod platform;
@@ -63,6 +64,10 @@ pub use model::{
     MODEL_FILE_EXTENSIONS, MODEL_NODE_NAME_SEPARATOR, ModelCommandsPlugin, namespaced_node_name,
 };
 pub use pending_command_work::PendingCommandWork;
+pub use perf::{
+    FRAME_TIME_WINDOW, FrameTimeSummary, FrameTimes, MIN_FRAMES_FOR_ASSERT, PerfCommandsPlugin,
+    SceneCounts, count_scene,
+};
 pub use physics::{
     PHYSICS_PROXY_NAME_SUFFIX, PhysicsBox, PhysicsPlugin, PhysicsProxy, PhysicsProxyOf,
     spawn_body_from_description, spawn_physics_box,
@@ -88,6 +93,8 @@ pub struct RetreatEnginePlugin {
     pub window_title: String,
     /// No window; cameras render to an offscreen image (`--headless`).
     pub headless: bool,
+    /// Headless without any GPU or drawing (`--no-render`).
+    pub no_render: bool,
     /// Use the CPU fallback GPU adapter (`--software-renderer`).
     pub software_renderer: bool,
     /// `--real-time`: scripts run in real time (see `RealTimeScript`).
@@ -101,6 +108,7 @@ impl RetreatEnginePlugin {
         Self {
             window_title: window_title.into(),
             headless: false,
+            no_render: false,
             software_renderer: false,
             real_time: false,
             commands: RetreatCommandsPlugin::default(),
@@ -118,6 +126,7 @@ impl RetreatEnginePlugin {
         Self {
             window_title: window_title.into(),
             headless: options.headless,
+            no_render: options.no_render,
             software_renderer: options.software_renderer,
             real_time: options.real_time,
             commands: RetreatCommandsPlugin {
@@ -141,6 +150,12 @@ impl RetreatEnginePlugin {
         RenderPlugin {
             render_creation: WgpuSettings {
                 force_fallback_adapter: self.software_renderer,
+                // No backends: Bevy starts no GPU and no render sub-app (`--no-render`).
+                backends: if self.no_render {
+                    None
+                } else {
+                    WgpuSettings::default().backends
+                },
                 ..default()
             }
             .into(),
@@ -172,7 +187,9 @@ impl Plugin for RetreatEnginePlugin {
             // Replaces winit's loop: run frames back to back, with no pause between them.
             // (`DefaultPlugins` only contains this plugin when built without winit.)
             app.add_plugins(ScheduleRunnerPlugin::run_loop(Duration::ZERO));
-            app.add_plugins(headless::HeadlessRenderPlugin);
+            if !self.no_render {
+                app.add_plugins(headless::HeadlessRenderPlugin);
+            }
         } else {
             let window_plugin = WindowPlugin {
                 primary_window: Some(platform::primary_window(&self.window_title)),
@@ -195,7 +212,6 @@ impl Plugin for RetreatEnginePlugin {
             ModelCommandsPlugin,
             MaterialCommandsPlugin,
             ShaderMaterialCommandsPlugin,
-            gpu_pipeline_errors::GpuPipelineErrorsPlugin,
             PhysicsPlugin,
             StateHashPlugin,
             InputActionsPlugin,
@@ -207,6 +223,12 @@ impl Plugin for RetreatEnginePlugin {
             UiPanelsPlugin,
             platform::PlatformPlugin,
         ));
+        // Bevy's plugin tuples hold at most 15 entries, so this one has its own call.
+        app.add_plugins(PerfCommandsPlugin);
+        // Scans the render world for failed pipelines, so it needs one.
+        if !self.no_render {
+            app.add_plugins(gpu_pipeline_errors::GpuPipelineErrorsPlugin);
+        }
     }
 }
 

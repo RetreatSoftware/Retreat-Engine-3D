@@ -18,6 +18,7 @@ mod model_commands;
 mod net_harness;
 mod net_server_limits;
 mod net_webtransport;
+mod perf_commands;
 mod physics_commands;
 mod physics_rollback;
 mod shader_material_commands;

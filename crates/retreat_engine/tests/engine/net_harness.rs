@@ -728,3 +728,110 @@ fn a_local_only_body_is_neither_sent_nor_removed_by_corrections() {
         .collect();
     assert!(!server_names.contains(&"debris".to_string()));
 }
+
+#[test]
+fn net_stats_count_every_byte_and_the_asserts_judge_them() {
+    use retreat_engine::net::client::NetClient;
+    use retreat_engine::net::server::NetServer;
+    use retreat_engine_api::run_command_line;
+    let mut harness = harness(
+        config(8, LinkConditions::PERFECT, LinkConditions::PERFECT),
+        2,
+    );
+    run_plan(&mut harness, &two_box_plan(), 200);
+    let (up, down) = harness.bytes();
+    // The process counters add up to what crossed the links.
+    let server_stats = harness.server_app.world().resource::<NetServer>().stats;
+    assert_eq!(
+        server_stats.bytes_sent, down,
+        "server bytes sent = link bytes down"
+    );
+    let client_sent: u64 = harness
+        .client_apps
+        .iter()
+        .map(|app| app.world().resource::<NetClient>().stats.bytes_sent)
+        .sum();
+    assert_eq!(client_sent, up, "client bytes sent = link bytes up");
+    assert!(server_stats.bytes_received > 0 && server_stats.bytes_received <= up);
+
+    // Commands: the server judges bytes, late inputs and refusals; a client judges corrections.
+    let server_world = harness.server_app.world_mut();
+    run_command_line(server_world, "net.stats").unwrap();
+    run_command_line(server_world, "assert.net_bytes_below sent 100000000").unwrap();
+    let error = run_command_line(server_world, "assert.net_bytes_below sent 100").unwrap_err();
+    assert!(
+        error.to_string().contains("expected fewer than 100"),
+        "{error}"
+    );
+    let error = run_command_line(server_world, "assert.net_bytes_below up 100").unwrap_err();
+    assert!(
+        error.to_string().contains("not `sent` or `received`"),
+        "{error}"
+    );
+    run_command_line(server_world, "assert.net_late_inputs_at_most 0").unwrap();
+    run_command_line(server_world, "assert.net_refusals_at_most 0").unwrap();
+    let error = run_command_line(server_world, "assert.net_corrections_at_most 0").unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("only exists on a network client"),
+        "{error}"
+    );
+    let client_world = harness.client_apps[0].world_mut();
+    run_command_line(client_world, "net.stats").unwrap();
+    run_command_line(client_world, "assert.net_bytes_below received 100000000").unwrap();
+    run_command_line(client_world, "assert.net_corrections_at_most 0").unwrap();
+    let error = run_command_line(client_world, "assert.net_refusals_at_most 0").unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("only exists on a network server"),
+        "{error}"
+    );
+}
+
+#[test]
+fn net_stats_commands_fail_outside_a_networked_app() {
+    use retreat_engine_api::run_command_line;
+    let mut app = make_app();
+    for line in ["net.stats", "assert.net_bytes_below sent 1"] {
+        let error = run_command_line(app.world_mut(), line).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("neither a network server nor a client"),
+            "{line}: {error}"
+        );
+    }
+}
+
+/// `make_app` plus a module-like system that queues one line per fixed tick (like the players
+/// module while a key is held). The server's queue does not accept lines, so only clients send.
+fn make_app_with_a_line_every_tick() -> App {
+    let mut app = make_app();
+    app.add_systems(
+        FixedUpdate,
+        |mut queue: ResMut<retreat_engine_api::NetInputQueue>| {
+            queue.push("physics.push nothing 0 0 0");
+        },
+    );
+    app
+}
+
+#[test]
+fn lines_queued_by_modules_during_a_replay_are_not_sent_as_one_oversized_input() {
+    // Late inputs force corrections that replay many ticks; each replayed tick runs the module's
+    // system again. Those lines must not pile up into the next real input (limit: 16 lines).
+    let mut harness = NetHarness::new(
+        config(-5, link(14, 0, 0.0), link(12, 0, 0.0)),
+        ALLOWED,
+        1,
+        make_app_with_a_line_every_tick,
+    );
+    run_plan(&mut harness, &two_box_plan(), 600);
+    let client_stats = harness.client(0).stats;
+    assert!(client_stats.replayed_ticks > 16, "{client_stats:?}");
+    let server_stats = harness.server().stats;
+    assert_eq!(server_stats.inputs_bad_shape, 0, "{server_stats:?}");
+    assert_eq!(server_stats.refusals(), 0, "{server_stats:?}");
+}

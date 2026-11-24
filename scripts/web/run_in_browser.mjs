@@ -159,9 +159,17 @@ async function main() {
   const { targetId } = await devtools.call("Target.createTarget", { url: "about:blank" });
   const { sessionId } = await devtools.call("Target.attachToTarget", { targetId, flatten: true });
   devtools.onEvent((message) => {
-    if (message.sessionId !== sessionId || message.method !== "Runtime.consoleAPICalled") return;
+    if (message.sessionId !== sessionId) return;
+    // Uncaught exceptions and unhandled promise rejections (for example a WebTransport session that
+    // failed) never reach console.error, so without this a failed connection is silent.
+    if (message.method === "Runtime.exceptionThrown") {
+      const details = message.params.exceptionDetails;
+      console.log(`[page] EXCEPTION ${details.exception?.description ?? details.text}`);
+      return;
+    }
+    if (message.method !== "Runtime.consoleAPICalled") return;
     const text = message.params.args.map((arg) => arg.value ?? arg.description ?? "").join(" ");
-    if (/ERROR|state\.hash|panicked|net-body/.test(text)) console.log(`[page] ${text.replace(/%c/g, "")}`);
+    if (/ERROR|state\.hash|panicked|net-body|net-stats|net client/.test(text)) console.log(`[page] ${text.replace(/%c/g, "")}`);
   });
   await devtools.call("Runtime.enable", {}, sessionId);
   await devtools.call("Page.navigate", { url: pageUrl }, sessionId);

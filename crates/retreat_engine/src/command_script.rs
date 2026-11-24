@@ -27,6 +27,9 @@ use crate::platform::SCRIPT_END_EXITS_APP;
 /// stuck script gives up, so it does not affect what a passing script does.
 pub const PENDING_WORK_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// The script-level `wait_until` keyword (see `run_wait_until_line`).
+const WAIT_UNTIL: &str = "wait_until";
+
 /// A loaded script and how far it has run. Present as a resource only while the app
 /// was launched with `--commands`.
 #[derive(Resource, Debug, Clone)]
@@ -42,6 +45,8 @@ pub struct CommandScript {
     waiting_for_work_since: Option<Instant>,
     /// See [`PENDING_WORK_TIMEOUT`]; tests shorten it with [`Self::with_pending_work_timeout`].
     pending_work_timeout: Duration,
+    /// Ticks left for the `wait_until` line being retried; `None` when no such line is retrying.
+    wait_until_budget: Option<u32>,
     /// The first error, with its `file:line` prefix. Once set, the script stops.
     failure: Option<String>,
 }
@@ -56,6 +61,7 @@ impl CommandScript {
             last_line_number: 0,
             waiting_for_work_since: None,
             pending_work_timeout: PENDING_WORK_TIMEOUT,
+            wait_until_budget: None,
             failure: None,
         }
     }
@@ -188,6 +194,10 @@ fn run_next_script_line(world: &mut World) {
             return;
         };
         script.last_line_number = line_number;
+        if let Some(rest) = wait_until_rest(&text) {
+            run_wait_until_line(world, &mut script, line_number, rest);
+            return;
+        }
         match run_command_line(world, &text) {
             Ok(CommandOutcome::Continue) => {
                 if world.remove_resource::<QuitRequested>().is_some() {
@@ -198,6 +208,73 @@ fn run_next_script_line(world: &mut World) {
             Err(error) => fail_script(world, &mut script, line_number, error),
         }
     });
+}
+
+/// The text after `wait_until` when `text` is a `wait_until` line.
+fn wait_until_rest(text: &str) -> Option<&str> {
+    let trimmed = text.trim_start();
+    let rest = trimmed.strip_prefix(WAIT_UNTIL)?;
+    (rest.is_empty() || rest.starts_with(char::is_whitespace)).then_some(rest.trim())
+}
+
+/// A script-level construct (not a registered command, because a command cannot run another
+/// command): `wait_until <max_ticks> <command line...>` runs the command line on every tick until it
+/// succeeds, so a script waits for a condition (`wait_until 1200 assert.net_joined`) instead of a
+/// guessed number of ticks. If it still fails after `max_ticks` retries the script fails with the
+/// command's own last error, prefixed with how long it waited.
+fn run_wait_until_line(
+    world: &mut World,
+    script: &mut CommandScript,
+    line_number: usize,
+    rest: &str,
+) {
+    let usage = "usage: wait_until <max_ticks> <command line...>";
+    let Some((max_text, inner)) = rest.split_once(char::is_whitespace) else {
+        fail_script(
+            world,
+            script,
+            line_number,
+            format!("`wait_until` needs a tick limit and a command line; {usage}"),
+        );
+        return;
+    };
+    let Ok(max_ticks) = max_text.parse::<u32>() else {
+        fail_script(
+            world,
+            script,
+            line_number,
+            format!("`wait_until` tick limit `{max_text}` is not a whole number; {usage}"),
+        );
+        return;
+    };
+    let budget = script.wait_until_budget.unwrap_or(max_ticks);
+    match run_command_line(world, inner.trim()) {
+        Ok(outcome) => {
+            script.wait_until_budget = None;
+            match outcome {
+                CommandOutcome::Continue => {
+                    if world.remove_resource::<QuitRequested>().is_some() {
+                        script.end();
+                    }
+                }
+                CommandOutcome::WaitFrames(frames) => script.frames_to_wait = frames,
+            }
+        }
+        Err(_) if budget > 0 => {
+            // Run this same line again on the next tick.
+            script.wait_until_budget = Some(budget - 1);
+            script.next_line_index -= 1;
+        }
+        Err(error) => {
+            script.wait_until_budget = None;
+            fail_script(
+                world,
+                script,
+                line_number,
+                format!("still failing after waiting {max_ticks} ticks: {error}"),
+            );
+        }
+    }
 }
 
 /// Runs at the end of every update (`Last`). While [`PendingCommandWork`] is busy it pauses

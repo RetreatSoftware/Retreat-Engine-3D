@@ -6,7 +6,7 @@ use std::path::PathBuf;
 pub const DEFAULT_SEED: u64 = 0;
 
 /// Shown after every launch-argument error.
-const LAUNCH_USAGE: &str = "usage: <app> [--commands <script.cmds>] [--seed <whole number>] [--headless] [--software-renderer] [--real-time] [--server <port> | --connect <https://host:port> [--cert-hash <64 hex digits>]]";
+const LAUNCH_USAGE: &str = "usage: <app> [--commands <script.cmds>] [--seed <whole number>] [--headless [--no-render]] [--software-renderer] [--real-time] [--server <port> | --connect <https://host:port> [--cert-hash <64 hex digits>]]";
 
 /// Whether and how the app takes part in a network game.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -33,6 +33,10 @@ pub struct LaunchOptions {
     pub seed: u64,
     /// `--headless`: no window; cameras render to an offscreen image (native only).
     pub headless: bool,
+    /// `--no-render` (needs `--headless`): no GPU at all, nothing is drawn and `snapshot` fails. For
+    /// processes that only simulate (a server, a network-check client): without the render cost
+    /// they tick at the full fixed rate even on a machine without a GPU.
+    pub no_render: bool,
     /// `--software-renderer`: use the CPU fallback GPU adapter (WARP on Windows, lavapipe on
     /// Linux), so rendering works on machines without a GPU, such as CI.
     pub software_renderer: bool,
@@ -49,6 +53,7 @@ impl Default for LaunchOptions {
             commands_file: None,
             seed: DEFAULT_SEED,
             headless: false,
+            no_render: false,
             software_renderer: false,
             real_time: false,
             net: NetLaunch::Off,
@@ -81,6 +86,7 @@ impl LaunchOptions {
                     })?;
                 }
                 "--headless" => options.headless = true,
+                "--no-render" => options.no_render = true,
                 "--software-renderer" => options.software_renderer = true,
                 "--real-time" => options.real_time = true,
                 "--server" => {
@@ -104,6 +110,11 @@ impl LaunchOptions {
                     ));
                 }
             }
+        }
+        if options.no_render && !options.headless {
+            return Err(format!(
+                "--no-render only makes sense with --headless (a window needs the GPU); {LAUNCH_USAGE}"
+            ));
         }
         match (&mut options.net, cert_hash) {
             (
@@ -209,6 +220,17 @@ mod tests {
         assert_eq!(
             parse(&["--seed", "42", "--commands", "scripts/verify/a.cmds"]),
             Ok(expected)
+        );
+    }
+
+    #[test]
+    fn no_render_needs_headless() {
+        let options = parse(&["--headless", "--no-render"]).expect("valid arguments");
+        assert!(options.no_render);
+        let error = parse(&["--no-render"]).unwrap_err();
+        assert!(
+            error.contains("--no-render only makes sense with --headless"),
+            "{error}"
         );
     }
 

@@ -3,4 +3,10 @@
 wait 1400
 assert.net_clients 2
 net.bodies
+net.stats
+# Traffic budget (measured: about 40-60 KB sent, 5 KB received) with 3x headroom, and no refusals:
+# every client here is honest, so any refusal is a bug in the client or in the limits.
+assert.net_bytes_below sent 200000
+assert.net_bytes_below received 50000
+assert.net_refusals_at_most 0
 quit

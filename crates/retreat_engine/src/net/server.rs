@@ -73,6 +73,29 @@ pub struct ServerStats {
     pub join_timeouts: u64,
     /// Hellos the identity check denied.
     pub identity_denied: u64,
+    /// Bytes of every datagram received (including refused ones).
+    pub bytes_received: u64,
+    /// Bytes of every datagram sent (one count per receiving connection).
+    pub bytes_sent: u64,
+}
+
+impl ServerStats {
+    /// Every refusal counter added up: what `assert.net_refusals_at_most` checks. Byte counters
+    /// are not refusals.
+    pub fn refusals(&self) -> u64 {
+        self.datagrams_muted
+            + self.datagrams_too_large
+            + self.datagrams_rate_limited
+            + self.inputs_rate_limited
+            + self.inputs_bad_shape
+            + self.inputs_bad_tick
+            + self.tokens_too_long
+            + self.connections_muted
+            + self.connections_kicked
+            + self.connections_refused_full
+            + self.join_timeouts
+            + self.identity_denied
+    }
 }
 
 /// What the server tracks per open connection.
@@ -187,6 +210,7 @@ fn server_before_tick(world: &mut World) {
                 }
                 ServerEvent::Disconnected(id) => forget_connection(world, &mut server, id),
                 ServerEvent::Packet { from, bytes } => {
+                    server.stats.bytes_received += bytes.len() as u64;
                     handle_packet(world, &mut server, &mut *transport.0, next, from, &bytes);
                 }
             }
@@ -350,7 +374,9 @@ fn handle_packet(
                 client_id: from,
                 tick: server.tick,
             };
-            transport.send(from, wire::encode_server_message(&welcome));
+            let welcome_bytes = wire::encode_server_message(&welcome);
+            server.stats.bytes_sent += welcome_bytes.len() as u64;
+            transport.send(from, welcome_bytes);
         }
         Ok(ClientMessage::Input { tick, lines }) => {
             // Input from a connection that never said hello is ignored.
@@ -466,6 +492,8 @@ fn server_after_tick(world: &mut World) {
                 chunks: pieces.len() as u16,
                 bodies: piece.to_vec(),
             });
+            world.resource_mut::<NetServer>().stats.bytes_sent +=
+                (bytes.len() * known.len()) as u64;
             for id in &known {
                 transport.0.send(*id, bytes.clone());
             }
