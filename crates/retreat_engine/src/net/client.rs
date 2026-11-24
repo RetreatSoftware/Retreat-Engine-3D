@@ -10,7 +10,7 @@
 //!   client's own history and, on a mismatch, rewinds, applies the server's state and replays the inputs.
 //!   It runs outside `FixedMain` because a replay runs `FixedMain` itself.
 //!
-//! **Join.** The client sends `Hello { nonce }` every [`HELLO_RESEND_TICKS`] ticks until the server's
+//! **Join.** The client sends `Hello { nonce, token }` every [`HELLO_RESEND_TICKS`] ticks until the server's
 //! `Welcome` arrives, measures the round trip in ticks and starts simulating at
 //! `welcome.tick + round trip + margin_ticks`: where the server will be when the client's inputs arrive,
 //! plus a margin for jitter (negative margins make inputs late on purpose, in tests).
@@ -36,12 +36,14 @@ const PARTIAL_STATE_TICKS: u64 = 64;
 pub const HELLO_RESEND_TICKS: u64 = 16;
 
 /// How the client behaves.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct ClientConfig {
     /// Ticks added to the measured round trip when choosing how far ahead of the server to run.
     pub margin_ticks: i64,
     /// Identifies this `Hello` (the server echoes it).
     pub nonce: u32,
+    /// Sent in the `Hello` for the server's identity check (`None` when the platform gave none).
+    pub token: Option<String>,
 }
 
 /// Where a client is in joining.
@@ -92,6 +94,7 @@ pub struct NetClient {
     /// Lines that failed on this client (a prediction that the rules refuse).
     pub rejected_lines: Vec<String>,
     nonce: u32,
+    token: Option<String>,
     margin_ticks: i64,
     /// Ticks seen so far (the clock before the client has a tick of its own).
     steps: u64,
@@ -211,6 +214,7 @@ pub fn install_client(
         stats: ClientStats::default(),
         rejected_lines: Vec::new(),
         nonce: config.nonce,
+        token: config.token,
         margin_ticks: config.margin_ticks,
         steps: 0,
         hello_first_sent_at: None,
@@ -281,6 +285,7 @@ fn pump_transport(world: &mut World) {
             client.hello_first_sent_at.get_or_insert(step);
             let hello = ClientMessage::Hello {
                 nonce: client.nonce,
+                token: client.token.clone(),
             };
             transport.0.send(wire::encode_client_message(&hello));
         }

@@ -60,6 +60,7 @@ pub(crate) fn install_net(app: &mut App, net: &NetLaunch) -> Result<(), String> 
                 NetServerConfig {
                     allowed_commands: allowed,
                     state_interval_ticks: SERVER_STATE_INTERVAL_TICKS,
+                    limits: Default::default(),
                 },
                 transport,
             );
@@ -72,6 +73,7 @@ pub(crate) fn install_net(app: &mut App, net: &NetLaunch) -> Result<(), String> 
                 NetClientConfig {
                     margin_ticks: CLIENT_MARGIN_TICKS,
                     nonce: std::process::id(),
+                    token: None,
                 },
                 transport,
             );
@@ -210,6 +212,14 @@ impl ServerTransport for WebTransportServer {
             return;
         }
         let _ = connection.send_datagram(bytes);
+    }
+
+    fn disconnect(&mut self, id: ConnectionId) {
+        let connection = self.connections.lock().unwrap().get(&id).cloned();
+        if let Some(connection) = connection {
+            // The receive loop of this connection then ends and reports `Disconnected`.
+            connection.close(wtransport::VarInt::from_u32(1), b"refused by the server");
+        }
     }
 }
 

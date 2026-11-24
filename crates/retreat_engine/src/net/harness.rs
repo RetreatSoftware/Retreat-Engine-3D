@@ -6,6 +6,7 @@
 use bevy::prelude::*;
 
 use super::client::{ClientConfig, ClientPhase, NetClient, install_client, process_client_states};
+use super::limits::ServerLimits;
 use super::link::LinkConditions;
 use super::server::{NetServer, ServerConfig, install_server};
 use super::transport::LoopbackNetwork;
@@ -46,6 +47,23 @@ impl NetHarness {
         client_count: u32,
         make_app: impl Fn() -> App,
     ) -> Self {
+        Self::with_limits(
+            config,
+            ServerLimits::default(),
+            allowed_commands,
+            client_count,
+            make_app,
+        )
+    }
+
+    /// Like [`NetHarness::new`] with the server's `limits` chosen by the caller.
+    pub fn with_limits(
+        config: HarnessConfig,
+        limits: ServerLimits,
+        allowed_commands: &[&str],
+        client_count: u32,
+        make_app: impl Fn() -> App,
+    ) -> Self {
         let network = LoopbackNetwork::new(config.up, config.down, config.seed);
         let mut server_app = make_app();
         install_server(
@@ -53,6 +71,7 @@ impl NetHarness {
             ServerConfig {
                 allowed_commands: allowed_commands.iter().map(|id| id.to_string()).collect(),
                 state_interval_ticks: config.state_interval_ticks,
+                limits,
             },
             network.server(),
         );
@@ -65,6 +84,7 @@ impl NetHarness {
                     ClientConfig {
                         margin_ticks: config.margin_ticks,
                         nonce: 1000 + id,
+                        token: None,
                     },
                     network.connect(),
                 );
@@ -111,6 +131,11 @@ impl NetHarness {
     /// running but nothing it sends arrives and nothing reaches it.
     pub fn disconnect_client(&mut self, index: usize) {
         self.network.disconnect(index as u32);
+    }
+
+    /// The in-process network, to connect extra raw connections (tests of misbehaving clients).
+    pub fn network(&self) -> &LoopbackNetwork {
+        &self.network
     }
 
     /// Changes the link conditions of every client from now on.

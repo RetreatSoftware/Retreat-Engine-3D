@@ -16,6 +16,7 @@ mod input_actions_commands;
 mod material_commands;
 mod model_commands;
 mod net_harness;
+mod net_server_limits;
 mod net_webtransport;
 mod physics_commands;
 mod physics_rollback;

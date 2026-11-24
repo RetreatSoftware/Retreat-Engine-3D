@@ -27,6 +27,7 @@ pub mod body_state;
 pub mod client;
 pub mod commands;
 pub mod harness;
+pub mod limits;
 pub mod link;
 pub mod server;
 pub mod state_delta;
@@ -53,8 +54,9 @@ pub const MAX_HISTORY_TICKS: u64 = crate::ROLLBACK_WINDOW_TICKS;
 /// What a client sends.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ClientMessage {
-    /// Asks to join; the server answers with `Welcome` carrying the same `nonce`.
-    Hello { nonce: u32 },
+    /// Asks to join; the server answers with `Welcome` carrying the same `nonce`. `token` is whatever
+    /// the platform gave the client to prove who it is; only the server's `NetIdentityCheck` reads it.
+    Hello { nonce: u32, token: Option<String> },
     /// Command lines to run at server tick `tick`. (Who sent it is the connection, never a field the
     /// client could forge.)
     Input { tick: u64, lines: Vec<String> },

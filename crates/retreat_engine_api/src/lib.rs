@@ -58,8 +58,9 @@ pub use input_actions::{
     InputKey,
 };
 pub use net::{
-    AppNetExt, NetAllowedCommands, NetClientJoined, NetClientLeft, NetCommandSender, NetInputQueue,
-    Replicated, SyncedKind, add_net_contract,
+    AcceptEveryone, AppNetExt, NetAllowedCommands, NetClientJoined, NetClientLeft,
+    NetCommandSender, NetIdentity, NetIdentityCheck, NetIdentityDecision, NetIdentityRequest,
+    NetInputQueue, NetPlayerIds, Replicated, SyncedKind, add_net_contract,
 };
 pub use physics_body::{
     PhysicsBody, PhysicsBodyKind, PhysicsShape, PhysicsVelocityChange, RemovePhysicsBody,

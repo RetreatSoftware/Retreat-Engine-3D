@@ -470,7 +470,7 @@ fn net_commands_send_input_report_status_and_check_roles() {
 #[test]
 fn a_world_with_many_bodies_is_replicated_in_chunks() {
     let mut harness = harness(config(8, link(2, 1, 0.0), link(2, 1, 0.0)), 2);
-    // 60 boxes in one tick: far more than one state message holds.
+    // 60 boxes: far more than one state message holds.
     let lines: Vec<String> = (0..60)
         .map(|index| {
             let x = (index % 10) as f32 * 1.2 - 5.0;
@@ -481,7 +481,10 @@ fn a_world_with_many_bodies_is_replicated_in_chunks() {
             )
         })
         .collect();
-    harness.step(&[(0, lines)]);
+    // A player may send at most `max_lines_per_input` lines per tick, so it takes a few ticks.
+    for batch in lines.chunks(10) {
+        harness.step(&[(0, batch.to_vec())]);
+    }
     harness.run_idle(500);
     let names = |harness: &mut NetHarness, index: usize| -> usize {
         read_body_states(harness.client_apps[index].world_mut())

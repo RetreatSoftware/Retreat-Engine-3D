@@ -40,6 +40,7 @@ fn two_clients_play_through_a_real_webtransport_server_and_converge() {
         ServerConfig {
             allowed_commands: ALLOWED.iter().map(|id| id.to_string()).collect(),
             state_interval_ticks: 2,
+            limits: Default::default(),
         },
         transport,
     );
@@ -53,6 +54,7 @@ fn two_clients_play_through_a_real_webtransport_server_and_converge() {
                 ClientConfig {
                     margin_ticks: 6,
                     nonce: 500 + id,
+                    token: None,
                 },
                 transport,
             );

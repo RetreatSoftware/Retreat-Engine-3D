@@ -39,6 +39,9 @@ pub trait ServerTransport {
     fn poll(&mut self) -> Vec<ServerEvent>;
     /// Sends a datagram to one client (dropped if the connection is gone).
     fn send(&mut self, to: ConnectionId, bytes: Vec<u8>);
+    /// Ends a connection from the server's side (a refused or misbehaving client). The server forgets
+    /// the connection at once; a transport may still report `Disconnected` for it later.
+    fn disconnect(&mut self, id: ConnectionId);
 }
 
 /// The client side of a transport.
@@ -186,6 +189,12 @@ impl ServerTransport for LoopbackServer {
             && !connection.closed
         {
             connection.down.send(now, bytes);
+        }
+    }
+
+    fn disconnect(&mut self, id: ConnectionId) {
+        if let Some(connection) = self.shared.borrow_mut().connections.get_mut(id as usize) {
+            connection.closed = true;
         }
     }
 }

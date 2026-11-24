@@ -83,6 +83,7 @@ pub(crate) fn install_net(app: &mut App, net: &NetLaunch) -> Result<(), String> 
                 NetClientConfig {
                     margin_ticks: CLIENT_MARGIN_TICKS,
                     nonce: js_sys::Math::random().to_bits() as u32,
+                    token: None,
                 },
                 transport,
             );

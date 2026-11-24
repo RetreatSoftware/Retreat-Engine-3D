@@ -12,6 +12,9 @@
 //! - [`NetInputQueue`]: a **client** module pushes the command lines for the player's input here; the
 //!   engine runs them on the client and sends them to the server, once per tick. In single player nothing
 //!   drains it.
+//! - [`NetIdentityCheck`] / [`NetIdentity`]: the server's hook that decides whether a joining client is
+//!   let in and which stable player id it gets. The default accepts everyone; a platform's trusted
+//!   backend plugs in its own check. [`NetPlayerIds`] lists the id of every joined client.
 
 use std::collections::BTreeSet;
 
@@ -36,6 +39,67 @@ pub struct NetClientLeft {
 /// Command ids a server runs for clients.
 #[derive(Resource, Default, Debug, Clone, PartialEq, Eq)]
 pub struct NetAllowedCommands(pub BTreeSet<String>);
+
+/// What a [`NetIdentityCheck`] is asked when a client says hello.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NetIdentityRequest<'a> {
+    /// The server's id for this connection (never chosen by the client).
+    pub connection_id: u32,
+    /// The token the client put in its hello (whatever the platform handed it), or `None`. The server
+    /// does not interpret it: only the check does. A token is a claim, never proof, until the check
+    /// has verified it.
+    pub token: Option<&'a str>,
+}
+
+/// The answer of a [`NetIdentityCheck`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NetIdentityDecision {
+    /// Let the client in as this stable player id (the same person gets the same id on every
+    /// connection; the server never takes an id from the client's own claims).
+    Allow { player_id: String },
+    /// Refuse: the server disconnects the client. The reason is logged and counted, never sent.
+    Deny { reason: String },
+}
+
+/// Decides who may join a server. Library-neutral: a platform adapter implements it (for example by
+/// asking a trusted backend to verify the token) and inserts it with [`NetIdentity::new`]. It runs once
+/// per connection, when the first hello arrives, on the simulation thread, so it must not block.
+pub trait NetIdentityCheck: Send + Sync {
+    fn check(&self, request: NetIdentityRequest) -> NetIdentityDecision;
+}
+
+/// The default check: everyone is allowed, as the player id `guest-<connection id>`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AcceptEveryone;
+
+impl NetIdentityCheck for AcceptEveryone {
+    fn check(&self, request: NetIdentityRequest) -> NetIdentityDecision {
+        NetIdentityDecision::Allow {
+            player_id: format!("guest-{}", request.connection_id),
+        }
+    }
+}
+
+/// The server's identity check (a resource; defaults to [`AcceptEveryone`]).
+#[derive(Resource)]
+pub struct NetIdentity(pub Box<dyn NetIdentityCheck>);
+
+impl NetIdentity {
+    pub fn new(check: impl NetIdentityCheck + 'static) -> Self {
+        Self(Box::new(check))
+    }
+}
+
+impl Default for NetIdentity {
+    fn default() -> Self {
+        Self::new(AcceptEveryone)
+    }
+}
+
+/// The player id of every joined client, by client id (written by the server just before it writes
+/// [`NetClientJoined`], and removed after [`NetClientLeft`]). Empty on a client.
+#[derive(Resource, Default, Debug, Clone, PartialEq, Eq)]
+pub struct NetPlayerIds(pub std::collections::BTreeMap<u32, String>);
 
 /// Command lines a client module wants to send as the player's input this tick. The engine sets
 /// `accepting` when the app is a network client; until then [`NetInputQueue::push`] drops lines, so a
@@ -142,6 +206,8 @@ pub fn add_net_contract(app: &mut App) {
     app.init_resource::<NetCommandSender>()
         .init_resource::<NetAllowedCommands>()
         .init_resource::<NetInputQueue>()
+        .init_resource::<NetIdentity>()
+        .init_resource::<NetPlayerIds>()
         .add_message::<NetClientJoined>()
         .add_message::<NetClientLeft>();
 }
@@ -185,6 +251,21 @@ mod tests {
         assert_eq!(pose.kinds.len(), 1);
         assert!(!pose.syncs(SyncedKind::Velocity));
         assert!(!Replicated::local_only().is_replicated());
+    }
+
+    #[test]
+    fn the_default_identity_check_accepts_everyone_as_a_guest() {
+        let identity = NetIdentity::default();
+        let request = NetIdentityRequest {
+            connection_id: 4,
+            token: Some("anything"),
+        };
+        assert_eq!(
+            identity.0.check(request),
+            NetIdentityDecision::Allow {
+                player_id: "guest-4".to_string()
+            }
+        );
     }
 
     #[test]

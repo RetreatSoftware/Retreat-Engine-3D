@@ -8,7 +8,7 @@
 use super::{ClientMessage, ServerMessage};
 
 /// The version of the wire format this build speaks. Bump it whenever a message type changes.
-pub const WIRE_VERSION: u8 = 5;
+pub const WIRE_VERSION: u8 = 6;
 
 /// Why bytes could not be turned into a message.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,11 +136,13 @@ mod tests {
 
     #[test]
     fn the_handshake_messages_round_trip() {
-        let hello = ClientMessage::Hello { nonce: 77 };
-        assert_eq!(
-            decode_client_message(&encode_client_message(&hello)),
-            Ok(hello)
-        );
+        for token in [None, Some("platform-token".to_string())] {
+            let hello = ClientMessage::Hello { nonce: 77, token };
+            assert_eq!(
+                decode_client_message(&encode_client_message(&hello)),
+                Ok(hello)
+            );
+        }
         let welcome = ServerMessage::Welcome {
             nonce: 77,
             client_id: 2,

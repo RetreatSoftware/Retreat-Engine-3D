@@ -2,10 +2,17 @@
 //!
 //! [`install_server`] adds a [`NetServer`] resource, a transport (a non-`Send` resource: transports are
 //! driven from the game thread) and two systems around every fixed tick:
-//! - `server_before_tick` (`FixedFirst`): reads the transport, answers `Hello` with `Welcome`, buffers
-//!   inputs and runs the command lines that are due for this tick (only commands on the allow-list);
+//! - `server_before_tick` (`FixedFirst`): reads the transport, answers `Hello` with `Welcome` (after the
+//!   identity check), buffers inputs and runs the command lines that are due for this tick (only commands
+//!   on the allow-list);
 //! - `server_after_tick` (`FixedLast`): counts the tick and, every `state_interval_ticks`, broadcasts the
 //!   state of the physics bodies to every known client (full or delta, see `state_delta.rs`).
+//!
+//! **Hardening** (limits in `limits.rs`, counters in [`ServerStats`]): every datagram passes its
+//! connection's `ConnectionGuard` (size, rate, mute for repeat offenders) before it is decoded; inputs
+//! are checked for line count, line length and a sane tick; connections are capped and a connection that
+//! never joins is dropped; who may join is decided by the contract's `NetIdentity`. Nothing a client
+//! sends can panic the server: every refusal is counted.
 //!
 //! Because these run inside `FixedMain`, a real app (Bevy's fixed loop) and the in-process harness
 //! (`simulate_tick`) run exactly the same server code.
@@ -15,10 +22,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use bevy::app::{FixedFirst, FixedLast};
 use bevy::prelude::*;
 use retreat_engine_api::{
-    NetAllowedCommands, NetClientJoined, NetClientLeft, NetCommandSender, run_command_line,
+    NetAllowedCommands, NetClientJoined, NetClientLeft, NetCommandSender, NetIdentity,
+    NetIdentityDecision, NetIdentityRequest, NetPlayerIds, run_command_line,
 };
 
 use super::body_state::{BodyState, read_replicated_body_states};
+use super::limits::{ConnectionGuard, Refusal, ServerLimits, Verdict, check_input_content};
 use super::state_delta::DeltaEncoder;
 use super::transport::{ConnectionId, ServerEvent, ServerTransport};
 use super::wire;
@@ -31,6 +40,45 @@ pub struct ServerConfig {
     pub allowed_commands: Vec<String>,
     /// Ticks between state broadcasts (1 = every tick).
     pub state_interval_ticks: u64,
+    /// Rate limits, validation caps, connection cap and join timeout.
+    pub limits: ServerLimits,
+}
+
+/// How often the server refused something. Every counter only grows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ServerStats {
+    /// Datagrams dropped unread because their connection was muted.
+    pub datagrams_muted: u64,
+    /// Datagrams larger than `max_datagram_bytes`.
+    pub datagrams_too_large: u64,
+    /// Datagrams over the per-window limit.
+    pub datagrams_rate_limited: u64,
+    /// Inputs over the per-window limit.
+    pub inputs_rate_limited: u64,
+    /// Inputs with too many lines or a line too long.
+    pub inputs_bad_shape: u64,
+    /// Inputs whose tick was too far from the server's.
+    pub inputs_bad_tick: u64,
+    /// Hellos whose token was too long.
+    pub tokens_too_long: u64,
+    /// Times a connection was muted (see `limits.rs`).
+    pub connections_muted: u64,
+    /// Connections disconnected for repeated violations.
+    pub connections_kicked: u64,
+    /// Connections refused because `max_connections` were open.
+    pub connections_refused_full: u64,
+    /// Connections disconnected because they never joined in time.
+    pub join_timeouts: u64,
+    /// Hellos the identity check denied.
+    pub identity_denied: u64,
+}
+
+/// What the server tracks per open connection.
+struct ConnectionState {
+    guard: ConnectionGuard,
+    connected_at: u64,
+    /// Mutes of `guard` already added to `ServerStats::connections_muted`.
+    mutes_counted: u32,
 }
 
 /// The authoritative simulation's networking state.
@@ -41,7 +89,7 @@ pub struct NetServer {
     /// Inputs waiting for their tick: tick -> (client id, lines), in arrival order.
     buffered: BTreeMap<u64, Vec<(u32, Vec<String>)>>,
     state_interval: u64,
-    /// Connections that said hello.
+    /// Connections that said hello and were let in.
     known: BTreeSet<ConnectionId>,
     /// Inputs that arrived after their tick and ran late.
     pub late_inputs: u64,
@@ -51,6 +99,11 @@ pub struct NetServer {
     pub last_broadcast: Option<(u64, Vec<BodyState>)>,
     /// Packets that could not be decoded.
     pub undecodable_packets: u64,
+    /// Refusal counters.
+    pub stats: ServerStats,
+    limits: ServerLimits,
+    /// Every open connection, joined or not.
+    connections: BTreeMap<ConnectionId, ConnectionState>,
     /// Decides which bodies each broadcast lists (see `state_delta.rs`).
     delta: DeltaEncoder,
 }
@@ -59,6 +112,11 @@ impl NetServer {
     /// How many clients have said hello (and are still connected).
     pub fn client_count(&self) -> usize {
         self.known.len()
+    }
+
+    /// How many connections are open, joined or not.
+    pub fn connection_count(&self) -> usize {
+        self.connections.len()
     }
 }
 
@@ -77,6 +135,8 @@ pub fn install_server(
         .resource_mut::<NetAllowedCommands>()
         .0
         .extend(config.allowed_commands);
+    app.init_resource::<NetIdentity>();
+    app.init_resource::<NetPlayerIds>();
     app.insert_resource(NetServer {
         tick: 0,
         buffered: BTreeMap::new(),
@@ -86,6 +146,9 @@ pub fn install_server(
         rejected_lines: Vec::new(),
         last_broadcast: None,
         undecodable_packets: 0,
+        stats: ServerStats::default(),
+        limits: config.limits,
+        connections: BTreeMap::new(),
         delta: DeltaEncoder::default(),
     })
     .insert_non_send(ServerTransportBox(Box::new(transport)))
@@ -101,57 +164,249 @@ fn server_before_tick(world: &mut World) {
         let next = server.tick + 1;
         for event in transport.0.poll() {
             match event {
-                ServerEvent::Connected(_) => {}
-                ServerEvent::Disconnected(id) => {
-                    if server.known.remove(&id) {
-                        world.write_message(NetClientLeft { client_id: id });
+                ServerEvent::Connected(id) => {
+                    if server.connections.len() >= server.limits.max_connections {
+                        server.stats.connections_refused_full += 1;
+                        warn!(
+                            "net server: connection {id} refused: {} connections are open (`max_connections`)",
+                            server.connections.len()
+                        );
+                        transport.0.disconnect(id);
+                    } else {
+                        server.connections.insert(
+                            id,
+                            ConnectionState {
+                                guard: ConnectionGuard::new(next),
+                                connected_at: next,
+                                mutes_counted: 0,
+                            },
+                        );
                     }
                 }
-                ServerEvent::Packet { from, bytes } => match wire::decode_client_message(&bytes) {
-                    Ok(ClientMessage::Hello { nonce }) => {
-                        if server.known.insert(from) {
-                            server.delta.request_full_state();
-                            world.write_message(NetClientJoined { client_id: from });
-                        }
-                        let welcome = ServerMessage::Welcome {
-                            nonce,
-                            client_id: from,
-                            tick: server.tick,
-                        };
-                        transport
-                            .0
-                            .send(from, wire::encode_server_message(&welcome));
-                    }
-                    Ok(ClientMessage::Input { tick, lines }) => {
-                        // Input from a connection that never said hello is ignored.
-                        if server.known.contains(&from) {
-                            // An input for a tick that is already running or past runs now, late.
-                            let target = if tick < next {
-                                server.late_inputs += 1;
-                                next
-                            } else {
-                                tick
-                            };
-                            server
-                                .buffered
-                                .entry(target)
-                                .or_default()
-                                .push((from, lines));
-                        }
-                    }
-                    Err(_) => server.undecodable_packets += 1,
-                },
+                ServerEvent::Disconnected(id) => forget_connection(world, &mut server, id),
+                ServerEvent::Packet { from, bytes } => {
+                    handle_packet(world, &mut server, &mut *transport.0, next, from, &bytes);
+                }
             }
         }
+        drop_connections_that_never_joined(world, &mut server, &mut *transport.0, next);
         let mut due = server.buffered.remove(&next).unwrap_or_default();
         due.sort_by_key(|(client_id, _)| *client_id);
         for (client_id, lines) in due {
+            // A client that was disconnected after sending runs nothing.
+            if !server.known.contains(&client_id) {
+                continue;
+            }
             for line in lines {
                 run_allowed_line(world, &mut server, client_id, &line);
             }
         }
     });
     world.insert_non_send(transport);
+}
+
+/// Forgets a connection: tells modules the client left when it had joined.
+fn forget_connection(world: &mut World, server: &mut NetServer, id: ConnectionId) {
+    server.connections.remove(&id);
+    if server.known.remove(&id) {
+        world.write_message(NetClientLeft { client_id: id });
+        world.resource_mut::<NetPlayerIds>().0.remove(&id);
+    }
+}
+
+/// Ends a connection from the server's side and forgets it.
+fn drop_connection(
+    world: &mut World,
+    server: &mut NetServer,
+    transport: &mut dyn ServerTransport,
+    id: ConnectionId,
+) {
+    transport.disconnect(id);
+    forget_connection(world, server, id);
+}
+
+/// Counts a refusal in the server's stats.
+fn count_refusal(stats: &mut ServerStats, refusal: Refusal) {
+    match refusal {
+        Refusal::Muted => stats.datagrams_muted += 1,
+        Refusal::DatagramTooLarge => stats.datagrams_too_large += 1,
+        Refusal::DatagramRate => stats.datagrams_rate_limited += 1,
+        Refusal::InputRate => stats.inputs_rate_limited += 1,
+        // Counted in `NetServer::undecodable_packets`.
+        Refusal::Undecodable => {}
+        Refusal::InputShape => stats.inputs_bad_shape += 1,
+        Refusal::InputTick => stats.inputs_bad_tick += 1,
+        Refusal::TokenTooLong => stats.tokens_too_long += 1,
+    }
+}
+
+/// Applies a guard's verdict: counts the refusal and disconnects an offender. Returns true when the
+/// datagram or input may be used.
+fn apply_verdict(
+    world: &mut World,
+    server: &mut NetServer,
+    transport: &mut dyn ServerTransport,
+    id: ConnectionId,
+    verdict: Verdict,
+) -> bool {
+    if let Some(state) = server.connections.get_mut(&id) {
+        let mutes = state.guard.mutes();
+        server.stats.connections_muted += u64::from(mutes - state.mutes_counted);
+        state.mutes_counted = mutes;
+    }
+    match verdict {
+        Verdict::Accept => true,
+        Verdict::Refuse(refusal) => {
+            count_refusal(&mut server.stats, refusal);
+            false
+        }
+        Verdict::Disconnect(refusal) => {
+            count_refusal(&mut server.stats, refusal);
+            server.stats.connections_kicked += 1;
+            warn!(
+                "net server: connection {id} disconnected after repeated violations (last: {refusal:?}); \
+                 limits are `ServerLimits` in net/limits.rs"
+            );
+            drop_connection(world, server, transport, id);
+            false
+        }
+    }
+}
+
+/// Records a content violation of connection `id` (its datagram was accepted but is wrong).
+fn refuse_content(
+    world: &mut World,
+    server: &mut NetServer,
+    transport: &mut dyn ServerTransport,
+    now: u64,
+    id: ConnectionId,
+    refusal: Refusal,
+) {
+    let limits = server.limits;
+    let Some(state) = server.connections.get_mut(&id) else {
+        return;
+    };
+    let verdict = state.guard.violation(&limits, now, refusal);
+    apply_verdict(world, server, transport, id, verdict);
+}
+
+fn handle_packet(
+    world: &mut World,
+    server: &mut NetServer,
+    transport: &mut dyn ServerTransport,
+    next: u64,
+    from: ConnectionId,
+    bytes: &[u8],
+) {
+    let limits = server.limits;
+    // A packet from a connection the server does not track (refused or already dropped) is ignored.
+    let Some(state) = server.connections.get_mut(&from) else {
+        return;
+    };
+    let verdict = state.guard.admit_datagram(&limits, next, bytes.len());
+    if !apply_verdict(world, server, transport, from, verdict) {
+        return;
+    }
+    match wire::decode_client_message(bytes) {
+        Ok(ClientMessage::Hello { nonce, token }) => {
+            if token
+                .as_ref()
+                .is_some_and(|text| text.len() > limits.max_token_bytes)
+            {
+                refuse_content(world, server, transport, next, from, Refusal::TokenTooLong);
+                return;
+            }
+            if !server.known.contains(&from) {
+                let request = NetIdentityRequest {
+                    connection_id: from,
+                    token: token.as_deref(),
+                };
+                let decision = world.resource::<NetIdentity>().0.check(request);
+                match decision {
+                    NetIdentityDecision::Allow { player_id } => {
+                        server.known.insert(from);
+                        server.delta.request_full_state();
+                        world
+                            .resource_mut::<NetPlayerIds>()
+                            .0
+                            .insert(from, player_id);
+                        world.write_message(NetClientJoined { client_id: from });
+                    }
+                    NetIdentityDecision::Deny { reason } => {
+                        server.stats.identity_denied += 1;
+                        warn!(
+                            "net server: connection {from} denied by the identity check: {reason}"
+                        );
+                        drop_connection(world, server, transport, from);
+                        return;
+                    }
+                }
+            }
+            let welcome = ServerMessage::Welcome {
+                nonce,
+                client_id: from,
+                tick: server.tick,
+            };
+            transport.send(from, wire::encode_server_message(&welcome));
+        }
+        Ok(ClientMessage::Input { tick, lines }) => {
+            // Input from a connection that never said hello is ignored.
+            if !server.known.contains(&from) {
+                return;
+            }
+            let Some(state) = server.connections.get_mut(&from) else {
+                return;
+            };
+            let verdict = state.guard.admit_input(&limits, next);
+            if !apply_verdict(world, server, transport, from, verdict) {
+                return;
+            }
+            if let Some(refusal) = check_input_content(&limits, next, tick, &lines) {
+                refuse_content(world, server, transport, next, from, refusal);
+                return;
+            }
+            // An input for a tick that is already running or past runs now, late.
+            let target = if tick < next {
+                server.late_inputs += 1;
+                next
+            } else {
+                tick
+            };
+            server
+                .buffered
+                .entry(target)
+                .or_default()
+                .push((from, lines));
+        }
+        Err(_) => {
+            server.undecodable_packets += 1;
+            refuse_content(world, server, transport, next, from, Refusal::Undecodable);
+        }
+    }
+}
+
+fn drop_connections_that_never_joined(
+    world: &mut World,
+    server: &mut NetServer,
+    transport: &mut dyn ServerTransport,
+    now: u64,
+) {
+    let timeout = server.limits.join_timeout_ticks;
+    let late: Vec<ConnectionId> = server
+        .connections
+        .iter()
+        .filter(|(id, state)| {
+            !server.known.contains(id) && now.saturating_sub(state.connected_at) >= timeout
+        })
+        .map(|(id, _)| *id)
+        .collect();
+    for id in late {
+        server.stats.join_timeouts += 1;
+        warn!(
+            "net server: connection {id} dropped: no accepted hello within {timeout} ticks (`join_timeout_ticks`)"
+        );
+        drop_connection(world, server, transport, id);
+    }
 }
 
 fn run_allowed_line(world: &mut World, server: &mut NetServer, client_id: u32, line: &str) {
