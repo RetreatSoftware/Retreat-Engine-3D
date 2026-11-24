@@ -68,6 +68,8 @@ pub use physics::{
 };
 pub use physics_snapshot::{PhysicsSnapshot, RollbackError, capture_physics, restore_physics};
 pub use platform::launch;
+#[cfg(not(target_arch = "wasm32"))]
+pub use platform::{WebTransportClient, WebTransportServer, parse_certificate_hash};
 pub use shader_material::{
     AppShaderMaterialExt, ShaderMaterialCommandsPlugin, ShaderMaterialRegistry,
 };

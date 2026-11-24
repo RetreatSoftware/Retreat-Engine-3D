@@ -22,6 +22,10 @@ mod native;
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::launch;
 #[cfg(not(target_arch = "wasm32"))]
+pub use native::native_transport::{
+    WebTransportClient, WebTransportServer, parse_certificate_hash,
+};
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use native::{
     AUDIO_NEEDS_USER_GESTURE, HAS_FILE_SYSTEM, PlatformPlugin, SAVE_LOCATION, SCRIPT_END_EXITS_APP,
     asset_meta_check, platform_save_backend, primary_window, store_snapshot,

@@ -13,7 +13,7 @@ use retreat_engine::{PhysicsPlugin, RetreatCommandsPlugin, StateHashPlugin};
 use retreat_engine_api::{PhysicsBody, PhysicsBodyKind, PhysicsShape};
 
 /// One simulation app: physics, commands and a ground slab. The same on server and clients.
-fn make_app() -> App {
+pub(crate) fn make_app() -> App {
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, TransformPlugin, AssetPlugin::default()))
         .init_asset::<Mesh>()
@@ -35,7 +35,7 @@ fn make_app() -> App {
     app
 }
 
-const ALLOWED: &[&str] = &["physics.spawn_box", "physics.push"];
+pub(crate) const ALLOWED: &[&str] = &["physics.spawn_box", "physics.push"];
 
 fn config(margin_ticks: i64, up: LinkConditions, down: LinkConditions) -> HarnessConfig {
     HarnessConfig {

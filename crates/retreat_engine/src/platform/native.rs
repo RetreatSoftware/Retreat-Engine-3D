@@ -3,6 +3,9 @@
 use bevy::asset::AssetMetaCheck;
 use bevy::prelude::*;
 
+#[path = "native_transport.rs"]
+pub mod native_transport;
+
 use crate::snapshot::snapshot_file_path;
 use crate::{CommandScript, LaunchOptions, RetreatEnginePlugin};
 

@@ -19,6 +19,11 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 
 # The browser bridge (src/platform/wasm.rs): JS bindings, fetch, and running async startup.
 # Versions match what Bevy and winit already pull in (see Cargo.lock).
+# Native only: WebTransport server and client (platform/native_transport.rs).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+wtransport.workspace = true
+tokio.workspace = true
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2.130"
 wasm-bindgen-futures = "0.4.80"
