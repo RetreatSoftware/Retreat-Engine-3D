@@ -1,10 +1,10 @@
 # Browser client B of the network check: joins, spawns its own box, pushes it the other way and waits for
-# the world to settle.
+# the world to settle. It must still be connected when the server prints (server.cmds waits 5200 ticks), however fast the page loads: a client that left earlier is removed from the server's world.
 wait 150
 assert.net_joined
 net.send physics.spawn_box net_b 2 4 0 1
 wait 40
 net.send physics.push net_b -2 0 0
-wait 2200
+wait 3800
 net.bodies
 quit
