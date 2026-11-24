@@ -65,6 +65,8 @@ impl Plugin for PhysicsPlugin {
                 FixedUpdate,
                 (
                     reject_rapier_components_outside_proxies,
+                    crate::retired_bodies::retire_requested_bodies,
+                    crate::retired_bodies::purge_retired_bodies,
                     create_physics_proxies,
                     apply_velocity_changes,
                 )
@@ -87,6 +89,7 @@ impl Plugin for PhysicsPlugin {
                 "physics.push <name> <vx> <vy> <vz>",
                 push_command,
             );
+        crate::retired_bodies::register_remove_command(app);
     }
 }
 
@@ -164,7 +167,10 @@ fn create_physics_proxies(world: &mut World) {
         &PhysicsBody,
         &Transform,
         Has<ChildOf>,
-    ), Added<PhysicsBody>>();
+    ), (
+        Added<PhysicsBody>,
+        Without<crate::retired_bodies::RetiredBody>,
+    )>();
     let mut new_bodies: Vec<(String, Entity, PhysicsBody, Transform)> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
     for (owner, name, physics_body, transform, has_parent) in query.iter(world) {

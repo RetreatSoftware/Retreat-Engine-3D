@@ -35,7 +35,7 @@ pub(crate) fn make_app() -> App {
     app
 }
 
-pub(crate) const ALLOWED: &[&str] = &["physics.spawn_box", "physics.push"];
+pub(crate) const ALLOWED: &[&str] = &["physics.spawn_box", "physics.push", "physics.remove"];
 
 fn config(margin_ticks: i64, up: LinkConditions, down: LinkConditions) -> HarnessConfig {
     HarnessConfig {
@@ -166,6 +166,31 @@ fn a_late_input_is_corrected_and_the_client_converges_to_the_server() {
     assert!(stats.corrections > 0, "{stats:?}");
     assert!(stats.replayed_ticks > 0, "{stats:?}");
     assert_eq!(stats.refused_rollbacks, 0, "{stats:?}");
+    assert_clients_converged(&mut harness, 0.05);
+}
+
+#[test]
+fn a_body_removed_during_a_lag_window_with_corrections_pending_converges() {
+    // Late inputs keep the client correcting while the removal is predicted, sent and confirmed.
+    let mut harness = harness(config(-5, link(6, 0, 0.0), link(2, 0, 0.0)), 1);
+    let plan: Plan = vec![
+        (5, 0, "physics.spawn_box a 0 3 0 1"),
+        (6, 0, "physics.spawn_box b 2 5 0 1"),
+        (20, 0, "physics.push a 3 0 0"),
+        (24, 0, "physics.remove b"),
+        (26, 0, "physics.push a -1 0 1"),
+        (30, 0, "physics.spawn_box c -2 5 0 1"),
+        (34, 0, "physics.push c 1 0 0"),
+    ];
+    run_plan(&mut harness, &plan, 300);
+    let stats = harness.client(0).stats;
+    assert!(stats.corrections > 0, "{stats:?}");
+    assert_eq!(stats.refused_rollbacks, 0, "{stats:?}");
+    let names: Vec<String> = read_body_states(harness.server_app.world_mut())
+        .into_iter()
+        .map(|state| state.name)
+        .collect();
+    assert_eq!(names, vec!["a", "c", "ground"], "b left the server's state");
     assert_clients_converged(&mut harness, 0.05);
 }
 

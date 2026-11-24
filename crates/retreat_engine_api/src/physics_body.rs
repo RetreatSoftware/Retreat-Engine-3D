@@ -43,6 +43,14 @@ pub enum PhysicsShape {
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct PhysicsVelocityChange(pub Vec3);
 
+/// A request to remove a body (and its entity) safely. Insert it instead of despawning an entity that
+/// has a [`PhysicsBody`]: a despawn cannot be rolled back, so a client that corrects a prediction
+/// would refuse the rewind. The engine *retires* the body at once (it stops simulating, is hidden and
+/// is no longer replicated or hashed) and despawns the entity only after the rollback window, so a
+/// rewind and replay can bring it back deterministically. Needs no network code in the caller.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RemovePhysicsBody;
+
 impl PhysicsBody {
     /// A dynamic box with edge length `size`, centered on the entity.
     pub fn dynamic_cube(size: f32) -> Self {

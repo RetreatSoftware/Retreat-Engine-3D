@@ -10,6 +10,7 @@ use bevy_rapier3d::plugin::context::RapierRigidBodySet;
 use retreat_engine_api::{PhysicsBody, PhysicsBodyKind};
 use serde::{Deserialize, Serialize};
 
+use crate::RetiredBody;
 use crate::physics::PhysicsProxy;
 
 /// One body's replicated state.
@@ -28,7 +29,8 @@ pub struct BodyState {
 
 /// The state of every physics body, sorted by name.
 pub fn read_body_states(world: &mut World) -> Vec<BodyState> {
-    let mut owners = world.query::<(&Name, &PhysicsBody, &PhysicsProxy)>();
+    let mut owners =
+        world.query_filtered::<(&Name, &PhysicsBody, &PhysicsProxy), Without<RetiredBody>>();
     let owner_list: Vec<(String, PhysicsBody, Entity)> = owners
         .iter(world)
         .map(|(name, body, proxy)| (name.as_str().to_string(), body.clone(), proxy.entity()))
@@ -77,7 +79,15 @@ pub struct ApplyReport {
 /// Writes `states` onto the matching bodies (pose, velocities, sleeping) and reports the names that
 /// did not match. Fixed bodies are left alone (they never move).
 pub fn apply_body_states(world: &mut World, states: &[BodyState]) -> ApplyReport {
-    let mut owners = world.query::<(&Name, &PhysicsBody, &PhysicsProxy)>();
+    // Retired bodies are not part of the shared state (see `retired_bodies.rs`): not matched and
+    // never created again from a state.
+    let mut owners =
+        world.query_filtered::<(&Name, &PhysicsBody, &PhysicsProxy), Without<RetiredBody>>();
+    let retired_names: Vec<String> = world
+        .query_filtered::<&Name, With<RetiredBody>>()
+        .iter(world)
+        .map(|name| name.as_str().to_string())
+        .collect();
     // Only dynamic bodies are replicated, so only they can be missing from a state list.
     let proxies: Vec<(String, Entity)> = owners
         .iter(world)
@@ -91,6 +101,9 @@ pub fn apply_body_states(world: &mut World, states: &[BodyState]) -> ApplyReport
         return report;
     };
     for state in states {
+        if retired_names.contains(&state.name) {
+            continue;
+        }
         let found = proxies.iter().find(|(name, _)| *name == state.name);
         let Some(handle) = found.and_then(|(_, proxy)| set.entity2body().get(proxy).copied())
         else {

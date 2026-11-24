@@ -239,3 +239,63 @@ fn the_fixed_clock_is_rewound_with_the_physics() {
         captured + app.world().resource::<Time<Fixed>>().timestep()
     );
 }
+
+#[test]
+fn a_retired_body_is_brought_back_by_a_restore_and_replays_the_same_hash() {
+    use retreat_engine::RetiredBody;
+    use retreat_engine_api::RemovePhysicsBody;
+    let mut app = test_app();
+    drop_boxes(&mut app, 8);
+    run_ticks(&mut app, 10);
+    let snapshot = capture_physics(app.world_mut()).expect("capture");
+    let entity_of = |app: &mut App, wanted: &str| {
+        let mut query = app.world_mut().query::<(Entity, &Name)>();
+        query
+            .iter(app.world())
+            .find(|(_, name)| name.as_str() == wanted)
+            .map(|(entity, _)| entity)
+            .expect("body exists")
+    };
+    let doomed = entity_of(&mut app, "box_0003");
+    let replay = |app: &mut App| {
+        run_ticks(app, 3);
+        app.world_mut().entity_mut(doomed).insert(RemovePhysicsBody);
+        run_ticks(app, 12);
+        hash(app)
+    };
+    let first = replay(&mut app);
+    assert!(app.world().entity(doomed).contains::<RetiredBody>());
+    restore_physics(app.world_mut(), &snapshot).expect("a retired body does not refuse a restore");
+    assert!(!app.world().entity(doomed).contains::<RetiredBody>());
+    assert_eq!(
+        replay(&mut app),
+        first,
+        "the replay retires it again, same hash"
+    );
+}
+
+#[test]
+fn a_retired_body_is_despawned_after_the_rollback_window() {
+    use retreat_engine::ROLLBACK_WINDOW_TICKS;
+    use retreat_engine_api::RemovePhysicsBody;
+    let mut app = test_app();
+    drop_boxes(&mut app, 2);
+    run_ticks(&mut app, 3);
+    let mut query = app.world_mut().query::<(Entity, &Name)>();
+    let doomed = query
+        .iter(app.world())
+        .find(|(_, name)| name.as_str() == "box_0001")
+        .map(|(entity, _)| entity)
+        .expect("box_0001");
+    app.world_mut().entity_mut(doomed).insert(RemovePhysicsBody);
+    run_ticks(&mut app, 5);
+    assert!(
+        app.world().get_entity(doomed).is_ok(),
+        "kept inside the window"
+    );
+    run_ticks(&mut app, ROLLBACK_WINDOW_TICKS as u32);
+    assert!(
+        app.world().get_entity(doomed).is_err(),
+        "purged after the window"
+    );
+}

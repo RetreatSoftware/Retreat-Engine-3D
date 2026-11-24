@@ -61,7 +61,9 @@ pub use net::{
     AppNetExt, NetAllowedCommands, NetClientJoined, NetClientLeft, NetCommandSender, NetInputQueue,
     add_net_contract,
 };
-pub use physics_body::{PhysicsBody, PhysicsBodyKind, PhysicsShape, PhysicsVelocityChange};
+pub use physics_body::{
+    PhysicsBody, PhysicsBodyKind, PhysicsShape, PhysicsVelocityChange, RemovePhysicsBody,
+};
 pub use save_store::{
     MemorySaveBackend, SAVE_FORMAT_VERSION, SaveBackend, SaveError, SaveStore, SavedData,
     decode_save, encode_save, is_valid_module_id, serde_json,

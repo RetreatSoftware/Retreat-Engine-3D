@@ -66,7 +66,10 @@ fn assert_state_hash_command(world: &mut World, args: &CommandArgs) -> CommandRe
 /// (names give the hash a stable order and make a mismatch traceable).
 pub fn compute_state_hash(world: &mut World) -> Result<(u64, usize), String> {
     let mut bodies: Vec<(String, Transform)> = Vec::new();
-    let mut query = world.query_filtered::<(Entity, Option<&Name>, &Transform), With<RigidBody>>();
+    let mut query = world.query_filtered::<
+        (Entity, Option<&Name>, &Transform),
+        (With<RigidBody>, Without<crate::RetiredBody>),
+    >();
     for (entity, name, transform) in query.iter(world) {
         let Some(name) = name else {
             return Err(format!(

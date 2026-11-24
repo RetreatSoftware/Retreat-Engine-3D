@@ -19,7 +19,8 @@
 //! The server is always right; clients only guess ahead.
 //!
 //! **Limits.** Bodies created from server state start with zero velocity until the next correction; a body
-//! the client despawned inside its own history window refuses the rollback (see `physics_snapshot.rs`);
+//! despawned directly inside the history window refuses the rollback (remove bodies with
+//! `RemovePhysicsBody`, see `retired_bodies.rs`);
 //! a state message must fit one datagram (about 1200 bytes).
 
 pub mod body_state;
@@ -46,7 +47,7 @@ pub const VELOCITY_TOLERANCE: f32 = 1.0e-2;
 /// holds about 1200, so 8 leaves room for names up to about 40 characters.
 pub const MAX_BODIES_PER_STATE_MESSAGE: usize = 8;
 /// A client keeps this many ticks of history at most.
-pub const MAX_HISTORY_TICKS: u64 = 512;
+pub const MAX_HISTORY_TICKS: u64 = crate::ROLLBACK_WINDOW_TICKS;
 
 /// What a client sends.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

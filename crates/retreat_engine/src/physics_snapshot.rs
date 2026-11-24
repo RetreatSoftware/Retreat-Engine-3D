@@ -9,10 +9,11 @@
 //! **Bodies that appear or disappear inside the rollback window.**
 //! - A body spawned after the capture is despawned by `restore_physics` (with its proxy): the replay
 //!   of the same inputs spawns it again, under the same `Name`.
-//! - A body despawned after the capture cannot be brought back (its game entity's other components are
+//! - A body *retired* after the capture (`RemovePhysicsBody`, see `retired_bodies.rs`) is un-retired
+//!   by `restore_physics`; the replay retires it again. This is how bodies leave a networked game.
+//! - A body despawned directly after the capture cannot be brought back (its game entity's other components are
 //!   not ours to recreate), so `restore_physics` refuses with [`RollbackError::BodiesDespawned`] and
-//!   changes nothing. Whoever opens a rollback window must therefore delay destroying bodies until the
-//!   window has passed (deferred destruction, the netcode layer's job).
+//!   changes nothing. Remove bodies with `RemovePhysicsBody`, never by despawning.
 //!
 //! Restoring is exact when those rules hold: the same inputs resimulate to the same `state.hash`.
 
@@ -27,6 +28,8 @@ use bevy_rapier3d::prelude::RigidBody;
 use bevy_rapier3d::rapier::dynamics::{CCDSolver, IntegrationParameters, IslandManager};
 use bevy_rapier3d::rapier::geometry::{DefaultBroadPhase, NarrowPhase};
 use retreat_engine_api::{PhysicsBody, SimulationRng};
+
+use crate::RetiredBody;
 
 /// Everything needed to rewind the physics world to the moment of capture.
 pub struct PhysicsSnapshot {
@@ -50,6 +53,8 @@ pub struct PhysicsSnapshot {
     names: BTreeMap<Entity, String>,
     /// Entities with a Rapier `RigidBody` (the proxies) at capture time.
     proxies: BTreeSet<Entity>,
+    /// Entities that were retired at capture time.
+    retired: BTreeSet<Entity>,
 }
 
 /// Why a snapshot could not be restored.
@@ -113,6 +118,8 @@ pub fn capture_physics(world: &mut World) -> Result<PhysicsSnapshot, String> {
             names.insert(entity, name.as_str().to_string());
         }
     }
+    let mut retired_query = world.query_filtered::<Entity, With<RetiredBody>>();
+    let retired: BTreeSet<Entity> = retired_query.iter(world).collect();
     let rng = world.get_resource::<SimulationRng>().cloned();
     let fixed_elapsed = world.resource::<Time<Fixed>>().elapsed();
     Ok(PhysicsSnapshot {
@@ -130,6 +137,7 @@ pub fn capture_physics(world: &mut World) -> Result<PhysicsSnapshot, String> {
         game_bodies,
         names,
         proxies,
+        retired,
     })
 }
 
@@ -159,6 +167,18 @@ pub fn restore_physics(world: &mut World, snapshot: &PhysicsSnapshot) -> Result<
         names.sort();
         names.dedup();
         return Err(RollbackError::BodiesDespawned(names));
+    }
+    // Retired after the capture: bring them back (the body set restore below re-enables the bodies).
+    let mut retired_query = world.query_filtered::<Entity, With<RetiredBody>>();
+    let retired_now: Vec<Entity> = retired_query.iter(world).collect();
+    for entity in retired_now {
+        if !snapshot.retired.contains(&entity) {
+            let mut entity_mut = world.entity_mut(entity);
+            entity_mut.remove::<RetiredBody>();
+            if entity_mut.contains::<Visibility>() {
+                entity_mut.insert(Visibility::Inherited);
+            }
+        }
     }
     // Spawned after the capture: remove them (a proxy goes with its game entity; a proxy whose
     // game entity is already gone is removed itself).
