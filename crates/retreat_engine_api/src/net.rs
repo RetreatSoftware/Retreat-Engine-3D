@@ -55,6 +55,69 @@ impl NetInputQueue {
     }
 }
 
+/// One piece of a physics body's state that the server can replicate. A closed, library-neutral list:
+/// the engine maps each kind onto the physics library in one place (`net/body_state.rs`).
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub enum SyncedKind {
+    /// Position and rotation.
+    Pose,
+    /// Linear and angular velocity.
+    Velocity,
+    /// Whether the body is asleep.
+    Sleeping,
+}
+
+/// Declares which parts of a **dynamic** [`crate::PhysicsBody`] the server replicates to clients (fixed
+/// bodies never move, so every machine builds them from its own scene and they are never sent).
+///
+/// Every `PhysicsBody` gets `Replicated::full()` unless the entity sets another value (the contract
+/// `#[require]`s it), so a body replicates all its state by default. Set a smaller list to save
+/// bandwidth, or `Replicated::local_only()` for a body that exists only on this machine (cosmetic
+/// debris): it is neither sent nor corrected, and a client never removes it. A client rewinds and
+/// corrects only the listed kinds; the others keep the client's own prediction. Every body of one
+/// kind of object must declare the same list on the server and on every client.
+#[derive(Component, Clone, Debug, PartialEq, Eq)]
+pub struct Replicated {
+    pub kinds: BTreeSet<SyncedKind>,
+}
+
+impl Replicated {
+    /// Pose, velocity and sleeping: everything (the default).
+    pub fn full() -> Self {
+        Self::of(&[SyncedKind::Pose, SyncedKind::Velocity, SyncedKind::Sleeping])
+    }
+
+    /// Exactly the listed kinds.
+    pub fn of(kinds: &[SyncedKind]) -> Self {
+        Self {
+            kinds: kinds.iter().copied().collect(),
+        }
+    }
+
+    /// Nothing is replicated: the body is local to this machine.
+    pub fn local_only() -> Self {
+        Self::of(&[])
+    }
+
+    /// True when at least one kind is replicated.
+    pub fn is_replicated(&self) -> bool {
+        !self.kinds.is_empty()
+    }
+
+    /// True when `kind` is replicated.
+    pub fn syncs(&self, kind: SyncedKind) -> bool {
+        self.kinds.contains(&kind)
+    }
+}
+
+impl Default for Replicated {
+    fn default() -> Self {
+        Self::full()
+    }
+}
+
 /// Adds `allow_client_command` to Bevy's `App`.
 pub trait AppNetExt {
     /// Lets clients send the command `id` to a server of this app. Use the command's id only (no
@@ -111,6 +174,17 @@ mod tests {
         assert!(app.world().resource::<NetInputQueue>().lines.is_empty());
         app.world_mut()
             .write_message(NetClientJoined { client_id: 3 });
+    }
+
+    #[test]
+    fn replicated_defaults_to_everything_and_can_be_narrowed_or_local() {
+        let full = Replicated::default();
+        assert!(full.syncs(SyncedKind::Pose) && full.syncs(SyncedKind::Velocity));
+        assert!(full.syncs(SyncedKind::Sleeping) && full.is_replicated());
+        let pose = Replicated::of(&[SyncedKind::Pose, SyncedKind::Pose]);
+        assert_eq!(pose.kinds.len(), 1);
+        assert!(!pose.syncs(SyncedKind::Velocity));
+        assert!(!Replicated::local_only().is_replicated());
     }
 
     #[test]

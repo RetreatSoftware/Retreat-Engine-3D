@@ -8,7 +8,7 @@
 use super::{ClientMessage, ServerMessage};
 
 /// The version of the wire format this build speaks. Bump it whenever a message type changes.
-pub const WIRE_VERSION: u8 = 3;
+pub const WIRE_VERSION: u8 = 4;
 
 /// Why bytes could not be turned into a message.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,7 +85,7 @@ mod tests {
     use super::*;
     use crate::net::body_state::BodyState;
     use bevy::prelude::*;
-    use retreat_engine_api::PhysicsBody;
+    use retreat_engine_api::{PhysicsBody, Replicated};
 
     fn body(name: &str) -> BodyState {
         BodyState {
@@ -96,6 +96,7 @@ mod tests {
             linear_velocity: Vec3::new(0.1, 0.2, 0.3),
             angular_velocity: Vec3::new(-1.0, 0.0, 1.0),
             sleeping: false,
+            synced: Replicated::full().kinds.into_iter().collect(),
         }
     }
 

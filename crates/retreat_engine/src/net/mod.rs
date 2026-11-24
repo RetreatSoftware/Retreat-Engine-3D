@@ -111,6 +111,7 @@ pub fn simulate_tick(world: &mut World) {
 pub fn states_match(left: &BodyState, right: &BodyState) -> bool {
     left.name == right.name
         && left.description == right.description
+        && left.synced == right.synced
         && left.translation.distance(right.translation) <= POSITION_TOLERANCE
         && left.rotation.angle_between(right.rotation) <= POSITION_TOLERANCE
         && left.linear_velocity.distance(right.linear_velocity) <= VELOCITY_TOLERANCE

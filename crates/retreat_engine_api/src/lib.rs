@@ -59,7 +59,7 @@ pub use input_actions::{
 };
 pub use net::{
     AppNetExt, NetAllowedCommands, NetClientJoined, NetClientLeft, NetCommandSender, NetInputQueue,
-    add_net_contract,
+    Replicated, SyncedKind, add_net_contract,
 };
 pub use physics_body::{
     PhysicsBody, PhysicsBodyKind, PhysicsShape, PhysicsVelocityChange, RemovePhysicsBody,

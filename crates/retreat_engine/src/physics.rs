@@ -26,7 +26,7 @@ use bevy_rapier3d::prelude::{
 };
 use retreat_engine_api::{
     AppCommandExt, CommandArgs, CommandOutcome, CommandResult, PhysicsBody, PhysicsBodyKind,
-    PhysicsShape, PhysicsVelocityChange,
+    PhysicsShape, PhysicsVelocityChange, Replicated,
 };
 
 use crate::command_script::{CommandScriptSystems, fail_running_script};
@@ -309,6 +309,42 @@ pub fn spawn_physics_box(world: &mut World, name: &str, center: Vec3, size: f32)
             PhysicsBox,
             PhysicsBody::dynamic_cube(size),
             Transform::from_translation(center),
+            Mesh3d(mesh),
+            MeshMaterial3d(material),
+        ))
+        .id()
+}
+
+/// Spawns a body from its replicated description (any [`PhysicsShape`]), marked [`PhysicsBox`] so
+/// `physics.reset` and a client's "the server removed it" step find it. The mesh follows the shape;
+/// a `shape_offset` moves the collider only. Same caller duties as [`spawn_physics_box`].
+pub fn spawn_body_from_description(
+    world: &mut World,
+    name: &str,
+    description: &PhysicsBody,
+    replicated: Replicated,
+    transform: Transform,
+) -> Entity {
+    let mesh: Mesh = match description.shape {
+        PhysicsShape::Cuboid { half_extents } => Cuboid::new(
+            half_extents.x * 2.0,
+            half_extents.y * 2.0,
+            half_extents.z * 2.0,
+        )
+        .into(),
+        PhysicsShape::Ball { radius } => Sphere::new(radius).into(),
+    };
+    let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
+    let material = world
+        .resource_mut::<Assets<StandardMaterial>>()
+        .add(PHYSICS_BOX_COLOR);
+    world
+        .spawn((
+            Name::new(name.to_string()),
+            PhysicsBox,
+            description.clone(),
+            replicated,
+            transform,
             Mesh3d(mesh),
             MeshMaterial3d(material),
         ))

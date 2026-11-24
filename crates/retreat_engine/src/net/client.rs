@@ -19,13 +19,13 @@ use std::collections::BTreeMap;
 
 use bevy::app::{FixedFirst, FixedLast, RunFixedMainLoop, RunFixedMainLoopSystems};
 use bevy::prelude::*;
-use retreat_engine_api::{NetCommandSender, NetInputQueue, PhysicsShape, run_command_line};
+use retreat_engine_api::{NetCommandSender, NetInputQueue, Replicated, run_command_line};
 
 use super::body_state::{BodyState, apply_body_states, read_replicated_body_states};
 use super::transport::{ClientEvent, ClientTransport};
 use super::wire;
 use super::{ClientMessage, MAX_HISTORY_TICKS, ServerMessage, simulate_tick, state_lists_match};
-use crate::physics::{PHYSICS_PROXY_NAME_SUFFIX, PhysicsBox, spawn_physics_box};
+use crate::physics::{PHYSICS_PROXY_NAME_SUFFIX, PhysicsBox, spawn_body_from_description};
 use crate::physics_snapshot::{PhysicsSnapshot, capture_physics, restore_physics};
 
 /// A partly received state is kept for this many ticks while newer ones arrive.
@@ -436,15 +436,20 @@ fn correct(world: &mut World, server_tick: u64, server_bodies: &[BodyState]) {
     }
 }
 
-/// Creates a body the client did not know, at the server's pose (cuboids only; the engine's
-/// spawnable body today).
+/// Creates a body the client did not know, at the server's pose (any shape): the description and the
+/// list of replicated kinds come from the state, so it behaves like the server's body.
 fn create_body_from_state(world: &mut World, state: &BodyState) {
-    if let PhysicsShape::Cuboid { half_extents } = state.description.shape {
-        let entity = spawn_physics_box(world, &state.name, state.translation, half_extents.x * 2.0);
-        if let Some(mut transform) = world.get_mut::<Transform>(entity) {
-            transform.rotation = state.rotation;
-        }
-    }
+    spawn_body_from_description(
+        world,
+        &state.name,
+        &state.description,
+        Replicated::of(&state.synced),
+        Transform {
+            translation: state.translation,
+            rotation: state.rotation,
+            scale: Vec3::ONE,
+        },
+    );
 }
 
 /// Despawns the physics box with this name, if there is one.

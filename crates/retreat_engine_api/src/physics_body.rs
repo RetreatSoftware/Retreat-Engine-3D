@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 /// Makes an entity physical. Read once, in the tick it is added; later edits are ignored.
 #[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[require(Transform)]
+#[require(Transform, crate::Replicated)]
 pub struct PhysicsBody {
     pub kind: PhysicsBodyKind,
     pub shape: PhysicsShape,

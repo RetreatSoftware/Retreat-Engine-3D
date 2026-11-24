@@ -10,7 +10,7 @@ use retreat_engine::net::harness::{HarnessConfig, NetHarness};
 use retreat_engine::net::link::LinkConditions;
 use retreat_engine::net::prepare_simulation_app;
 use retreat_engine::{PhysicsPlugin, RetreatCommandsPlugin, StateHashPlugin};
-use retreat_engine_api::{PhysicsBody, PhysicsBodyKind, PhysicsShape};
+use retreat_engine_api::{PhysicsBody, PhysicsBodyKind, PhysicsShape, Replicated, SyncedKind};
 
 /// One simulation app: physics, commands and a ground slab. The same on server and clients.
 pub(crate) fn make_app() -> App {
@@ -589,4 +589,96 @@ fn a_velocity_change_waits_for_the_body_then_applies_once_and_is_removed() {
         .find(|state| state.name == "mover")
         .expect("mover");
     assert!((state.linear_velocity.x - 5.0).abs() < 1e-3, "{state:?}");
+}
+
+// --- Replication contract: every shape, and `Replicated` choosing what is synced ---
+
+/// Spawns a dynamic ball directly in `world` (not through a command), as a module would.
+fn spawn_ball(world: &mut World, name: &str, y: f32, replicated: Replicated) {
+    world.spawn((
+        Name::new(name.to_string()),
+        PhysicsBody {
+            kind: PhysicsBodyKind::Dynamic,
+            shape: PhysicsShape::Ball { radius: 0.5 },
+            shape_offset: Vec3::ZERO,
+        },
+        replicated,
+        Transform::from_xyz(0.0, y, 0.0),
+    ));
+}
+
+fn state_named(world: &mut World, name: &str) -> BodyState {
+    read_body_states(world)
+        .into_iter()
+        .find(|state| state.name == name)
+        .unwrap_or_else(|| panic!("no body named `{name}`"))
+}
+
+#[test]
+fn a_ball_the_server_has_is_created_on_every_client_and_converges() {
+    let mut harness = harness(config(8, link(2, 1, 0.0), link(2, 1, 0.0)), 2);
+    spawn_ball(
+        harness.server_app.world_mut(),
+        "ball",
+        6.0,
+        Replicated::full(),
+    );
+    run_plan(&mut harness, &Plan::new(), 150);
+    harness.run_idle(300);
+    for index in 0..2 {
+        let ball = state_named(harness.client_apps[index].world_mut(), "ball");
+        assert_eq!(
+            ball.description.shape,
+            PhysicsShape::Ball { radius: 0.5 },
+            "client {index} built the ball with the server's shape"
+        );
+    }
+    assert_clients_converged(&mut harness, 0.05);
+}
+
+#[test]
+fn replicated_lists_what_is_sent_and_a_pose_only_body_still_converges() {
+    let mut harness = harness(config(8, link(2, 0, 0.0), link(2, 0, 0.0)), 1);
+    spawn_ball(
+        harness.server_app.world_mut(),
+        "light",
+        6.0,
+        Replicated::of(&[SyncedKind::Pose]),
+    );
+    run_plan(&mut harness, &Plan::new(), 100);
+    let server = state_named(harness.server_app.world_mut(), "light");
+    assert_eq!(server.synced, vec![SyncedKind::Pose]);
+    assert_eq!(server.linear_velocity, Vec3::ZERO, "velocity is not sent");
+    harness.run_idle(300);
+    let client = state_named(harness.client_apps[0].world_mut(), "light");
+    assert_eq!(client.synced, vec![SyncedKind::Pose]);
+    assert_clients_converged(&mut harness, 0.05);
+}
+
+#[test]
+fn a_local_only_body_is_neither_sent_nor_removed_by_corrections() {
+    let mut harness = harness(config(8, link(2, 0, 0.0), link(2, 0, 0.0)), 1);
+    spawn_ball(
+        harness.client_apps[0].world_mut(),
+        "debris",
+        4.0,
+        Replicated::local_only(),
+    );
+    harness.run_idle(20);
+    // A box from the server forces a correction on the client.
+    run_plan(&mut harness, &two_box_plan(), 120);
+    assert!(harness.client(0).stats.corrections > 0);
+    let client_names: Vec<String> = read_body_states(harness.client_apps[0].world_mut())
+        .into_iter()
+        .map(|state| state.name)
+        .collect();
+    assert!(
+        client_names.contains(&"debris".to_string()),
+        "{client_names:?}"
+    );
+    let server_names: Vec<String> = read_body_states(harness.server_app.world_mut())
+        .into_iter()
+        .map(|state| state.name)
+        .collect();
+    assert!(!server_names.contains(&"debris".to_string()));
 }
