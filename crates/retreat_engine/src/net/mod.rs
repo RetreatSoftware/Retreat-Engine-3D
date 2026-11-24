@@ -23,10 +23,13 @@
 
 pub mod body_state;
 pub mod link;
+pub mod runner;
+pub mod transport;
 pub mod wire;
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use bevy::app::FixedMain;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 use retreat_engine_api::run_command_line;
@@ -34,7 +37,7 @@ use retreat_engine_api::run_command_line;
 use crate::physics::{PhysicsBox, spawn_physics_box};
 use crate::physics_snapshot::{PhysicsSnapshot, capture_physics, restore_physics};
 use body_state::{BodyState, apply_body_states, read_body_states};
-use link::{LinkConditions, SimulatedLink};
+use link::LinkConditions;
 use retreat_engine_api::PhysicsShape;
 use serde::{Deserialize, Serialize};
 
@@ -49,17 +52,31 @@ pub const MAX_HISTORY_TICKS: u64 = 512;
 /// What a client sends.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ClientMessage {
-    /// Command lines to run at server tick `tick`.
-    Input {
-        client_id: u32,
-        tick: u64,
-        lines: Vec<String>,
-    },
+    /// Asks to join; the server answers with `Welcome` carrying the same `nonce`.
+    Hello { nonce: u32 },
+    /// Command lines to run at server tick `tick`. (Who sent it is the connection, never a field the
+    /// client could forge.)
+    Input { tick: u64, lines: Vec<String> },
+}
+
+/// One client's input as the server node takes it in (the runner fills `client_id` from the
+/// connection).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ClientInput {
+    pub client_id: u32,
+    pub tick: u64,
+    pub lines: Vec<String>,
 }
 
 /// What the server sends.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ServerMessage {
+    /// The answer to `Hello`: the client's id and the server's last simulated tick.
+    Welcome {
+        nonce: u32,
+        client_id: u32,
+        tick: u64,
+    },
     /// The state of every physics body after the server simulated `tick`.
     State { tick: u64, bodies: Vec<BodyState> },
 }
@@ -71,6 +88,22 @@ pub fn prepare_simulation_app(app: &mut App) {
     app.finish();
     app.cleanup();
     app.update();
+}
+
+/// Simulates exactly one fixed tick of `world` without running a frame: advances the fixed clock by one
+/// timestep and runs the `FixedMain` schedule (the same schedules a frame runs for a tick). This is how
+/// the net code steps a simulation, so the server, the clients and a client's replays all use one code
+/// path, and so a correction can replay ticks from inside a system (a full `App::update` cannot nest).
+///
+/// Do not call it from inside `FixedMain` itself (the schedule is already running).
+pub fn simulate_tick(world: &mut World) {
+    let timestep = world.resource::<Time<Fixed>>().timestep();
+    world.resource_mut::<Time<Fixed>>().advance_by(timestep);
+    let fixed_time = world.resource::<Time<Fixed>>().as_generic();
+    *world.resource_mut::<Time>() = fixed_time;
+    world.run_schedule(FixedMain);
+    let virtual_time = world.resource::<Time<Virtual>>().as_generic();
+    *world.resource_mut::<Time>() = virtual_time;
 }
 
 /// True when two body states are the same within the tolerances (name and description must match;
@@ -127,9 +160,9 @@ impl ServerNode {
     }
 
     /// Takes in messages, simulates the next tick and returns the state to broadcast (if due).
-    pub fn step(&mut self, incoming: Vec<ClientMessage>) -> Option<ServerMessage> {
+    pub fn step(&mut self, incoming: Vec<ClientInput>) -> Option<ServerMessage> {
         let next = self.tick + 1;
-        for ClientMessage::Input {
+        for ClientInput {
             client_id,
             tick,
             lines,
@@ -154,7 +187,7 @@ impl ServerNode {
                 self.run_allowed_line(&line);
             }
         }
-        self.app.update();
+        simulate_tick(self.app.world_mut());
         self.tick = next;
         if self.tick.is_multiple_of(self.state_interval) {
             let bodies = read_body_states(self.app.world_mut());
@@ -232,6 +265,13 @@ impl ClientNode {
         }
     }
 
+    /// Starts (or restarts) the client's clock at `tick`: it has simulated nothing yet, so its history is
+    /// empty and the next tick it simulates is `tick + 1`.
+    pub fn start_at(&mut self, tick: u64) {
+        self.tick = tick;
+        self.history.clear();
+    }
+
     /// Body states this client had after `tick`, if still in its history.
     pub fn states_at(&self, tick: u64) -> Option<&[BodyState]> {
         self.history.get(&tick).map(|entry| entry.bodies.as_slice())
@@ -244,11 +284,12 @@ impl ClientNode {
         let next = self.tick + 1;
         self.simulate_tick(next, inputs.clone());
         for message in incoming {
-            let ServerMessage::State { tick, bodies } = message;
-            self.receive_state(tick, bodies);
+            // Handshake messages are the runner's business; only states reach the node.
+            if let ServerMessage::State { tick, bodies } = message {
+                self.receive_state(tick, bodies);
+            }
         }
         ClientMessage::Input {
-            client_id: self.id,
             tick: next,
             lines: inputs,
         }
@@ -261,7 +302,7 @@ impl ClientNode {
                 self.rejected_lines.push(format!("`{line}`: {error}"));
             }
         }
-        self.app.update();
+        simulate_tick(self.app.world_mut());
         self.tick = tick;
         let snapshot = capture_physics(self.app.world_mut()).expect("a client has physics");
         let bodies = read_body_states(self.app.world_mut());
@@ -365,8 +406,10 @@ fn despawn_body_named(world: &mut World, name: &str) {
 /// How the harness is set up.
 #[derive(Clone, Copy, Debug)]
 pub struct HarnessConfig {
-    /// How many ticks clients run ahead of the server.
-    pub lead_ticks: u64,
+    /// Safety margin, in ticks, that clients add to the measured round trip when choosing how far
+    /// ahead of the server to run. It must cover jitter plus one tick; a negative value makes inputs
+    /// arrive late on purpose.
+    pub margin_ticks: i64,
     /// Ticks between server state broadcasts.
     pub state_interval_ticks: u64,
     /// Link conditions client to server and server to client (each client gets its own links).
@@ -376,22 +419,13 @@ pub struct HarnessConfig {
     pub seed: u64,
 }
 
-/// A server and clients in one process, connected by simulated links.
+/// A server and clients in one process, connected by a [`LoopbackNetwork`](transport::LoopbackNetwork).
 pub struct NetHarness {
-    pub server: ServerNode,
-    pub clients: Vec<ClientNode>,
-    /// Links carry bytes: every message is encoded by `wire.rs` on send and decoded on arrival.
-    up_links: Vec<SimulatedLink<Vec<u8>>>,
-    down_links: Vec<SimulatedLink<Vec<u8>>>,
-    /// Bytes handed to the links so far (before loss), client to server and server to clients.
-    pub bytes_up: u64,
-    pub bytes_down: u64,
-    /// Messages that arrived but could not be decoded (never happens on these links; counted so a
-    /// wire bug shows up in tests).
-    pub undecodable_messages: u64,
-    /// Ticks stepped so far (the server's tick equals this).
+    pub server: runner::ServerRunner<transport::LoopbackServer>,
+    pub clients: Vec<runner::ClientRunner<transport::LoopbackClient>>,
+    network: transport::LoopbackNetwork,
+    /// Ticks stepped so far.
     pub global_tick: u64,
-    config: HarnessConfig,
 }
 
 impl NetHarness {
@@ -403,31 +437,20 @@ impl NetHarness {
         client_count: u32,
         make_app: impl Fn() -> App,
     ) -> Self {
-        let server = ServerNode::new(make_app(), allowed_commands, config.state_interval_ticks);
-        let mut clients = Vec::new();
-        let mut up_links = Vec::new();
-        let mut down_links = Vec::new();
-        for id in 0..client_count {
-            clients.push(ClientNode::new(id, make_app(), config.lead_ticks));
-            up_links.push(SimulatedLink::new(
-                config.up,
-                config.seed.wrapping_add(u64::from(id) * 2),
-            ));
-            down_links.push(SimulatedLink::new(
-                config.down,
-                config.seed.wrapping_add(u64::from(id) * 2 + 1),
-            ));
-        }
+        let network = transport::LoopbackNetwork::new(config.up, config.down, config.seed);
+        let node = ServerNode::new(make_app(), allowed_commands, config.state_interval_ticks);
+        let server = runner::ServerRunner::new(node, network.server());
+        let clients = (0..client_count)
+            .map(|id| {
+                let node = ClientNode::new(id, make_app(), 0);
+                runner::ClientRunner::new(node, network.connect(), 1000 + id, config.margin_ticks)
+            })
+            .collect();
         Self {
             server,
             clients,
-            up_links,
-            down_links,
-            bytes_up: 0,
-            bytes_down: 0,
-            undecodable_messages: 0,
+            network,
             global_tick: 0,
-            config,
         }
     }
 
@@ -435,42 +458,15 @@ impl NetHarness {
     /// make this tick.
     pub fn step(&mut self, inputs: &[(usize, Vec<String>)]) {
         self.global_tick += 1;
-        let now = self.global_tick;
-        // Server: take what arrived, simulate, broadcast.
-        let mut arrived = Vec::new();
-        for link in &mut self.up_links {
-            for bytes in link.deliver(now) {
-                match wire::decode_client_message(&bytes) {
-                    Ok(message) => arrived.push(message),
-                    Err(_) => self.undecodable_messages += 1,
-                }
-            }
-        }
-        if let Some(message) = self.server.step(arrived) {
-            let bytes = wire::encode_server_message(&message);
-            for link in &mut self.down_links {
-                self.bytes_down += bytes.len() as u64;
-                link.send(now, bytes.clone());
-            }
-        }
-        // Clients: take server states, predict, send inputs.
+        self.network.set_tick(self.global_tick);
+        self.server.step();
         for (index, client) in self.clients.iter_mut().enumerate() {
-            let mut incoming = Vec::new();
-            for bytes in self.down_links[index].deliver(now) {
-                match wire::decode_server_message(&bytes) {
-                    Ok(message) => incoming.push(message),
-                    Err(_) => self.undecodable_messages += 1,
-                }
-            }
             let lines: Vec<String> = inputs
                 .iter()
                 .filter(|(who, _)| *who == index)
                 .flat_map(|(_, lines)| lines.clone())
                 .collect();
-            let message = client.step(lines, incoming);
-            let bytes = wire::encode_client_message(&message);
-            self.bytes_up += bytes.len() as u64;
-            self.up_links[index].send(now, bytes);
+            client.step(lines);
         }
     }
 
@@ -483,13 +479,22 @@ impl NetHarness {
 
     /// Changes the link conditions of every client from now on.
     pub fn set_links(&mut self, up: LinkConditions, down: LinkConditions) {
-        for link in &mut self.up_links {
-            link.set_conditions(up);
-        }
-        for link in &mut self.down_links {
-            link.set_conditions(down);
-        }
-        self.config.up = up;
-        self.config.down = down;
+        self.network.set_conditions(up, down);
+    }
+
+    /// Bytes sent so far (before loss): client to server, server to clients.
+    pub fn bytes(&self) -> (u64, u64) {
+        self.network.bytes()
+    }
+
+    /// Packets that arrived but could not be decoded, on any machine (never happens unless the wire
+    /// format is broken).
+    pub fn undecodable_packets(&self) -> u64 {
+        self.server.undecodable_packets
+            + self
+                .clients
+                .iter()
+                .map(|client| client.undecodable_packets)
+                .sum::<u64>()
     }
 }

@@ -8,7 +8,7 @@
 use super::{ClientMessage, ServerMessage};
 
 /// The version of the wire format this build speaks. Bump it whenever a message type changes.
-pub const WIRE_VERSION: u8 = 1;
+pub const WIRE_VERSION: u8 = 2;
 
 /// Why bytes could not be turned into a message.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,7 +101,6 @@ mod tests {
 
     fn input() -> ClientMessage {
         ClientMessage::Input {
-            client_id: 3,
             tick: 123_456,
             lines: vec![
                 "physics.spawn_box a 0 3 0 1".to_string(),
@@ -128,6 +127,24 @@ mod tests {
         assert_eq!(
             decode_server_message(&encode_server_message(&message)),
             Ok(message)
+        );
+    }
+
+    #[test]
+    fn the_handshake_messages_round_trip() {
+        let hello = ClientMessage::Hello { nonce: 77 };
+        assert_eq!(
+            decode_client_message(&encode_client_message(&hello)),
+            Ok(hello)
+        );
+        let welcome = ServerMessage::Welcome {
+            nonce: 77,
+            client_id: 2,
+            tick: 900,
+        };
+        assert_eq!(
+            decode_server_message(&encode_server_message(&welcome)),
+            Ok(welcome)
         );
     }
 

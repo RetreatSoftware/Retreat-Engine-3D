@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use bevy::prelude::*;
 use retreat_engine::net::body_state::{BodyState, read_body_states};
 use retreat_engine::net::link::LinkConditions;
+use retreat_engine::net::runner::ClientPhase;
 use retreat_engine::net::{HarnessConfig, NetHarness, prepare_simulation_app};
 use retreat_engine::{PhysicsPlugin, RetreatCommandsPlugin, StateHashPlugin};
 use retreat_engine_api::{PhysicsBody, PhysicsBodyKind, PhysicsShape};
@@ -36,9 +37,9 @@ fn make_app() -> App {
 
 const ALLOWED: &[&str] = &["physics.spawn_box", "physics.push"];
 
-fn config(lead_ticks: u64, up: LinkConditions, down: LinkConditions) -> HarnessConfig {
+fn config(margin_ticks: i64, up: LinkConditions, down: LinkConditions) -> HarnessConfig {
     HarnessConfig {
-        lead_ticks,
+        margin_ticks,
         state_interval_ticks: 2,
         up,
         down,
@@ -54,8 +55,20 @@ fn link(latency_ticks: u32, jitter_ticks: u32, loss: f32) -> LinkConditions {
     }
 }
 
+/// A harness whose clients have all joined (the handshake is done), so a plan starts on a running game.
 fn harness(config: HarnessConfig, clients: u32) -> NetHarness {
-    NetHarness::new(config, ALLOWED, clients, make_app)
+    let mut harness = NetHarness::new(config, ALLOWED, clients, make_app);
+    for _ in 0..300 {
+        if harness
+            .clients
+            .iter()
+            .all(|client| client.phase == ClientPhase::Running)
+        {
+            return harness;
+        }
+        harness.run_idle(1);
+    }
+    panic!("the clients did not join within 300 ticks");
 }
 
 fn line(text: &str) -> Vec<String> {
@@ -115,8 +128,8 @@ fn two_box_plan() -> Plan {
 
 #[test]
 fn with_perfect_links_prediction_always_matches_the_server() {
-    // Even a perfect link needs a lead of one tick: a message sent at the end of tick n arrives
-    // during tick n + 1, so the minimum lead is the latency plus one.
+    // The client measures the round trip when it joins and starts that far ahead of the server, plus
+    // the margin (1 tick covers the one tick any message needs to arrive).
     let mut harness = harness(
         config(1, LinkConditions::PERFECT, LinkConditions::PERFECT),
         1,
@@ -151,8 +164,8 @@ fn with_latency_and_enough_lead_prediction_still_matches() {
 
 #[test]
 fn a_late_input_is_corrected_and_the_client_converges_to_the_server() {
-    // Lead 2 is less than the 6 ticks the input takes: the server runs every input late.
-    let mut harness = harness(config(2, link(6, 0, 0.0), link(2, 0, 0.0)), 1);
+    // A margin of -5 starts the client five ticks too close to the server: inputs arrive late.
+    let mut harness = harness(config(-5, link(6, 0, 0.0), link(2, 0, 0.0)), 1);
     run_plan(&mut harness, &two_box_plan(), 400);
     assert!(harness.server.late_inputs > 0);
     let stats = harness.clients[0].stats;
@@ -164,7 +177,9 @@ fn a_late_input_is_corrected_and_the_client_converges_to_the_server() {
 
 #[test]
 fn a_lost_input_is_undone_on_the_client_because_the_server_never_saw_it() {
-    let mut harness = harness(config(8, link(2, 0, 1.0), link(2, 0, 0.0)), 1);
+    let mut harness = harness(config(8, link(2, 0, 0.0), link(2, 0, 0.0)), 1);
+    // Every message from the client to the server is lost from now on (the client has joined).
+    harness.set_links(link(2, 0, 1.0), link(2, 0, 0.0));
     run_plan(&mut harness, &two_box_plan(), 300);
     let server_bodies = read_body_states(harness.server.app.world_mut());
     assert_eq!(
@@ -267,9 +282,9 @@ fn the_same_setup_gives_the_same_outcome_twice() {
 }
 
 #[test]
-fn a_lead_of_zero_makes_every_input_late_even_on_a_perfect_link() {
+fn a_margin_below_the_need_makes_every_input_late_even_on_a_perfect_link() {
     let mut harness = harness(
-        config(0, LinkConditions::PERFECT, LinkConditions::PERFECT),
+        config(-1, LinkConditions::PERFECT, LinkConditions::PERFECT),
         1,
     );
     run_plan(&mut harness, &two_box_plan(), 200);
@@ -304,11 +319,11 @@ fn physics_push_changes_a_bodys_velocity_and_refuses_fixed_or_unsimulated_bodies
 fn messages_cross_the_links_as_bytes_and_the_bandwidth_is_small() {
     let mut harness = harness(config(8, link(3, 1, 0.0), link(3, 1, 0.0)), 2);
     run_plan(&mut harness, &two_box_plan(), 640);
-    assert_eq!(harness.undecodable_messages, 0);
+    assert_eq!(harness.undecodable_packets(), 0);
     // 640 ticks = 10 seconds of game time, two clients, a few bodies, a state every second tick.
     let seconds = 10;
-    let down_per_client = harness.bytes_down / 2 / seconds;
-    let up_per_client = harness.bytes_up / 2 / seconds;
+    let down_per_client = harness.bytes().1 / 2 / seconds;
+    let up_per_client = harness.bytes().0 / 2 / seconds;
     println!(
         "bandwidth: server to each client {down_per_client} B/s, each client to server {up_per_client} B/s"
     );
@@ -317,5 +332,71 @@ fn messages_cross_the_links_as_bytes_and_the_bandwidth_is_small() {
         "{down_per_client} B/s down per client"
     );
     assert!(up_per_client < 2_000, "{up_per_client} B/s up per client");
-    assert!(harness.bytes_up > 0 && harness.bytes_down > 0);
+    assert!(harness.bytes().0 > 0 && harness.bytes().1 > 0);
+}
+
+#[test]
+fn simulate_tick_gives_the_same_state_as_a_normal_update() {
+    use retreat_engine::compute_state_hash;
+    use retreat_engine::net::simulate_tick;
+    use retreat_engine_api::run_command_line;
+    let setup = |app: &mut App| {
+        run_command_line(app.world_mut(), "physics.spawn_box a 0 3 0 1").unwrap();
+        run_command_line(app.world_mut(), "physics.spawn_box b 0.4 5 0 1").unwrap();
+    };
+    let mut by_update = make_app();
+    setup(&mut by_update);
+    for _ in 0..150 {
+        by_update.update();
+    }
+    let mut by_tick = make_app();
+    setup(&mut by_tick);
+    for _ in 0..150 {
+        simulate_tick(by_tick.world_mut());
+    }
+    assert_eq!(
+        compute_state_hash(by_update.world_mut()).unwrap(),
+        compute_state_hash(by_tick.world_mut()).unwrap()
+    );
+}
+
+#[test]
+fn the_handshake_measures_the_round_trip_and_survives_loss() {
+    for (up, down) in [(0u32, 0u32), (3, 5), (8, 2)] {
+        let harness = harness(config(1, link(up, 0, 0.0), link(down, 0, 0.0)), 1);
+        let round_trip = harness.clients[0].measured_round_trip.expect("joined");
+        let expected = u64::from(up + down);
+        assert!(
+            (expected..=expected + 2).contains(&round_trip),
+            "latencies {up} and {down}: measured {round_trip}"
+        );
+        assert_eq!(harness.server.tick, harness.global_tick);
+    }
+    // With heavy loss the hello is repeated until a welcome gets through.
+    let lossy = harness(config(2, link(2, 0, 0.7), link(2, 0, 0.7)), 2);
+    assert!(
+        lossy
+            .clients
+            .iter()
+            .all(|c| c.phase == ClientPhase::Running)
+    );
+}
+
+#[test]
+fn input_before_the_handshake_is_never_applied() {
+    let mut harness = NetHarness::new(
+        config(1, link(5, 0, 0.0), link(5, 0, 0.0)),
+        ALLOWED,
+        1,
+        make_app,
+    );
+    // The player acts at once, long before the client has joined.
+    harness.step(&[(0, line("physics.spawn_box early 0 3 0 1"))]);
+    harness.run_idle(200);
+    assert!(
+        read_body_states(harness.server.app.world_mut())
+            .iter()
+            .all(|state| state.name != "early"),
+        "input made before joining must be dropped"
+    );
 }
