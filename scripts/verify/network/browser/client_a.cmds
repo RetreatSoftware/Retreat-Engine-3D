@@ -1,0 +1,10 @@
+# Native client A of the network check with a browser client: joins, spawns a box, pushes it, then waits
+# long enough for the browser client to act and for everything to settle.
+wait 90
+assert.net_joined
+net.send physics.spawn_box net_a 0 3 0 1
+wait 40
+net.send physics.push net_a 3 0 0
+wait 3800
+net.bodies
+quit

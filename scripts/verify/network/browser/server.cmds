@@ -1,0 +1,8 @@
+# Server of the network check with a browser client (see ../run.mjs --browser): the browser build needs
+# many seconds to load, so every script waits much longer than the native variants before it prints what
+# it sees, giving all bodies time to come to rest first.
+wait 5200
+# (No client count here: the native client has already left by now. That both clients took part shows in
+# the bodies: net_a came from the native client and net_b from the browser client.)
+net.bodies
+quit

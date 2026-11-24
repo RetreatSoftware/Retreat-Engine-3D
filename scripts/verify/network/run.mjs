@@ -37,7 +37,10 @@ if (!existsSync(exe)) {
 const extra = process.argv.includes("--software-renderer") ? ["--software-renderer"] : [];
 const browserClient = process.argv.includes("--browser");
 const TOLERANCE = 0.05;
-const TIMEOUT_MS = 90_000;
+// The browser variant waits much longer (the page needs many seconds to load) and its scripts too.
+const TIMEOUT_MS = browserClient ? 240_000 : 90_000;
+const scriptDir = browserClient ? join(here, "browser") : here;
+const webScriptDir = browserClient ? "scripts/verify/network/browser" : "scripts/verify/network";
 
 function start(name, args, command = exe, fixedArgs = ["--headless", "--real-time", ...extra]) {
   const child = spawn(command, [...fixedArgs, ...args], { cwd: root });
@@ -84,7 +87,7 @@ function bodies(output) {
 const processes = [];
 let failure = null;
 try {
-  const server = start("server", ["--server", "0", "--commands", join(here, "server.cmds")]);
+  const server = start("server", ["--server", "0", "--commands", join(scriptDir, "server.cmds")]);
   processes.push(server);
   const listening = await waitFor("the server to listen", () => {
     const match = server.output.match(/retreat-net: listening on UDP port (\d+) certificate-hash ([0-9a-f]{64})/);
@@ -98,7 +101,7 @@ try {
       processes.push(
         start(
           "browser client b",
-          ["scripts/verify/network/client_b.cmds", "--query", query],
+          [`${webScriptDir}/client_b.cmds`, "--query", query],
           process.execPath,
           [join(root, "scripts", "web", "run_in_browser.mjs")],
         ),
@@ -109,7 +112,7 @@ try {
       start(`client ${name}`, [
         "--connect", `https://127.0.0.1:${listening.port}`,
         "--cert-hash", listening.hash,
-        "--commands", join(here, `client_${name}.cmds`),
+        "--commands", join(scriptDir, `client_${name}.cmds`),
       ]),
     );
   }
