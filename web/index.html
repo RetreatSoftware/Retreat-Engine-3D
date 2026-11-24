@@ -14,6 +14,57 @@
   </head>
   <body>
     <canvas id="retreat-canvas"></canvas>
+    <!-- Networking: the browser half of the WebTransport client (the Rust half is
+         crates/retreat_engine/src/platform/wasm_transport.rs). `connect` starts a session, `send` sends
+         one datagram, `poll` returns what happened since the last call as byte arrays whose first byte
+         is the kind: 0 connected, 1 datagram (rest = payload), 2 disconnected (rest = reason, UTF-8).
+         A hex SHA-256 pins a self-signed certificate (serverCertificateHashes). Nothing here blocks. -->
+    <script>
+      (() => {
+        const events = [];
+        let writer = null;
+        const encoder = new TextEncoder();
+        const withKind = (kind, payload) => {
+          const bytes = new Uint8Array(1 + payload.length);
+          bytes[0] = kind;
+          bytes.set(payload, 1);
+          return bytes;
+        };
+        const hexToBytes = (hex) => Uint8Array.from(hex.match(/../g).map((pair) => parseInt(pair, 16)));
+        window.__retreatNet = {
+          connect(url, certificateHashHex) {
+            if (typeof WebTransport === "undefined") {
+              events.push(withKind(2, encoder.encode("this browser has no WebTransport")));
+              return;
+            }
+            const options = certificateHashHex
+              ? { serverCertificateHashes: [{ algorithm: "sha-256", value: hexToBytes(certificateHashHex) }] }
+              : {};
+            const session = new WebTransport(url, options);
+            session.closed.then(
+              () => events.push(withKind(2, encoder.encode("the session closed"))),
+              (error) => events.push(withKind(2, encoder.encode(String(error)))),
+            );
+            session.ready.then(async () => {
+              writer = session.datagrams.writable.getWriter();
+              events.push(withKind(0, new Uint8Array(0)));
+              const reader = session.datagrams.readable.getReader();
+              for (;;) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                events.push(withKind(1, value));
+              }
+            }, () => {});
+          },
+          send(bytes) {
+            if (writer) writer.write(bytes.slice()).catch(() => {});
+          },
+          poll() {
+            return events.splice(0, events.length);
+          },
+        };
+      })();
+    </script>
     <!-- Audio and the browser's autoplay rule: a page may not make sound until the player has
          clicked or pressed a key on it. Audio contexts the engine creates start "suspended";
          this wraps the AudioContext constructor (before the engine starts) to remember them and

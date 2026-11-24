@@ -124,8 +124,7 @@ impl LaunchOptions {
 }
 
 /// Shown after every URL launch-option error (browser builds).
-const URL_USAGE: &str =
-    "usage: page URL `?commands=<path to .cmds>&seed=<whole number>` (both optional)";
+const URL_USAGE: &str = "usage: page URL `?commands=<path to .cmds>&seed=<whole number>&real_time=1&connect=<https://host:port>&cert_hash=<64 hex digits>` (all optional)";
 
 impl LaunchOptions {
     /// Reads the browser page's URL query, already split into decoded `(key, value)` pairs
@@ -135,9 +134,18 @@ impl LaunchOptions {
         pairs: impl IntoIterator<Item = (String, String)>,
     ) -> Result<Self, String> {
         let mut options = Self::default();
+        let mut cert_hash: Option<String> = None;
         for (key, value) in pairs {
             match key.as_str() {
                 "commands" => options.commands_file = Some(PathBuf::from(value)),
+                "real_time" => options.real_time = matches!(value.as_str(), "1" | "true"),
+                "connect" => {
+                    options.net = NetLaunch::Client {
+                        url: value,
+                        cert_hash: None,
+                    };
+                }
+                "cert_hash" => cert_hash = Some(value),
                 "seed" => {
                     options.seed = value.parse().map_err(|error| {
                         format!("seed `{value}` is not a whole number from 0 to {}: {error}; {URL_USAGE}", u64::MAX)
@@ -149,6 +157,20 @@ impl LaunchOptions {
                     ));
                 }
             }
+        }
+        match (&mut options.net, cert_hash) {
+            (
+                NetLaunch::Client {
+                    cert_hash: slot, ..
+                },
+                Some(hash),
+            ) => *slot = Some(hash),
+            (_, Some(_)) => {
+                return Err(format!(
+                    "cert_hash only makes sense with connect; {URL_USAGE}"
+                ));
+            }
+            _ => {}
         }
         Ok(options)
     }
@@ -290,5 +312,30 @@ mod tests {
         assert!(error.contains("not a UDP port"), "{error}");
         let error = parse(&["--connect"]).unwrap_err();
         assert!(error.contains("--connect needs a value"), "{error}");
+    }
+
+    #[test]
+    fn reads_the_network_options_from_the_url() {
+        let pairs = [
+            ("connect", "https://127.0.0.1:4433"),
+            ("cert_hash", "ab"),
+            ("real_time", "1"),
+        ]
+        .map(|(key, value)| (key.to_string(), value.to_string()));
+        let options = LaunchOptions::from_url_query_pairs(pairs).unwrap();
+        assert!(options.real_time);
+        assert_eq!(
+            options.net,
+            NetLaunch::Client {
+                url: "https://127.0.0.1:4433".to_string(),
+                cert_hash: Some("ab".to_string())
+            }
+        );
+        let lonely = [("cert_hash".to_string(), "ab".to_string())];
+        let error = LaunchOptions::from_url_query_pairs(lonely).unwrap_err();
+        assert!(
+            error.contains("cert_hash only makes sense with connect"),
+            "{error}"
+        );
     }
 }

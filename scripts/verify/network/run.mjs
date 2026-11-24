@@ -4,7 +4,9 @@
 // all three worlds agree.
 //
 // Run from Retreat-Engine-3D after `cargo build -p retreat_sandbox`:
-//   node scripts/verify/network/run.mjs [--software-renderer]
+//   node scripts/verify/network/run.mjs [--software-renderer] [--browser]
+// With --browser, client B is the browser build (headless Chrome through scripts/web/run_in_browser.mjs,
+// WebTransport from the page): run scripts/web/build.sh first.
 // Exit code 0 = every process exited cleanly and the three worlds agree (positions within 0.05).
 
 import { spawn } from "node:child_process";
@@ -20,11 +22,12 @@ if (!existsSync(exe)) {
   process.exit(1);
 }
 const extra = process.argv.includes("--software-renderer") ? ["--software-renderer"] : [];
+const browserClient = process.argv.includes("--browser");
 const TOLERANCE = 0.05;
 const TIMEOUT_MS = 90_000;
 
-function start(name, args) {
-  const child = spawn(exe, ["--headless", "--real-time", ...extra, ...args], { cwd: root });
+function start(name, args, command = exe, fixedArgs = ["--headless", "--real-time", ...extra]) {
+  const child = spawn(command, [...fixedArgs, ...args], { cwd: root });
   const process_ = { name, child, output: "", exited: null };
   const collect = (chunk) => {
     process_.output += chunk.toString();
@@ -76,6 +79,18 @@ try {
   });
   console.log(`network check: server listening on port ${listening.port}`);
   for (const name of ["a", "b"]) {
+    if (name === "b" && browserClient) {
+      const query = `connect=${encodeURIComponent(`https://127.0.0.1:${listening.port}`)}&cert_hash=${listening.hash}&real_time=1`;
+      processes.push(
+        start(
+          "browser client b",
+          ["scripts/verify/network/client_b.cmds", "--query", query],
+          process.execPath,
+          [join(root, "scripts", "web", "run_in_browser.mjs")],
+        ),
+      );
+      continue;
+    }
     processes.push(
       start(`client ${name}`, [
         "--connect", `https://127.0.0.1:${listening.port}`,

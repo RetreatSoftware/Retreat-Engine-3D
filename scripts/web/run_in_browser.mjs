@@ -38,16 +38,17 @@ const MIME_TYPES = {
 
 function usage(message) {
   console.error(`run_in_browser: ${message}`);
-  console.error("usage: node scripts/web/run_in_browser.mjs <script.cmds> [--seed <n>] [--timeout <seconds>]");
+  console.error("usage: node scripts/web/run_in_browser.mjs <script.cmds> [--seed <n>] [--timeout <seconds>] [--query <extra URL query>]");
   process.exit(2);
 }
 
 function parseArguments(argv) {
-  const options = { script: null, seed: "0", timeoutSeconds: DEFAULT_TIMEOUT_SECONDS };
+  const options = { script: null, seed: "0", timeoutSeconds: DEFAULT_TIMEOUT_SECONDS, query: "" };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--seed") options.seed = argv[++index] ?? usage("--seed needs a value");
     else if (argument === "--timeout") options.timeoutSeconds = Number(argv[++index]);
+    else if (argument === "--query") options.query = argv[++index] ?? usage("--query needs a value");
     else if (argument.startsWith("--")) usage(`unknown option ${argument}`);
     else options.script = argument.replaceAll("\\", "/");
   }
@@ -154,13 +155,13 @@ async function main() {
   const { browser, devtoolsUrl } = await launchBrowser(findBrowser());
   const devtools = await connectDevtools(devtoolsUrl);
 
-  const pageUrl = `http://127.0.0.1:${port}/?commands=${encodeURIComponent(options.script)}&seed=${options.seed}`;
+  const pageUrl = `http://127.0.0.1:${port}/?commands=${encodeURIComponent(options.script)}&seed=${options.seed}${options.query ? `&${options.query}` : ""}`;
   const { targetId } = await devtools.call("Target.createTarget", { url: "about:blank" });
   const { sessionId } = await devtools.call("Target.attachToTarget", { targetId, flatten: true });
   devtools.onEvent((message) => {
     if (message.sessionId !== sessionId || message.method !== "Runtime.consoleAPICalled") return;
     const text = message.params.args.map((arg) => arg.value ?? arg.description ?? "").join(" ");
-    if (/ERROR|state\.hash|panicked/.test(text)) console.log(`[page] ${text.replace(/%c/g, "")}`);
+    if (/ERROR|state\.hash|panicked|net-body/.test(text)) console.log(`[page] ${text.replace(/%c/g, "")}`);
   });
   await devtools.call("Runtime.enable", {}, sessionId);
   await devtools.call("Page.navigate", { url: pageUrl }, sessionId);

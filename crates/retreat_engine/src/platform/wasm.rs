@@ -24,6 +24,9 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
+#[path = "wasm_transport.rs"]
+pub mod wasm_transport;
+
 use crate::bridge_status::script_status_json;
 use crate::command_script::ScriptProgress;
 use crate::{CommandScript, LaunchOptions, PendingCommandWork, RetreatEnginePlugin};
@@ -74,10 +77,16 @@ pub fn launch(window_title: &str, add_game_plugins: fn(&mut App)) -> AppExit {
     let title = window_title.to_string();
     wasm_bindgen_futures::spawn_local(async move {
         match load_engine_plugin(&title).await {
-            Ok(engine) => {
+            Ok((engine, options)) => {
                 let mut app = App::new();
                 app.add_plugins(engine);
                 add_game_plugins(&mut app);
+                if let Err(message) = wasm_transport::install_net(&mut app, &options.net) {
+                    let message = format!("{title}: {message}");
+                    web_sys::console::error_1(&JsValue::from_str(&message));
+                    set_status(script_status_json(Some(&ScriptProgress::Failed(message))));
+                    return;
+                }
                 app.run();
             }
             Err(message) => {
@@ -90,7 +99,7 @@ pub fn launch(window_title: &str, add_game_plugins: fn(&mut App)) -> AppExit {
     AppExit::Success
 }
 
-async fn load_engine_plugin(title: &str) -> Result<RetreatEnginePlugin, String> {
+async fn load_engine_plugin(title: &str) -> Result<(RetreatEnginePlugin, LaunchOptions), String> {
     let window = web_sys::window().ok_or("there is no browser window")?;
     let query = window.location().search().map_err(describe_js_error)?;
     let options = LaunchOptions::from_url_query_pairs(url_query_pairs(&query)?)?;
@@ -102,9 +111,8 @@ async fn load_engine_plugin(title: &str) -> Result<RetreatEnginePlugin, String> 
         }
         None => None,
     };
-    Ok(RetreatEnginePlugin::from_launch_options(
-        title, &options, script,
-    ))
+    let engine = RetreatEnginePlugin::from_launch_options(title, &options, script);
+    Ok((engine, options))
 }
 
 /// The decoded `(key, value)` pairs of a URL query such as `?commands=a.cmds&seed=3`.
