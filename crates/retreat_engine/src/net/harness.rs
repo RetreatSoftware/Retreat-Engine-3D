@@ -107,6 +107,12 @@ impl NetHarness {
         }
     }
 
+    /// Ends client `index`'s connection (the server hears one disconnect). The client's own app keeps
+    /// running but nothing it sends arrives and nothing reaches it.
+    pub fn disconnect_client(&mut self, index: usize) {
+        self.network.disconnect(index as u32);
+    }
+
     /// Changes the link conditions of every client from now on.
     pub fn set_links(&mut self, up: LinkConditions, down: LinkConditions) {
         self.network.set_conditions(up, down);

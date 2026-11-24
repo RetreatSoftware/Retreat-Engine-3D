@@ -11,6 +11,7 @@ mod stripes_material;
 mod toolbar;
 
 use bevy::prelude::*;
+use retreat_engine_api::AppNetExt;
 
 const WINDOW_TITLE: &str = "Retreat Engine Sandbox";
 
@@ -22,10 +23,8 @@ fn main() -> AppExit {
 /// Everything the sandbox adds on top of the engine.
 fn add_sandbox_plugins(app: &mut App) {
     // What a client may ask a server of this app to do (`--server`): spawn and push boxes.
-    app.insert_resource(retreat_engine::net::commands::NetAllowedCommands(vec![
-        "physics.spawn_box".to_string(),
-        "physics.push".to_string(),
-    ]));
+    app.allow_client_command("physics.spawn_box")
+        .allow_client_command("physics.push");
     app.add_plugins((
         scene::SandboxScenePlugin,
         stripes_material::StripesMaterialPlugin,

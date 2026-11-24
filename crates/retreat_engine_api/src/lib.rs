@@ -19,6 +19,9 @@
 //! Animation: an entity with an [`AnimationPlayback`] plays the listed glTF clips (one clip, or a
 //! weighted blend) on simulation time; the engine maps it onto Bevy's animation.
 //!
+//! Networking (what a module sees): [`NetCommandSender`], [`NetClientJoined`], [`NetClientLeft`],
+//! [`NetAllowedCommands`], [`NetInputQueue`].
+//!
 //! Saving: [`SaveStore`] keeps one versioned JSON document per module; the engine decides where
 //! it lives (file, browser storage, memory).
 //!
@@ -35,6 +38,7 @@ mod command_line;
 mod command_registry;
 mod game_camera;
 mod input_actions;
+mod net;
 mod physics_body;
 mod save_store;
 mod simulation_rng;
@@ -53,7 +57,11 @@ pub use input_actions::{
     AppInputExt, HELD_ONLY, INPUT_KEY_NAMES, InputAction, InputActionSystems, InputActions,
     InputKey,
 };
-pub use physics_body::{PhysicsBody, PhysicsBodyKind, PhysicsShape};
+pub use net::{
+    AppNetExt, NetAllowedCommands, NetClientJoined, NetClientLeft, NetCommandSender, NetInputQueue,
+    add_net_contract,
+};
+pub use physics_body::{PhysicsBody, PhysicsBodyKind, PhysicsShape, PhysicsVelocityChange};
 pub use save_store::{
     MemorySaveBackend, SAVE_FORMAT_VERSION, SaveBackend, SaveError, SaveStore, SavedData,
     decode_save, encode_save, is_valid_module_id, serde_json,

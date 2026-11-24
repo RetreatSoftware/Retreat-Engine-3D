@@ -25,11 +25,11 @@ use bevy::prelude::App;
 
 use crate::NetLaunch;
 use crate::net::client::{ClientConfig as NetClientConfig, install_client};
-use crate::net::commands::NetAllowedCommands;
 use crate::net::server::{ServerConfig as NetServerConfig, install_server};
 use crate::net::transport::{
     ClientEvent, ClientTransport, ConnectionId, ServerEvent, ServerTransport,
 };
+use retreat_engine_api::NetAllowedCommands;
 
 /// Ticks between state broadcasts of a server started with `--server`.
 const SERVER_STATE_INTERVAL_TICKS: u64 = 2;
@@ -53,7 +53,7 @@ pub(crate) fn install_net(app: &mut App, net: &NetLaunch) -> Result<(), String> 
             let allowed = app
                 .world()
                 .get_resource::<NetAllowedCommands>()
-                .map(|allowed| allowed.0.clone())
+                .map(|allowed| allowed.0.iter().cloned().collect())
                 .unwrap_or_default();
             install_server(
                 app,

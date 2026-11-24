@@ -473,3 +473,95 @@ fn a_world_with_many_bodies_is_replicated_in_chunks() {
     assert_clients_converged(&mut harness, 0.05);
     assert_eq!(harness.undecodable_packets(), 0);
 }
+
+/// Records the join and leave messages the server writes, and the sender of every `test.whoami`.
+#[derive(Resource, Default)]
+struct Observed {
+    joined: Vec<u32>,
+    left: Vec<u32>,
+    senders: Vec<Option<u32>>,
+}
+
+fn record_membership(
+    mut joined: MessageReader<retreat_engine_api::NetClientJoined>,
+    mut left: MessageReader<retreat_engine_api::NetClientLeft>,
+    mut observed: ResMut<Observed>,
+) {
+    observed
+        .joined
+        .extend(joined.read().map(|message| message.client_id));
+    observed
+        .left
+        .extend(left.read().map(|message| message.client_id));
+}
+
+#[test]
+fn the_server_reports_joins_leaves_and_who_sent_each_command() {
+    use retreat_engine_api::{AppCommandExt, AppNetExt, CommandOutcome, NetCommandSender};
+    let make = || {
+        let mut app = make_app();
+        app.init_resource::<Observed>()
+            .add_systems(FixedUpdate, record_membership)
+            .allow_client_command("test.whoami")
+            .register_command("test.whoami", "test.whoami", |world, _args| {
+                let sender = world.resource::<NetCommandSender>().0;
+                world.resource_mut::<Observed>().senders.push(sender);
+                Ok(CommandOutcome::Continue)
+            });
+        app
+    };
+    let config = config(1, LinkConditions::PERFECT, LinkConditions::PERFECT);
+    let mut harness = NetHarness::new(config, ALLOWED, 2, make);
+    for _ in 0..50 {
+        harness.run_idle(1);
+    }
+    assert!(harness.all_joined());
+    harness.step(&[(1, line("test.whoami"))]);
+    harness.run_idle(10);
+    harness.disconnect_client(0);
+    harness.run_idle(5);
+
+    let server = harness.server_app.world().resource::<Observed>();
+    assert_eq!(server.joined, [0, 1], "both clients joined");
+    assert_eq!(server.left, [0], "client 0's connection ended");
+    // The server saw the command as sent by client 1; client 1 predicted it as itself.
+    assert_eq!(server.senders, [Some(1)]);
+    assert_eq!(
+        harness.client_apps[1]
+            .world()
+            .resource::<Observed>()
+            .senders,
+        [Some(1)]
+    );
+    // After the command the sender is reset.
+    assert_eq!(
+        harness.server_app.world().resource::<NetCommandSender>().0,
+        None
+    );
+}
+
+#[test]
+fn a_velocity_change_waits_for_the_body_then_applies_once_and_is_removed() {
+    use retreat_engine_api::PhysicsVelocityChange;
+    let mut app = make_app();
+    prepare_simulation_app(&mut app);
+    let body =
+        retreat_engine::spawn_physics_box(app.world_mut(), "mover", Vec3::new(0.0, 30.0, 0.0), 1.0);
+    // Requested in the same tick the entity is spawned: the body does not exist yet.
+    app.world_mut()
+        .entity_mut(body)
+        .insert(PhysicsVelocityChange(Vec3::new(5.0, 0.0, 0.0)));
+    retreat_engine::net::simulate_tick(app.world_mut());
+    assert!(
+        app.world().entity(body).contains::<PhysicsVelocityChange>(),
+        "the request waits until the body exists"
+    );
+    retreat_engine::net::simulate_tick(app.world_mut());
+    retreat_engine::net::simulate_tick(app.world_mut());
+    assert!(!app.world().entity(body).contains::<PhysicsVelocityChange>());
+    let state = read_body_states(app.world_mut())
+        .into_iter()
+        .find(|state| state.name == "mover")
+        .expect("mover");
+    assert!((state.linear_velocity.x - 5.0).abs() < 1e-3, "{state:?}");
+}

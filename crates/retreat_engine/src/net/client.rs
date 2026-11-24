@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 
 use bevy::app::{FixedFirst, FixedLast, RunFixedMainLoop, RunFixedMainLoopSystems};
 use bevy::prelude::*;
-use retreat_engine_api::{PhysicsShape, run_command_line};
+use retreat_engine_api::{NetCommandSender, NetInputQueue, PhysicsShape, run_command_line};
 
 use super::body_state::{BodyState, apply_body_states, read_replicated_body_states};
 use super::transport::{ClientEvent, ClientTransport};
@@ -275,8 +275,18 @@ fn client_before_tick(world: &mut World) {
             std::mem::take(&mut client.pending_inputs)
         }
     };
+    // Lines that client modules queued through the contract join the player's input.
+    let mut lines = lines;
+    if !world.resource::<NetClient>().replaying {
+        lines.extend(std::mem::take(&mut world.resource_mut::<NetInputQueue>().0));
+    }
+    let own_id = world.resource::<NetClient>().id;
     for line in &lines {
-        if let Err(error) = run_command_line(world, line) {
+        // The client predicts its own commands as if it were the sender.
+        world.insert_resource(NetCommandSender(Some(own_id)));
+        let result = run_command_line(world, line);
+        world.insert_resource(NetCommandSender(None));
+        if let Err(error) = result {
             world
                 .resource_mut::<NetClient>()
                 .rejected_lines

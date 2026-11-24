@@ -54,6 +54,9 @@ struct Connection {
     down: SimulatedLink<Vec<u8>>,
     announced: bool,
     client_announced: bool,
+    /// The connection was ended with [`LoopbackNetwork::disconnect`]; the server is told once.
+    closed: bool,
+    closed_announced: bool,
 }
 
 struct Shared {
@@ -111,10 +114,19 @@ impl LoopbackNetwork {
             down: SimulatedLink::new(down, seed.wrapping_add(1)),
             announced: false,
             client_announced: false,
+            closed: false,
+            closed_announced: false,
         });
         LoopbackClient {
             id,
             shared: self.shared.clone(),
+        }
+    }
+
+    /// Ends connection `id`: the server gets one `Disconnected` and nothing more is delivered either way.
+    pub fn disconnect(&self, id: ConnectionId) {
+        if let Some(connection) = self.shared.borrow_mut().connections.get_mut(id as usize) {
+            connection.closed = true;
         }
     }
 
@@ -152,6 +164,13 @@ impl ServerTransport for LoopbackServer {
                 connection.announced = true;
                 events.push(ServerEvent::Connected(id));
             }
+            if connection.closed {
+                if !connection.closed_announced {
+                    connection.closed_announced = true;
+                    events.push(ServerEvent::Disconnected(id));
+                }
+                continue;
+            }
             for bytes in connection.up.deliver(now) {
                 events.push(ServerEvent::Packet { from: id, bytes });
             }
@@ -163,7 +182,9 @@ impl ServerTransport for LoopbackServer {
         let mut shared = self.shared.borrow_mut();
         let now = shared.now;
         shared.bytes_down += bytes.len() as u64;
-        if let Some(connection) = shared.connections.get_mut(to as usize) {
+        if let Some(connection) = shared.connections.get_mut(to as usize)
+            && !connection.closed
+        {
             connection.down.send(now, bytes);
         }
     }
@@ -195,7 +216,10 @@ impl ClientTransport for LoopbackClient {
         let mut shared = self.shared.borrow_mut();
         let now = shared.now;
         shared.bytes_up += bytes.len() as u64;
-        shared.connections[self.id as usize].up.send(now, bytes);
+        let connection = &mut shared.connections[self.id as usize];
+        if !connection.closed {
+            connection.up.send(now, bytes);
+        }
     }
 }
 

@@ -26,7 +26,7 @@ use bevy_rapier3d::prelude::{
 };
 use retreat_engine_api::{
     AppCommandExt, CommandArgs, CommandOutcome, CommandResult, PhysicsBody, PhysicsBodyKind,
-    PhysicsShape,
+    PhysicsShape, PhysicsVelocityChange,
 };
 
 use crate::command_script::{CommandScriptSystems, fail_running_script};
@@ -66,6 +66,7 @@ impl Plugin for PhysicsPlugin {
                 (
                     reject_rapier_components_outside_proxies,
                     create_physics_proxies,
+                    apply_velocity_changes,
                 )
                     .chain()
                     .after(CommandScriptSystems)
@@ -202,6 +203,43 @@ fn create_physics_proxies(world: &mut World) {
             collider,
             transform,
         ));
+    }
+}
+
+/// Applies every [`PhysicsVelocityChange`] whose body exists in the physics world, then removes the
+/// component. A change on an entity whose body does not exist yet waits for the tick it appears; a
+/// change on a body that cannot move is dropped with a logged warning.
+fn apply_velocity_changes(world: &mut World) {
+    let mut requests = world.query::<(Entity, &PhysicsVelocityChange, Option<&PhysicsProxy>)>();
+    let pending: Vec<(Entity, Vec3, Option<Entity>)> = requests
+        .iter(world)
+        .map(|(entity, change, proxy)| (entity, change.0, proxy.map(PhysicsProxy::entity)))
+        .collect();
+    if pending.is_empty() {
+        return;
+    }
+    let mut applied: Vec<Entity> = Vec::new();
+    {
+        let mut sets = world.query::<&mut RapierRigidBodySet>();
+        let Ok(mut set) = sets.single_mut(world) else {
+            return;
+        };
+        for (entity, change, proxy) in &pending {
+            let handle = proxy.and_then(|proxy| set.entity2body().get(&proxy).copied());
+            let Some(body) = handle.and_then(|handle| set.bodies.get_mut(handle)) else {
+                continue;
+            };
+            if body.is_dynamic() {
+                let velocity = body.linvel() + *change;
+                body.set_linvel(velocity, true);
+            } else {
+                warn!("a PhysicsVelocityChange on a fixed body was ignored (entity {entity})");
+            }
+            applied.push(*entity);
+        }
+    }
+    for entity in applied {
+        world.entity_mut(entity).remove::<PhysicsVelocityChange>();
     }
 }
 

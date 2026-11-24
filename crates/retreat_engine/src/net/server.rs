@@ -14,7 +14,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use bevy::app::{FixedFirst, FixedLast};
 use bevy::prelude::*;
-use retreat_engine_api::run_command_line;
+use retreat_engine_api::{
+    NetAllowedCommands, NetClientJoined, NetClientLeft, NetCommandSender, run_command_line,
+};
 
 use super::body_state::{BodyState, read_replicated_body_states};
 use super::transport::{ConnectionId, ServerEvent, ServerTransport};
@@ -35,7 +37,6 @@ pub struct ServerConfig {
 pub struct NetServer {
     /// The last tick simulated (0 before the first).
     pub tick: u64,
-    allowed_commands: BTreeSet<String>,
     /// Inputs waiting for their tick: tick -> (client id, lines), in arrival order.
     buffered: BTreeMap<u64, Vec<(u32, Vec<String>)>>,
     state_interval: u64,
@@ -67,9 +68,14 @@ pub fn install_server(
     config: ServerConfig,
     transport: impl ServerTransport + 'static,
 ) {
+    // The allow-list is a contract resource that modules add to; the config's ids are added to it.
+    app.init_resource::<NetAllowedCommands>();
+    app.world_mut()
+        .resource_mut::<NetAllowedCommands>()
+        .0
+        .extend(config.allowed_commands);
     app.insert_resource(NetServer {
         tick: 0,
-        allowed_commands: config.allowed_commands.into_iter().collect(),
         buffered: BTreeMap::new(),
         state_interval: config.state_interval_ticks.max(1),
         known: BTreeSet::new(),
@@ -93,11 +99,15 @@ fn server_before_tick(world: &mut World) {
             match event {
                 ServerEvent::Connected(_) => {}
                 ServerEvent::Disconnected(id) => {
-                    server.known.remove(&id);
+                    if server.known.remove(&id) {
+                        world.write_message(NetClientLeft { client_id: id });
+                    }
                 }
                 ServerEvent::Packet { from, bytes } => match wire::decode_client_message(&bytes) {
                     Ok(ClientMessage::Hello { nonce }) => {
-                        server.known.insert(from);
+                        if server.known.insert(from) {
+                            world.write_message(NetClientJoined { client_id: from });
+                        }
                         let welcome = ServerMessage::Welcome {
                             nonce,
                             client_id: from,
@@ -130,24 +140,31 @@ fn server_before_tick(world: &mut World) {
         }
         let mut due = server.buffered.remove(&next).unwrap_or_default();
         due.sort_by_key(|(client_id, _)| *client_id);
-        for (_, lines) in due {
+        for (client_id, lines) in due {
             for line in lines {
-                run_allowed_line(world, &mut server, &line);
+                run_allowed_line(world, &mut server, client_id, &line);
             }
         }
     });
     world.insert_non_send(transport);
 }
 
-fn run_allowed_line(world: &mut World, server: &mut NetServer, line: &str) {
+fn run_allowed_line(world: &mut World, server: &mut NetServer, client_id: u32, line: &str) {
     let command_id = line.split_whitespace().next().unwrap_or("");
-    if !server.allowed_commands.contains(command_id) {
+    let allowed = world
+        .resource::<NetAllowedCommands>()
+        .0
+        .contains(command_id);
+    if !allowed {
         server.rejected_lines.push(format!(
             "`{line}`: command `{command_id}` is not allowed from clients"
         ));
         return;
     }
-    if let Err(error) = run_command_line(world, line) {
+    world.insert_resource(NetCommandSender(Some(client_id)));
+    let result = run_command_line(world, line);
+    world.insert_resource(NetCommandSender(None));
+    if let Err(error) = result {
         server.rejected_lines.push(format!("`{line}`: {error}"));
     }
 }

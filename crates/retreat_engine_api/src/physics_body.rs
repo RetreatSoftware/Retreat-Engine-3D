@@ -37,6 +37,12 @@ pub enum PhysicsShape {
     Ball { radius: f32 },
 }
 
+/// A request to change a dynamic body's velocity once: the engine adds `0` (units per second) to its
+/// linear velocity and wakes it, then removes this component. It stays on the entity until the body
+/// exists in the physics world (a body appears on the tick after its entity is spawned).
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct PhysicsVelocityChange(pub Vec3);
+
 impl PhysicsBody {
     /// A dynamic box with edge length `size`, centered on the entity.
     pub fn dynamic_cube(size: f32) -> Self {

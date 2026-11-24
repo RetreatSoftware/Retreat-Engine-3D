@@ -10,24 +10,21 @@
 //! - `assert.net_clients <n>`: fails unless this server knows exactly `n` clients.
 
 use bevy::prelude::*;
-use retreat_engine_api::{AppCommandExt, CommandArgs, CommandOutcome, CommandResult};
+use retreat_engine_api::{
+    AppCommandExt, CommandArgs, CommandOutcome, CommandResult, add_net_contract,
+};
 
 use super::body_state::read_body_states;
 use super::client::{ClientPhase, NetClient};
 use super::server::NetServer;
-
-/// The commands clients may send to a server, set by the game (the sandbox inserts it). Anything else
-/// is refused by the server.
-#[derive(Resource, Default, Debug, Clone)]
-pub struct NetAllowedCommands(pub Vec<String>);
 
 /// Adds the `net.*` commands.
 pub struct NetCommandsPlugin;
 
 impl Plugin for NetCommandsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<NetAllowedCommands>()
-            .register_command("net.send", "net.send <command line...>", send_command)
+        add_net_contract(app);
+        app.register_command("net.send", "net.send <command line...>", send_command)
             .register_command("net.status", "net.status", status_command)
             .register_command("net.bodies", "net.bodies", bodies_command)
             .register_command(
