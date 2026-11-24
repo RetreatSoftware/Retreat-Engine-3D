@@ -136,7 +136,8 @@ try {
     const expectedNames =
       scenario === "players"
         ? ["player_0", "player_1", "sandbox_cube", "sandbox_ground"]
-        : ["net_a", "net_b", "sandbox_cube", "sandbox_ground"];
+        : // The sandbox always has the players module, so each joined client has its player body.
+          ["net_a", "net_b", "player_0", "player_1", "sandbox_cube", "sandbox_ground"];
     for (const view of views) {
       const names = [...view.bodies.keys()].sort();
       if (JSON.stringify(names) !== JSON.stringify(expectedNames)) {

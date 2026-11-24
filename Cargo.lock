@@ -5393,7 +5393,7 @@ dependencies = [
 [[package]]
 name = "retreat_module_fox_walk"
 version = "0.1.0"
-source = "git+https://github.com/RetreatSoftware/Retreat-Modules#7da7c5404d43adbbfa84115da6b492fe036d3958"
+source = "git+https://github.com/RetreatSoftware/Retreat-Modules#0bb763957dec1a0f572fbe808762f39cfa80d5db"
 dependencies = [
  "bevy",
  "retreat_engine_api",
@@ -5402,7 +5402,7 @@ dependencies = [
 [[package]]
 name = "retreat_module_highscore"
 version = "0.1.0"
-source = "git+https://github.com/RetreatSoftware/Retreat-Modules#7da7c5404d43adbbfa84115da6b492fe036d3958"
+source = "git+https://github.com/RetreatSoftware/Retreat-Modules#0bb763957dec1a0f572fbe808762f39cfa80d5db"
 dependencies = [
  "bevy",
  "retreat_engine_api",
@@ -5411,7 +5411,7 @@ dependencies = [
 [[package]]
 name = "retreat_module_menu"
 version = "0.1.0"
-source = "git+https://github.com/RetreatSoftware/Retreat-Modules#7da7c5404d43adbbfa84115da6b492fe036d3958"
+source = "git+https://github.com/RetreatSoftware/Retreat-Modules#0bb763957dec1a0f572fbe808762f39cfa80d5db"
 dependencies = [
  "bevy",
  "retreat_engine_api",
@@ -5420,7 +5420,7 @@ dependencies = [
 [[package]]
 name = "retreat_module_orbit_camera"
 version = "0.1.0"
-source = "git+https://github.com/RetreatSoftware/Retreat-Modules#7da7c5404d43adbbfa84115da6b492fe036d3958"
+source = "git+https://github.com/RetreatSoftware/Retreat-Modules#0bb763957dec1a0f572fbe808762f39cfa80d5db"
 dependencies = [
  "bevy",
  "retreat_engine_api",
@@ -5429,7 +5429,7 @@ dependencies = [
 [[package]]
 name = "retreat_module_players"
 version = "0.1.0"
-source = "git+https://github.com/RetreatSoftware/Retreat-Modules#7da7c5404d43adbbfa84115da6b492fe036d3958"
+source = "git+https://github.com/RetreatSoftware/Retreat-Modules#0bb763957dec1a0f572fbe808762f39cfa80d5db"
 dependencies = [
  "bevy",
  "retreat_engine_api",
@@ -5438,7 +5438,7 @@ dependencies = [
 [[package]]
 name = "retreat_module_sfx"
 version = "0.1.0"
-source = "git+https://github.com/RetreatSoftware/Retreat-Modules#7da7c5404d43adbbfa84115da6b492fe036d3958"
+source = "git+https://github.com/RetreatSoftware/Retreat-Modules#0bb763957dec1a0f572fbe808762f39cfa80d5db"
 dependencies = [
  "bevy",
  "retreat_engine_api",
@@ -5447,7 +5447,7 @@ dependencies = [
 [[package]]
 name = "retreat_module_spawner"
 version = "0.1.0"
-source = "git+https://github.com/RetreatSoftware/Retreat-Modules#7da7c5404d43adbbfa84115da6b492fe036d3958"
+source = "git+https://github.com/RetreatSoftware/Retreat-Modules#0bb763957dec1a0f572fbe808762f39cfa80d5db"
 dependencies = [
  "bevy",
  "retreat_engine_api",
