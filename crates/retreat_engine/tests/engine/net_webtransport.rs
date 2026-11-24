@@ -4,9 +4,13 @@
 
 use std::time::{Duration, Instant};
 
+use bevy::prelude::*;
 use retreat_engine::net::body_state::{BodyState, read_body_states};
-use retreat_engine::net::runner::{ClientPhase, ClientRunner, ServerRunner};
-use retreat_engine::net::{ClientNode, ServerNode};
+use retreat_engine::net::client::{
+    ClientConfig, ClientPhase, NetClient, install_client, process_client_states,
+};
+use retreat_engine::net::server::{ServerConfig, install_server};
+use retreat_engine::net::{prepare_simulation_app, simulate_tick};
 use retreat_engine::{WebTransportClient, WebTransportServer};
 
 use super::net_harness::{ALLOWED, make_app};
@@ -21,16 +25,39 @@ fn positions(states: &[BodyState]) -> Vec<(String, [f32; 3])> {
         .collect()
 }
 
+fn joined(app: &App) -> bool {
+    app.world().resource::<NetClient>().phase == ClientPhase::Running
+}
+
 #[test]
 fn two_clients_play_through_a_real_webtransport_server_and_converge() {
     let transport = WebTransportServer::start(0).expect("server");
     let url = format!("https://127.0.0.1:{}", transport.port);
     let hash = transport.certificate_hash_hex().to_string();
-    let mut server = ServerRunner::new(ServerNode::new(make_app(), ALLOWED, 2), transport);
-    let mut clients: Vec<ClientRunner<WebTransportClient>> = (0..2)
+    let mut server = make_app();
+    install_server(
+        &mut server,
+        ServerConfig {
+            allowed_commands: ALLOWED.iter().map(|id| id.to_string()).collect(),
+            state_interval_ticks: 2,
+        },
+        transport,
+    );
+    prepare_simulation_app(&mut server);
+    let mut clients: Vec<App> = (0..2)
         .map(|id| {
             let transport = WebTransportClient::connect(&url, Some(&hash)).expect("client");
-            ClientRunner::new(ClientNode::new(id, make_app(), 0), transport, 500 + id, 6)
+            let mut app = make_app();
+            install_client(
+                &mut app,
+                ClientConfig {
+                    margin_ticks: 6,
+                    nonce: 500 + id,
+                },
+                transport,
+            );
+            prepare_simulation_app(&mut app);
+            app
         })
         .collect();
 
@@ -43,23 +70,24 @@ fn two_clients_play_through_a_real_webtransport_server_and_converge() {
     ];
     while started.elapsed() < Duration::from_secs(20) {
         step += 1;
-        server.step();
-        let joined = clients.iter().all(|c| c.phase == ClientPhase::Running);
-        for (index, client) in clients.iter_mut().enumerate() {
-            let mut lines = Vec::new();
+        simulate_tick(server.world_mut());
+        let all_joined = clients.iter().all(joined);
+        for (index, app) in clients.iter_mut().enumerate() {
             // Once everybody has joined, each client spawns its own box (once).
-            if joined && !spawned[index] {
+            if all_joined && !spawned[index] {
                 spawned[index] = true;
-                lines.push(spawn_lines[index].to_string());
+                app.world_mut()
+                    .resource_mut::<NetClient>()
+                    .queue_input(spawn_lines[index]);
             }
-            client.step(lines);
+            process_client_states(app.world_mut());
+            simulate_tick(app.world_mut());
         }
-        let plan_done = spawned.iter().all(|done| *done);
-        // Done when the server has both boxes, both clients have them, and they all rest in place.
-        if plan_done && step > 400 {
-            let server_bodies = positions(&read_body_states(server.node.app.world_mut()));
-            let settled = clients.iter_mut().all(|client| {
-                let own = positions(&read_body_states(client.node.app.world_mut()));
+        // Done when the server has both boxes and every client agrees with it.
+        if spawned.iter().all(|done| *done) && step > 400 {
+            let server_bodies = positions(&read_body_states(server.world_mut()));
+            let settled = clients.iter_mut().all(|app| {
+                let own = positions(&read_body_states(app.world_mut()));
                 own.len() == server_bodies.len()
                     && own.iter().zip(&server_bodies).all(|(a, b)| {
                         a.0 == b.0 && a.1.iter().zip(b.1).all(|(x, y)| (x - y).abs() < 0.05)
@@ -72,7 +100,7 @@ fn two_clients_play_through_a_real_webtransport_server_and_converge() {
         std::thread::sleep(STEP_PAUSE);
     }
 
-    let names: Vec<String> = read_body_states(server.node.app.world_mut())
+    let names: Vec<String> = read_body_states(server.world_mut())
         .into_iter()
         .map(|state| state.name)
         .collect();
@@ -81,27 +109,22 @@ fn two_clients_play_through_a_real_webtransport_server_and_converge() {
         ["ground", "net_a", "net_b"],
         "the server has every box"
     );
-    for client in &mut clients {
-        let own: Vec<String> = read_body_states(client.node.app.world_mut())
-            .into_iter()
-            .map(|state| state.name)
-            .collect();
-        assert_eq!(own, names, "client {} sees every box", client.node.id);
-        assert!(
-            client.node.stats.states_received > 10,
-            "{:?}",
-            client.node.stats
+    let server_bodies = positions(&read_body_states(server.world_mut()));
+    for (index, app) in clients.iter_mut().enumerate() {
+        let own = positions(&read_body_states(app.world_mut()));
+        let own_names: Vec<&String> = own.iter().map(|(name, _)| name).collect();
+        assert_eq!(
+            own_names,
+            names.iter().collect::<Vec<_>>(),
+            "client {index}"
         );
-    }
-    let server_bodies = positions(&read_body_states(server.node.app.world_mut()));
-    for client in &mut clients {
-        let own = positions(&read_body_states(client.node.app.world_mut()));
+        let stats = app.world().resource::<NetClient>().stats;
+        assert!(stats.states_received > 10, "client {index}: {stats:?}");
         for (a, b) in own.iter().zip(&server_bodies) {
             for (x, y) in a.1.iter().zip(b.1) {
                 assert!(
                     (x - y).abs() < 0.05,
-                    "client {}: {} is at {:?}, the server has it at {:?}",
-                    client.node.id,
+                    "client {index}: {} is at {:?}, the server has it at {:?}",
                     a.0,
                     a.1,
                     b.1

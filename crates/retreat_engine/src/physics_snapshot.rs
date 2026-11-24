@@ -17,6 +17,7 @@
 //! Restoring is exact when those rules hold: the same inputs resimulate to the same `state.hash`.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::Duration;
 
 use bevy::prelude::*;
 use bevy_rapier3d::plugin::context::{
@@ -40,6 +41,9 @@ pub struct PhysicsSnapshot {
     transforms: BTreeMap<Entity, Transform>,
     /// The simulation RNG: a replay that spawns or rolls random values must see the same numbers.
     rng: Option<SimulationRng>,
+    /// How much fixed time had passed (`Time<Fixed>`): sounds, animation and the like measure time
+    /// with it, so a replay must not run it twice.
+    fixed_elapsed: Duration,
     /// Game entities with a `PhysicsBody` at capture time.
     game_bodies: BTreeSet<Entity>,
     /// Their names, for error messages after they are gone.
@@ -110,6 +114,7 @@ pub fn capture_physics(world: &mut World) -> Result<PhysicsSnapshot, String> {
         }
     }
     let rng = world.get_resource::<SimulationRng>().cloned();
+    let fixed_elapsed = world.resource::<Time<Fixed>>().elapsed();
     Ok(PhysicsSnapshot {
         islands,
         broad_phase,
@@ -121,6 +126,7 @@ pub fn capture_physics(world: &mut World) -> Result<PhysicsSnapshot, String> {
         joints,
         transforms,
         rng,
+        fixed_elapsed,
         game_bodies,
         names,
         proxies,
@@ -181,6 +187,12 @@ pub fn restore_physics(world: &mut World, snapshot: &PhysicsSnapshot) -> Result<
     *bodies = snapshot.bodies.clone();
     *colliders = snapshot.colliders.clone();
     *joints = snapshot.joints.clone();
+    // Rewind the fixed clock: a fresh clock with the same step, advanced to the captured time.
+    let timestep = world.resource::<Time<Fixed>>().timestep();
+    let mut clock = Time::<Fixed>::from_duration(timestep);
+    clock.advance_by(snapshot.fixed_elapsed);
+    clock.advance_by(Duration::ZERO);
+    *world.resource_mut::<Time<Fixed>>() = clock;
     if let Some(rng) = &snapshot.rng {
         world.insert_resource(rng.clone());
     }

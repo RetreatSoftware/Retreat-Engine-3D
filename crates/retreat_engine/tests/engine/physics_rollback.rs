@@ -221,3 +221,21 @@ fn the_simulation_rng_is_rewound_with_the_physics() {
     );
     assert_eq!(draw(&mut app), second);
 }
+
+#[test]
+fn the_fixed_clock_is_rewound_with_the_physics() {
+    let mut app = test_app();
+    drop_boxes(&mut app, 4);
+    run_ticks(&mut app, 7);
+    let snapshot = capture_physics(app.world_mut()).expect("capture");
+    let captured = app.world().resource::<Time<Fixed>>().elapsed();
+    run_ticks(&mut app, 30);
+    assert!(app.world().resource::<Time<Fixed>>().elapsed() > captured);
+    restore_physics(app.world_mut(), &snapshot).expect("restore");
+    assert_eq!(app.world().resource::<Time<Fixed>>().elapsed(), captured);
+    run_ticks(&mut app, 1);
+    assert_eq!(
+        app.world().resource::<Time<Fixed>>().elapsed(),
+        captured + app.world().resource::<Time<Fixed>>().timestep()
+    );
+}

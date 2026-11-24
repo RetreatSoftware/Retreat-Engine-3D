@@ -6,9 +6,9 @@ use std::collections::BTreeMap;
 
 use bevy::prelude::*;
 use retreat_engine::net::body_state::{BodyState, read_body_states};
+use retreat_engine::net::harness::{HarnessConfig, NetHarness};
 use retreat_engine::net::link::LinkConditions;
-use retreat_engine::net::runner::ClientPhase;
-use retreat_engine::net::{HarnessConfig, NetHarness, prepare_simulation_app};
+use retreat_engine::net::prepare_simulation_app;
 use retreat_engine::{PhysicsPlugin, RetreatCommandsPlugin, StateHashPlugin};
 use retreat_engine_api::{PhysicsBody, PhysicsBodyKind, PhysicsShape};
 
@@ -31,7 +31,6 @@ pub(crate) fn make_app() -> App {
         },
         Transform::from_xyz(0.0, -0.5, 0.0),
     ));
-    prepare_simulation_app(&mut app);
     app
 }
 
@@ -59,11 +58,7 @@ fn link(latency_ticks: u32, jitter_ticks: u32, loss: f32) -> LinkConditions {
 fn harness(config: HarnessConfig, clients: u32) -> NetHarness {
     let mut harness = NetHarness::new(config, ALLOWED, clients, make_app);
     for _ in 0..300 {
-        if harness
-            .clients
-            .iter()
-            .all(|client| client.phase == ClientPhase::Running)
-        {
+        if harness.all_joined() {
             return harness;
         }
         harness.run_idle(1);
@@ -98,21 +93,19 @@ fn positions(states: &[BodyState]) -> BTreeMap<String, Vec3> {
 
 /// Every client has exactly the bodies of the server, and each is within `tolerance` of it.
 fn assert_clients_converged(harness: &mut NetHarness, tolerance: f32) {
-    let server = positions(&read_body_states(harness.server.app.world_mut()));
-    for client in &mut harness.clients {
-        let client_positions = positions(&read_body_states(client.app.world_mut()));
+    let server = positions(&read_body_states(harness.server_app.world_mut()));
+    for index in 0..harness.client_apps.len() {
+        let client_positions = positions(&read_body_states(harness.client_apps[index].world_mut()));
         assert_eq!(
             client_positions.keys().collect::<Vec<_>>(),
             server.keys().collect::<Vec<_>>(),
-            "client {} must have exactly the bodies of the server",
-            client.id
+            "client {index} must have exactly the bodies of the server"
         );
         for (name, server_position) in &server {
             let distance = client_positions[name].distance(*server_position);
             assert!(
                 distance <= tolerance,
-                "client {}: `{name}` is {distance} away from the server (tolerance {tolerance})",
-                client.id
+                "client {index}: `{name}` is {distance} away from the server (tolerance {tolerance})"
             );
         }
     }
@@ -135,16 +128,16 @@ fn with_perfect_links_prediction_always_matches_the_server() {
         1,
     );
     run_plan(&mut harness, &two_box_plan(), 200);
-    let stats = harness.clients[0].stats;
-    assert_eq!(harness.server.late_inputs, 0);
+    let stats = harness.client(0).stats;
+    assert_eq!(harness.server().late_inputs, 0);
     assert_eq!(stats.corrections, 0, "{stats:?}");
     assert!(stats.states_matching > 50, "{stats:?}");
     // The client runs ahead of the server, so compare once everything has come to rest.
     harness.run_idle(300);
     assert!(
-        harness.server.rejected_lines.is_empty(),
+        harness.server().rejected_lines.is_empty(),
         "{:?}",
-        harness.server.rejected_lines
+        harness.server().rejected_lines
     );
     assert_clients_converged(&mut harness, 1e-3);
 }
@@ -153,12 +146,12 @@ fn with_perfect_links_prediction_always_matches_the_server() {
 fn with_latency_and_enough_lead_prediction_still_matches() {
     let mut harness = harness(config(10, link(5, 0, 0.0), link(5, 0, 0.0)), 1);
     run_plan(&mut harness, &two_box_plan(), 300);
-    let stats = harness.clients[0].stats;
-    assert_eq!(harness.server.late_inputs, 0);
+    let stats = harness.client(0).stats;
+    assert_eq!(harness.server().late_inputs, 0);
     assert_eq!(stats.corrections, 0, "{stats:?}");
     assert!(stats.states_matching > 50, "{stats:?}");
     harness.run_idle(300);
-    assert_eq!(harness.clients[0].stats.corrections, 0);
+    assert_eq!(harness.client(0).stats.corrections, 0);
     assert_clients_converged(&mut harness, 1e-3);
 }
 
@@ -167,8 +160,8 @@ fn a_late_input_is_corrected_and_the_client_converges_to_the_server() {
     // A margin of -5 starts the client five ticks too close to the server: inputs arrive late.
     let mut harness = harness(config(-5, link(6, 0, 0.0), link(2, 0, 0.0)), 1);
     run_plan(&mut harness, &two_box_plan(), 400);
-    assert!(harness.server.late_inputs > 0);
-    let stats = harness.clients[0].stats;
+    assert!(harness.server().late_inputs > 0);
+    let stats = harness.client(0).stats;
     assert!(stats.corrections > 0, "{stats:?}");
     assert!(stats.replayed_ticks > 0, "{stats:?}");
     assert_eq!(stats.refused_rollbacks, 0, "{stats:?}");
@@ -181,13 +174,13 @@ fn a_lost_input_is_undone_on_the_client_because_the_server_never_saw_it() {
     // Every message from the client to the server is lost from now on (the client has joined).
     harness.set_links(link(2, 0, 1.0), link(2, 0, 0.0));
     run_plan(&mut harness, &two_box_plan(), 300);
-    let server_bodies = read_body_states(harness.server.app.world_mut());
+    let server_bodies = read_body_states(harness.server_app.world_mut());
     assert_eq!(
         server_bodies.len(),
         1,
         "only the ground exists on the server"
     );
-    assert!(harness.clients[0].stats.corrections > 0);
+    assert!(harness.client(0).stats.corrections > 0);
     assert_clients_converged(&mut harness, 1e-3);
 }
 
@@ -212,17 +205,17 @@ fn two_clients_see_each_others_bodies_through_the_server() {
     ];
     run_plan(&mut harness, &plan, 250);
     harness.run_idle(300);
-    let names: Vec<String> = read_body_states(harness.clients[0].app.world_mut())
+    let names: Vec<String> = read_body_states(harness.client_apps[0].world_mut())
         .into_iter()
         .map(|state| state.name)
         .collect();
     assert_eq!(names, ["from_a", "from_b", "ground"]);
     assert!(
-        harness.clients[0].stats.corrections > 0,
+        harness.client(0).stats.corrections > 0,
         "client 0 learns about from_b"
     );
     assert!(
-        harness.clients[1].stats.corrections > 0,
+        harness.client(1).stats.corrections > 0,
         "client 1 learns about from_a"
     );
     assert_clients_converged(&mut harness, 0.05);
@@ -236,7 +229,7 @@ fn the_server_refuses_commands_clients_may_not_run() {
     );
     let plan: Plan = vec![(3, 0, "physics.reset")];
     run_plan(&mut harness, &plan, 20);
-    let rejected = &harness.server.rejected_lines;
+    let rejected = &harness.server().rejected_lines;
     assert_eq!(rejected.len(), 1, "{rejected:?}");
     assert!(rejected[0].contains("command `physics.reset` is not allowed from clients"));
 }
@@ -250,9 +243,9 @@ fn a_failing_input_is_reported_not_fatal() {
     let plan: Plan = vec![(3, 0, "physics.push nobody 1 0 0")];
     run_plan(&mut harness, &plan, 20);
     assert!(
-        harness.server.rejected_lines[0].contains("no entity is named `nobody`"),
+        harness.server().rejected_lines[0].contains("no entity is named `nobody`"),
         "{:?}",
-        harness.server.rejected_lines
+        harness.server().rejected_lines
     );
 }
 
@@ -267,12 +260,10 @@ fn the_same_setup_gives_the_same_outcome_twice() {
         ];
         run_plan(&mut harness, &plan, 250);
         (
-            harness
-                .clients
-                .iter()
-                .map(|client| client.stats)
+            (0..2)
+                .map(|index| harness.client(index).stats)
                 .collect::<Vec<_>>(),
-            read_body_states(harness.server.app.world_mut())
+            read_body_states(harness.server_app.world_mut())
                 .into_iter()
                 .map(|state| state.translation.to_array().map(f32::to_bits))
                 .collect::<Vec<_>>(),
@@ -288,8 +279,8 @@ fn a_margin_below_the_need_makes_every_input_late_even_on_a_perfect_link() {
         1,
     );
     run_plan(&mut harness, &two_box_plan(), 200);
-    assert!(harness.server.late_inputs > 0);
-    assert!(harness.clients[0].stats.corrections > 0);
+    assert!(harness.server().late_inputs > 0);
+    assert!(harness.client(0).stats.corrections > 0);
     assert_clients_converged(&mut harness, 0.05);
 }
 
@@ -297,6 +288,7 @@ fn a_margin_below_the_need_makes_every_input_late_even_on_a_perfect_link() {
 fn physics_push_changes_a_bodys_velocity_and_refuses_fixed_or_unsimulated_bodies() {
     use retreat_engine_api::run_command_line;
     let mut app = make_app();
+    prepare_simulation_app(&mut app);
     run_command_line(app.world_mut(), "physics.spawn_box a 0 20 0 1").unwrap();
     // Before its first tick the body does not exist in the physics world yet.
     let error = run_command_line(app.world_mut(), "physics.push a 1 0 0").unwrap_err();
@@ -345,11 +337,13 @@ fn simulate_tick_gives_the_same_state_as_a_normal_update() {
         run_command_line(app.world_mut(), "physics.spawn_box b 0.4 5 0 1").unwrap();
     };
     let mut by_update = make_app();
+    prepare_simulation_app(&mut by_update);
     setup(&mut by_update);
     for _ in 0..150 {
         by_update.update();
     }
     let mut by_tick = make_app();
+    prepare_simulation_app(&mut by_tick);
     setup(&mut by_tick);
     for _ in 0..150 {
         simulate_tick(by_tick.world_mut());
@@ -364,22 +358,17 @@ fn simulate_tick_gives_the_same_state_as_a_normal_update() {
 fn the_handshake_measures_the_round_trip_and_survives_loss() {
     for (up, down) in [(0u32, 0u32), (3, 5), (8, 2)] {
         let harness = harness(config(1, link(up, 0, 0.0), link(down, 0, 0.0)), 1);
-        let round_trip = harness.clients[0].measured_round_trip.expect("joined");
+        let round_trip = harness.client(0).measured_round_trip.expect("joined");
         let expected = u64::from(up + down);
         assert!(
             (expected..=expected + 2).contains(&round_trip),
             "latencies {up} and {down}: measured {round_trip}"
         );
-        assert_eq!(harness.server.tick, harness.global_tick);
+        assert_eq!(harness.server().tick, harness.global_tick);
     }
     // With heavy loss the hello is repeated until a welcome gets through.
     let lossy = harness(config(2, link(2, 0, 0.7), link(2, 0, 0.7)), 2);
-    assert!(
-        lossy
-            .clients
-            .iter()
-            .all(|c| c.phase == ClientPhase::Running)
-    );
+    assert!(lossy.all_joined());
 }
 
 #[test]
@@ -394,7 +383,7 @@ fn input_before_the_handshake_is_never_applied() {
     harness.step(&[(0, line("physics.spawn_box early 0 3 0 1"))]);
     harness.run_idle(200);
     assert!(
-        read_body_states(harness.server.app.world_mut())
+        read_body_states(harness.server_app.world_mut())
             .iter()
             .all(|state| state.name != "early"),
         "input made before joining must be dropped"
