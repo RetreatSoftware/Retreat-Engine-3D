@@ -7,7 +7,7 @@
 
 use bevy::prelude::*;
 use bevy_rapier3d::plugin::context::RapierRigidBodySet;
-use retreat_engine_api::PhysicsBody;
+use retreat_engine_api::{PhysicsBody, PhysicsBodyKind};
 use serde::{Deserialize, Serialize};
 
 use crate::physics::PhysicsProxy;
@@ -57,6 +57,14 @@ pub fn read_body_states(world: &mut World) -> Vec<BodyState> {
     states
 }
 
+/// The state of every body that moves (`PhysicsBodyKind::Dynamic`), sorted by name: what is replicated.
+/// Fixed bodies never move and every machine has them from its own scene, so they are not sent.
+pub fn read_replicated_body_states(world: &mut World) -> Vec<BodyState> {
+    let mut states = read_body_states(world);
+    states.retain(|state| state.description.kind == PhysicsBodyKind::Dynamic);
+    states
+}
+
 /// Names in a state list that no body in the world has, and names in the world that the list lacks.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct ApplyReport {
@@ -69,10 +77,12 @@ pub struct ApplyReport {
 /// Writes `states` onto the matching bodies (pose, velocities, sleeping) and reports the names that
 /// did not match. Fixed bodies are left alone (they never move).
 pub fn apply_body_states(world: &mut World, states: &[BodyState]) -> ApplyReport {
-    let mut owners = world.query::<(&Name, &PhysicsProxy)>();
+    let mut owners = world.query::<(&Name, &PhysicsBody, &PhysicsProxy)>();
+    // Only dynamic bodies are replicated, so only they can be missing from a state list.
     let proxies: Vec<(String, Entity)> = owners
         .iter(world)
-        .map(|(name, proxy)| (name.as_str().to_string(), proxy.entity()))
+        .filter(|(_, body, _)| body.kind == PhysicsBodyKind::Dynamic)
+        .map(|(name, _, proxy)| (name.as_str().to_string(), proxy.entity()))
         .collect();
     let mut report = ApplyReport::default();
     let mut sets = world.query::<&mut RapierRigidBodySet>();

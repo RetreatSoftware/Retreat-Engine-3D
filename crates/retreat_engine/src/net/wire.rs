@@ -8,7 +8,7 @@
 use super::{ClientMessage, ServerMessage};
 
 /// The version of the wire format this build speaks. Bump it whenever a message type changes.
-pub const WIRE_VERSION: u8 = 2;
+pub const WIRE_VERSION: u8 = 3;
 
 /// Why bytes could not be turned into a message.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,6 +121,8 @@ mod tests {
     #[test]
     fn a_state_message_round_trips_exactly() {
         let message = ServerMessage::State {
+            chunk: 1,
+            chunks: 3,
             tick: 99,
             bodies: vec![body("a"), body("b")],
         };
@@ -156,10 +158,14 @@ mod tests {
     #[test]
     fn a_body_costs_a_small_fixed_number_of_bytes() {
         let one = encode_server_message(&ServerMessage::State {
+            chunk: 0,
+            chunks: 1,
             tick: 1,
             bodies: vec![body("a")],
         });
         let two = encode_server_message(&ServerMessage::State {
+            chunk: 0,
+            chunks: 1,
             tick: 1,
             bodies: vec![body("a"), body("b")],
         });
@@ -191,6 +197,8 @@ mod tests {
     #[test]
     fn every_truncation_and_some_garbage_is_refused_without_panicking() {
         let bytes = encode_server_message(&ServerMessage::State {
+            chunk: 0,
+            chunks: 1,
             tick: 7,
             bodies: vec![body("a")],
         });
@@ -209,5 +217,23 @@ mod tests {
         // A client message is not a valid server message and vice versa.
         let client_bytes = encode_client_message(&input());
         let _ = decode_server_message(&client_bytes);
+    }
+
+    #[test]
+    fn a_full_chunk_of_bodies_fits_one_datagram() {
+        let bodies: Vec<BodyState> = (0..crate::net::MAX_BODIES_PER_STATE_MESSAGE)
+            .map(|index| body(&format!("a_longer_body_name_{index:03}")))
+            .collect();
+        let bytes = encode_server_message(&ServerMessage::State {
+            chunk: 0,
+            chunks: 1,
+            tick: u64::MAX,
+            bodies,
+        });
+        assert!(
+            bytes.len() <= 1200,
+            "a full chunk takes {} bytes",
+            bytes.len()
+        );
     }
 }

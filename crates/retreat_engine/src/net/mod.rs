@@ -42,6 +42,9 @@ use serde::{Deserialize, Serialize};
 pub const POSITION_TOLERANCE: f32 = 1.0e-3;
 /// Largest velocity difference that still counts as "the same".
 pub const VELOCITY_TOLERANCE: f32 = 1.0e-2;
+/// Most bodies in one state message: a body takes 85 to 100 bytes (more with very long names), a datagram
+/// holds about 1200, so 8 leaves room for names up to about 40 characters.
+pub const MAX_BODIES_PER_STATE_MESSAGE: usize = 8;
 /// A client keeps this many ticks of history at most.
 pub const MAX_HISTORY_TICKS: u64 = 512;
 
@@ -65,7 +68,16 @@ pub enum ServerMessage {
         tick: u64,
     },
     /// The state of every physics body after the server simulated `tick`.
-    State { tick: u64, bodies: Vec<BodyState> },
+    ///
+    /// A state is cut into chunks of at most [`MAX_BODIES_PER_STATE_MESSAGE`] bodies so that every
+    /// message fits one datagram: chunk `chunk` of `chunks` (both counted from 0 and 1). The client
+    /// uses a tick only when all of its chunks arrived.
+    State {
+        tick: u64,
+        chunk: u16,
+        chunks: u16,
+        bodies: Vec<BodyState>,
+    },
 }
 
 /// Makes `app` step exactly one fixed tick per `update`, and runs the first update (which starts

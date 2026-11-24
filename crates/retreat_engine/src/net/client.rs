@@ -21,12 +21,15 @@ use bevy::app::{FixedFirst, FixedLast, RunFixedMainLoop, RunFixedMainLoopSystems
 use bevy::prelude::*;
 use retreat_engine_api::{PhysicsShape, run_command_line};
 
-use super::body_state::{BodyState, apply_body_states, read_body_states};
+use super::body_state::{BodyState, apply_body_states, read_replicated_body_states};
 use super::transport::{ClientEvent, ClientTransport};
 use super::wire;
 use super::{ClientMessage, MAX_HISTORY_TICKS, ServerMessage, simulate_tick, state_lists_match};
 use crate::physics::{PHYSICS_PROXY_NAME_SUFFIX, PhysicsBox, spawn_physics_box};
 use crate::physics_snapshot::{PhysicsSnapshot, capture_physics, restore_physics};
+
+/// A partly received state is kept for this many ticks while newer ones arrive.
+const PARTIAL_STATE_TICKS: u64 = 64;
 
 /// A client repeats its `Hello` this often while it waits for a `Welcome`.
 pub const HELLO_RESEND_TICKS: u64 = 16;
@@ -104,6 +107,8 @@ pub struct NetClient {
     replay_lines: Vec<String>,
     /// Server states received and not processed yet.
     pending_states: Vec<(u64, Vec<BodyState>)>,
+    /// State chunks of ticks that are not complete yet: tick -> chunks received so far (by index).
+    partial_states: BTreeMap<u64, Vec<Option<Vec<BodyState>>>>,
 }
 
 impl NetClient {
@@ -116,6 +121,45 @@ impl NetClient {
     /// Body states this client had after `tick`, if still in its history.
     pub fn states_at(&self, tick: u64) -> Option<&[BodyState]> {
         self.history.get(&tick).map(|entry| entry.bodies.as_slice())
+    }
+
+    /// Collects one chunk of a state; when every chunk of the tick has arrived, the whole state
+    /// (chunks in order, so still sorted by name) becomes ready for `process_client_states`.
+    fn add_state_chunk(&mut self, tick: u64, chunk: u16, chunks: u16, bodies: Vec<BodyState>) {
+        let (chunk, chunks) = (usize::from(chunk), usize::from(chunks));
+        if chunks == 0 || chunk >= chunks {
+            self.undecodable_packets += 1;
+            return;
+        }
+        let slots = self
+            .partial_states
+            .entry(tick)
+            .or_insert_with(|| vec![None; chunks]);
+        if slots.len() != chunks {
+            self.undecodable_packets += 1;
+            return;
+        }
+        slots[chunk] = Some(bodies);
+        if slots.iter().all(Option::is_some) {
+            let complete: Vec<BodyState> = self
+                .partial_states
+                .remove(&tick)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .flatten()
+                .collect();
+            self.pending_states.push((tick, complete));
+        }
+        // A tick whose chunks never all arrive is dropped once newer ticks are being assembled.
+        let newest = self
+            .partial_states
+            .keys()
+            .next_back()
+            .copied()
+            .unwrap_or(tick);
+        self.partial_states
+            .retain(|old, _| newest.saturating_sub(*old) <= PARTIAL_STATE_TICKS);
     }
 
     fn start_at(&mut self, tick: u64) {
@@ -152,6 +196,7 @@ pub fn install_client(
         replaying: false,
         replay_lines: Vec::new(),
         pending_states: Vec::new(),
+        partial_states: BTreeMap::new(),
     })
     .insert_non_send(ClientTransportBox(Box::new(transport)))
     .add_systems(FixedFirst, client_before_tick)
@@ -188,7 +233,12 @@ fn pump_transport(world: &mut World) {
                     client.phase = ClientPhase::Running;
                 }
             }
-            Ok(ServerMessage::State { tick, bodies }) => client.pending_states.push((tick, bodies)),
+            Ok(ServerMessage::State {
+                tick,
+                chunk,
+                chunks,
+                bodies,
+            }) => client.add_state_chunk(tick, chunk, chunks, bodies),
             Err(_) => client.undecodable_packets += 1,
         }
     }
@@ -246,7 +296,7 @@ fn client_after_tick(world: &mut World) {
         client.tick
     };
     let snapshot = capture_physics(world).expect("a client has physics");
-    let bodies = read_body_states(world);
+    let bodies = read_replicated_body_states(world);
     let mut client = world.resource_mut::<NetClient>();
     let inputs = std::mem::take(&mut client.current_inputs);
     let replaying = client.replaying;

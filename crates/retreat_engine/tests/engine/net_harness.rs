@@ -441,3 +441,35 @@ fn net_commands_send_input_report_status_and_check_roles() {
         "{error}"
     );
 }
+
+#[test]
+fn a_world_with_many_bodies_is_replicated_in_chunks() {
+    let mut harness = harness(config(8, link(2, 1, 0.0), link(2, 1, 0.0)), 2);
+    // 60 boxes in one tick: far more than one state message holds.
+    let lines: Vec<String> = (0..60)
+        .map(|index| {
+            let x = (index % 10) as f32 * 1.2 - 5.0;
+            let z = (index / 10) as f32 * 1.2 - 3.0;
+            format!(
+                "physics.spawn_box many_{index:02} {x} {} {z} 0.5",
+                1.0 + (index % 3) as f32
+            )
+        })
+        .collect();
+    harness.step(&[(0, lines)]);
+    harness.run_idle(500);
+    let names = |harness: &mut NetHarness, index: usize| -> usize {
+        read_body_states(harness.client_apps[index].world_mut())
+            .iter()
+            .filter(|state| state.name.starts_with("many_"))
+            .count()
+    };
+    assert_eq!(names(&mut harness, 0), 60);
+    assert_eq!(
+        names(&mut harness, 1),
+        60,
+        "client 1 learned all 60 through chunked states"
+    );
+    assert_clients_converged(&mut harness, 0.05);
+    assert_eq!(harness.undecodable_packets(), 0);
+}

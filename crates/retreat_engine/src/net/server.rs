@@ -16,10 +16,10 @@ use bevy::app::{FixedFirst, FixedLast};
 use bevy::prelude::*;
 use retreat_engine_api::run_command_line;
 
-use super::body_state::{BodyState, read_body_states};
+use super::body_state::{BodyState, read_replicated_body_states};
 use super::transport::{ConnectionId, ServerEvent, ServerTransport};
 use super::wire;
-use super::{ClientMessage, ServerMessage};
+use super::{ClientMessage, MAX_BODIES_PER_STATE_MESSAGE, ServerMessage};
 
 /// How the server behaves.
 #[derive(Clone, Debug)]
@@ -166,13 +166,23 @@ fn server_after_tick(world: &mut World) {
         )
     };
     if due {
-        let bodies = read_body_states(world);
-        let bytes = wire::encode_server_message(&ServerMessage::State {
-            tick,
-            bodies: bodies.clone(),
-        });
-        for id in known {
-            transport.0.send(id, bytes.clone());
+        let bodies = read_replicated_body_states(world);
+        // At least one message even when there are no bodies, so the client still hears the tick.
+        let pieces: Vec<&[BodyState]> = if bodies.is_empty() {
+            vec![&[]]
+        } else {
+            bodies.chunks(MAX_BODIES_PER_STATE_MESSAGE).collect()
+        };
+        for (index, piece) in pieces.iter().enumerate() {
+            let bytes = wire::encode_server_message(&ServerMessage::State {
+                tick,
+                chunk: index as u16,
+                chunks: pieces.len() as u16,
+                bodies: piece.to_vec(),
+            });
+            for id in &known {
+                transport.0.send(*id, bytes.clone());
+            }
         }
         world.resource_mut::<NetServer>().last_broadcast = Some((tick, bodies));
     }
