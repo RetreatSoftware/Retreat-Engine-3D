@@ -4,7 +4,9 @@
 // all three worlds agree.
 //
 // Run from Retreat-Engine-3D after `cargo build -p retreat_sandbox`:
-//   node scripts/verify/network/run.mjs [--software-renderer] [--browser]
+//   node scripts/verify/network/run.mjs [--software-renderer] [--browser] [--scenario players]
+// The default scenario spawns and pushes boxes with `net.send`; `--scenario players` uses the players
+// module: each client holds a movement key and the engine predicts and sends the movement.
 // With --browser, client B is the browser build (headless Chrome through scripts/web/run_in_browser.mjs,
 // WebTransport from the page): run scripts/web/build.sh first.
 // Exit code 0 = every process exited cleanly and the three worlds agree (positions within 0.05).
@@ -36,11 +38,14 @@ if (!existsSync(exe)) {
 }
 const extra = process.argv.includes("--software-renderer") ? ["--software-renderer"] : [];
 const browserClient = process.argv.includes("--browser");
+const scenario = process.argv.includes("--scenario") ? process.argv[process.argv.indexOf("--scenario") + 1] : "boxes";
+if (scenario !== "boxes" && scenario !== "players") die(`unknown scenario ${scenario}; use boxes or players`);
 const TOLERANCE = 0.05;
 // The browser variant waits much longer (the page needs many seconds to load) and its scripts too.
 const TIMEOUT_MS = browserClient ? 240_000 : 90_000;
-const scriptDir = browserClient ? join(here, "browser") : here;
-const webScriptDir = browserClient ? "scripts/verify/network/browser" : "scripts/verify/network";
+const scenarioFolder = scenario === "players" ? "players" : browserClient ? "browser" : "";
+const scriptDir = join(here, scenarioFolder);
+const webScriptDir = `scripts/verify/network${scenarioFolder ? `/${scenarioFolder}` : ""}`;
 
 function start(name, args, command = exe, fixedArgs = ["--headless", "--real-time", ...extra]) {
   const child = spawn(command, [...fixedArgs, ...args], { cwd: root });
@@ -128,7 +133,10 @@ try {
   if (!failure) {
     const views = processes.map((p) => ({ name: p.name, bodies: bodies(p.output) }));
     const reference = views[0].bodies;
-    const expectedNames = ["net_a", "net_b", "sandbox_cube", "sandbox_ground"];
+    const expectedNames =
+      scenario === "players"
+        ? ["player_0", "player_1", "sandbox_cube", "sandbox_ground"]
+        : ["net_a", "net_b", "sandbox_cube", "sandbox_ground"];
     for (const view of views) {
       const names = [...view.bodies.keys()].sort();
       if (JSON.stringify(names) !== JSON.stringify(expectedNames)) {

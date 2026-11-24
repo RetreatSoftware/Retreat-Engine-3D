@@ -1,0 +1,9 @@
+# Client B of the players scenario: joins a little later and holds ArrowUp for one second.
+wait 150
+assert.net_joined
+input.key_down ArrowUp
+wait 64
+input.key_up ArrowUp
+wait 440
+net.bodies
+quit

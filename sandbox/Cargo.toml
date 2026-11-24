@@ -15,6 +15,7 @@ retreat_module_sfx.workspace = true
 retreat_module_fox_walk.workspace = true
 retreat_module_highscore.workspace = true
 retreat_module_menu.workspace = true
+retreat_module_players.workspace = true
 
 # Hot reload: on native, Bevy watches `assets/` and reloads a texture, model or shader the
 # moment its file changes on disk. The browser has no file watcher, so this is native-only

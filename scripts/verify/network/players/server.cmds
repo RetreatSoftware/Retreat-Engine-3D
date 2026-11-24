@@ -1,0 +1,6 @@
+# Server of the players scenario (see ../run.mjs --scenario players): the players module spawns a body per
+# joined client; the clients move theirs with held keys. The server prints what it sees at the end.
+wait 1400
+assert.net_clients 2
+net.bodies
+quit

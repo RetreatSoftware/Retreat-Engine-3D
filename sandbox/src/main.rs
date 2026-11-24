@@ -42,5 +42,7 @@ fn add_sandbox_plugins(app: &mut App) {
         retreat_module_highscore::HighscoreModulePlugin,
         // The menu module: a pause menu (UI toolkit panel) toggled with Escape.
         retreat_module_menu::MenuModulePlugin,
+        // The players module: a body per connected client, moved with held arrow keys (networked play).
+        retreat_module_players::PlayersModulePlugin,
     ));
 }

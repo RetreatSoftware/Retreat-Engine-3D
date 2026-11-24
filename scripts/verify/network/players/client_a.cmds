@@ -1,0 +1,10 @@
+# Client A of the players scenario: joins, holds ArrowRight for one second (the players module turns the
+# held key into movement lines that the engine predicts and sends), then waits for the world to settle.
+wait 90
+assert.net_joined
+input.key_down ArrowRight
+wait 64
+input.key_up ArrowRight
+wait 500
+net.bodies
+quit
