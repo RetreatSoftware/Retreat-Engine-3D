@@ -137,6 +137,14 @@ try {
   processes.forEach((p) => p.exited === null && p.child.kill());
 }
 if (failure) {
+  // The tail of every process's output, so a failure on a machine without a terminal (CI) explains itself.
+  for (const p of processes) {
+    const tail = p.output.split("
+").slice(-40).join("
+");
+    console.error(`----- ${p.name} (exit ${p.exited}) -----
+${tail}`);
+  }
   console.error(`network check: FAIL: ${failure}`);
   process.exit(1);
 }
