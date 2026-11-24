@@ -62,7 +62,7 @@ impl Default for ServerLimits {
             mute_ticks: 128,
             mutes_before_disconnect: 3,
             max_connections: 64,
-            join_timeout_ticks: 640,
+            join_timeout_ticks: 3840,
         }
     }
 }
