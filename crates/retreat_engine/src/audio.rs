@@ -21,8 +21,8 @@ use std::time::Duration;
 
 use bevy::asset::LoadState;
 use bevy::audio::{
-    AudioLoader, AudioPlayer, AudioSink, AudioSinkPlayback, AudioSource, Decodable, PlaybackMode,
-    PlaybackSettings, Source, Volume,
+    AudioLoader, AudioPlayer, AudioSink, AudioSinkPlayback, AudioSource, Decodable, GlobalVolume,
+    PlaybackMode, PlaybackSettings, Source, Volume,
 };
 use bevy::prelude::*;
 use retreat_engine_api::{
@@ -240,9 +240,15 @@ fn measure_loaded_sounds(
 /// Applies a changed `volume` to a sound that is already playing.
 fn apply_volume_changes(
     mut sounds: Query<(&SoundPlayback, &mut AudioSink), Changed<SoundPlayback>>,
+    global_volume: Option<Res<GlobalVolume>>,
 ) {
     for (sound, mut sink) in &mut sounds {
-        sink.set_volume(Volume::Linear(sound.volume));
+        // Bevy applies the global volume (0 when muted) only when a sink is created, so a
+        // changed volume must multiply it in again or `audio.volume` would break the mute.
+        let global = global_volume
+            .as_ref()
+            .map_or(Volume::Linear(1.0), |global| global.volume);
+        sink.set_volume(Volume::Linear(sound.volume) * global);
     }
 }
 
@@ -385,6 +391,14 @@ fn status_command(world: &mut World, args: &CommandArgs) -> CommandResult {
         );
     } else {
         info!("audio: native output");
+    }
+    let muted = world
+        .get_resource::<GlobalVolume>()
+        .is_some_and(|global| global.volume == Volume::SILENT);
+    if muted {
+        info!(
+            "audio: output is muted (a script or --headless is running); logical state is unchanged; pass --sound (browser: ?sound=1) to hear it"
+        );
     }
     let mut sounds = world.query::<(&Name, &SoundPlayback)>();
     let mut lines: Vec<String> = sounds

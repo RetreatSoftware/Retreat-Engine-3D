@@ -6,7 +6,7 @@ use std::path::PathBuf;
 pub const DEFAULT_SEED: u64 = 0;
 
 /// Shown after every launch-argument error.
-const LAUNCH_USAGE: &str = "usage: <app> [--commands <script.cmds>] [--seed <whole number>] [--headless [--no-render]] [--software-renderer] [--real-time] [--server <port> | --connect <https://host:port> [--cert-hash <64 hex digits>]]";
+const LAUNCH_USAGE: &str = "usage: <app> [--commands <script.cmds>] [--seed <whole number>] [--headless [--no-render]] [--software-renderer] [--real-time] [--sound] [--server <port> | --connect <https://host:port> [--cert-hash <64 hex digits>]]";
 
 /// Whether and how the app takes part in a network game.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -43,6 +43,8 @@ pub struct LaunchOptions {
     /// `--real-time`: a command script runs one line per fixed tick of *real* time instead of as fast
     /// as frames come (needed when other machines must keep up, as in network checks).
     pub real_time: bool,
+    /// `--sound` / `?sound=1`: play real sound even when a script is loaded or `--headless` is set.
+    pub sound: bool,
     /// `--server`, `--connect`, `--cert-hash`.
     pub net: NetLaunch,
 }
@@ -56,12 +58,20 @@ impl Default for LaunchOptions {
             no_render: false,
             software_renderer: false,
             real_time: false,
+            sound: false,
             net: NetLaunch::Off,
         }
     }
 }
 
 impl LaunchOptions {
+    /// True when the sound device must stay silent: a command script is loaded or `--headless` is
+    /// set (verify runs), unless `--sound` asks for real playback. Interactive play is audible.
+    /// Only the output is muted; the logical audio state is unchanged. The one rule for this.
+    pub fn sound_muted(&self) -> bool {
+        !self.sound && (self.commands_file.is_some() || self.headless)
+    }
+
     /// Reads the process arguments. In the browser there are none, so this gives the defaults.
     pub fn from_env_args() -> Result<Self, String> {
         // The first argument is the program's own path, not an option.
@@ -89,6 +99,7 @@ impl LaunchOptions {
                 "--no-render" => options.no_render = true,
                 "--software-renderer" => options.software_renderer = true,
                 "--real-time" => options.real_time = true,
+                "--sound" => options.sound = true,
                 "--server" => {
                     let value = next_value(&mut args, "--server")?;
                     let port = value.parse().map_err(|error| {
@@ -135,7 +146,7 @@ impl LaunchOptions {
 }
 
 /// Shown after every URL launch-option error (browser builds).
-const URL_USAGE: &str = "usage: page URL `?commands=<path to .cmds>&seed=<whole number>&real_time=1&connect=<https://host:port>&cert_hash=<64 hex digits>` (all optional)";
+const URL_USAGE: &str = "usage: page URL `?commands=<path to .cmds>&seed=<whole number>&real_time=1&sound=1&connect=<https://host:port>&cert_hash=<64 hex digits>` (all optional)";
 
 impl LaunchOptions {
     /// Reads the browser page's URL query, already split into decoded `(key, value)` pairs
@@ -150,6 +161,7 @@ impl LaunchOptions {
             match key.as_str() {
                 "commands" => options.commands_file = Some(PathBuf::from(value)),
                 "real_time" => options.real_time = matches!(value.as_str(), "1" | "true"),
+                "sound" => options.sound = matches!(value.as_str(), "1" | "true"),
                 "connect" => {
                     options.net = NetLaunch::Client {
                         url: value,
@@ -286,6 +298,29 @@ mod tests {
         );
         let error = url(&[("seed", "x")]).unwrap_err();
         assert!(error.contains("seed `x` is not a whole number"), "{error}");
+    }
+
+    #[test]
+    fn sound_is_muted_for_scripts_and_headless_unless_asked() {
+        assert!(!parse(&[]).unwrap().sound_muted());
+        assert!(parse(&["--commands", "a.cmds"]).unwrap().sound_muted());
+        assert!(parse(&["--headless"]).unwrap().sound_muted());
+        assert!(
+            !parse(&["--commands", "a.cmds", "--sound"])
+                .unwrap()
+                .sound_muted()
+        );
+        assert!(!parse(&["--headless", "--sound"]).unwrap().sound_muted());
+        assert!(parse(&["--sound"]).unwrap().sound);
+    }
+
+    #[test]
+    fn url_sound_option_turns_real_playback_on() {
+        let muted = url(&[("commands", "a.cmds")]).unwrap();
+        assert!(muted.sound_muted());
+        let loud = url(&[("commands", "a.cmds"), ("sound", "1")]).unwrap();
+        assert!(loud.sound && !loud.sound_muted());
+        assert!(!url(&[("sound", "0")]).unwrap().sound);
     }
 
     #[test]

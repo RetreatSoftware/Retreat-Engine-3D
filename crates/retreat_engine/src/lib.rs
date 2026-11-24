@@ -37,6 +37,7 @@ use std::time::Duration;
 
 use bevy::app::ScheduleRunnerPlugin;
 use bevy::asset::UnapprovedPathMode;
+use bevy::audio::{AudioPlugin, Volume};
 use bevy::prelude::*;
 use bevy::render::RenderPlugin;
 use bevy::render::settings::WgpuSettings;
@@ -99,6 +100,8 @@ pub struct RetreatEnginePlugin {
     pub software_renderer: bool,
     /// `--real-time`: scripts run in real time (see `RealTimeScript`).
     pub real_time: bool,
+    /// Mute the sound device (`LaunchOptions::sound_muted`); logical audio state is unchanged.
+    pub sound_muted: bool,
     pub commands: RetreatCommandsPlugin,
 }
 
@@ -111,6 +114,7 @@ impl RetreatEnginePlugin {
             no_render: false,
             software_renderer: false,
             real_time: false,
+            sound_muted: false,
             commands: RetreatCommandsPlugin::default(),
         }
     }
@@ -129,6 +133,7 @@ impl RetreatEnginePlugin {
             no_render: options.no_render,
             software_renderer: options.software_renderer,
             real_time: options.real_time,
+            sound_muted: options.sound_muted(),
             commands: RetreatCommandsPlugin {
                 seed: options.seed,
                 command_script,
@@ -142,6 +147,19 @@ impl RetreatEnginePlugin {
         AssetPlugin {
             unapproved_path_mode: UnapprovedPathMode::Deny,
             meta_check: platform::asset_meta_check(),
+            ..default()
+        }
+    }
+
+    /// Bevy's audio plugin; muted means global volume 0, so sounds still load, have a length and
+    /// end on the fixed clock, but nothing reaches the speakers (`audio.rs` applies it to every volume).
+    fn audio_plugin(&self) -> AudioPlugin {
+        AudioPlugin {
+            global_volume: if self.sound_muted {
+                GlobalVolume::new(Volume::SILENT)
+            } else {
+                GlobalVolume::default()
+            },
             ..default()
         }
     }
@@ -181,6 +199,7 @@ impl Plugin for RetreatEnginePlugin {
                     .set(window_plugin)
                     .set(self.asset_plugin())
                     .set(self.render_plugin())
+                    .set(self.audio_plugin())
                     // Winit runs the window event loop; there is no window.
                     .disable::<WinitPlugin>(),
             );
@@ -199,7 +218,8 @@ impl Plugin for RetreatEnginePlugin {
                 DefaultPlugins
                     .set(window_plugin)
                     .set(self.asset_plugin())
-                    .set(self.render_plugin()),
+                    .set(self.render_plugin())
+                    .set(self.audio_plugin()),
             );
             app.insert_resource(SnapshotSource::PrimaryWindow);
         }
