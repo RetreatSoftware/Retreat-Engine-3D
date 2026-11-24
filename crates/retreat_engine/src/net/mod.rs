@@ -29,6 +29,7 @@ pub mod commands;
 pub mod harness;
 pub mod link;
 pub mod server;
+pub mod state_delta;
 pub mod transport;
 pub mod wire;
 
@@ -68,13 +69,15 @@ pub enum ServerMessage {
         client_id: u32,
         tick: u64,
     },
-    /// The state of every physics body after the server simulated `tick`.
+    /// The state of the physics bodies after the server simulated `tick`: every body when `full`,
+    /// otherwise only the bodies that are not resting (see `state_delta.rs`).
     ///
     /// A state is cut into chunks of at most [`MAX_BODIES_PER_STATE_MESSAGE`] bodies so that every
     /// message fits one datagram: chunk `chunk` of `chunks` (both counted from 0 and 1). The client
     /// uses a tick only when all of its chunks arrived.
     State {
         tick: u64,
+        full: bool,
         chunk: u16,
         chunks: u16,
         bodies: Vec<BodyState>,

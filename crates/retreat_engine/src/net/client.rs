@@ -22,6 +22,7 @@ use bevy::prelude::*;
 use retreat_engine_api::{NetCommandSender, NetInputQueue, Replicated, run_command_line};
 
 use super::body_state::{BodyState, apply_body_states, read_replicated_body_states};
+use super::state_delta::StateAssembler;
 use super::transport::{ClientEvent, ClientTransport};
 use super::wire;
 use super::{ClientMessage, MAX_HISTORY_TICKS, ServerMessage, simulate_tick, state_lists_match};
@@ -109,6 +110,13 @@ pub struct NetClient {
     pending_states: Vec<(u64, Vec<BodyState>)>,
     /// State chunks of ticks that are not complete yet: tick -> chunks received so far (by index).
     partial_states: BTreeMap<u64, Vec<Option<Vec<BodyState>>>>,
+    /// Rebuilds whole states from the deltas the server sends.
+    assembler: StateAssembler,
+    /// Complete states discarded because they were not usable (a delta before any full state, or
+    /// not newer than the last one used).
+    pub states_discarded: u64,
+    /// Whether each partial tick is a full state (the flag is the same on every chunk of a tick).
+    partial_full: BTreeMap<u64, bool>,
 }
 
 impl NetClient {
@@ -125,7 +133,14 @@ impl NetClient {
 
     /// Collects one chunk of a state; when every chunk of the tick has arrived, the whole state
     /// (chunks in order, so still sorted by name) becomes ready for `process_client_states`.
-    fn add_state_chunk(&mut self, tick: u64, chunk: u16, chunks: u16, bodies: Vec<BodyState>) {
+    fn add_state_chunk(
+        &mut self,
+        tick: u64,
+        full: bool,
+        chunk: u16,
+        chunks: u16,
+        bodies: Vec<BodyState>,
+    ) {
         let (chunk, chunks) = (usize::from(chunk), usize::from(chunks));
         if chunks == 0 || chunk >= chunks {
             self.undecodable_packets += 1;
@@ -149,7 +164,13 @@ impl NetClient {
                 .flatten()
                 .flatten()
                 .collect();
-            self.pending_states.push((tick, complete));
+            let full = self.partial_full.remove(&tick).unwrap_or(full);
+            match self.assembler.assemble(tick, full, complete) {
+                Some(whole) => self.pending_states.push((tick, whole)),
+                None => self.states_discarded += 1,
+            }
+        } else {
+            self.partial_full.insert(tick, full);
         }
         // A tick whose chunks never all arrive is dropped once newer ticks are being assembled.
         let newest = self
@@ -159,6 +180,8 @@ impl NetClient {
             .copied()
             .unwrap_or(tick);
         self.partial_states
+            .retain(|old, _| newest.saturating_sub(*old) <= PARTIAL_STATE_TICKS);
+        self.partial_full
             .retain(|old, _| newest.saturating_sub(*old) <= PARTIAL_STATE_TICKS);
     }
 
@@ -199,6 +222,9 @@ pub fn install_client(
         replay_lines: Vec::new(),
         pending_states: Vec::new(),
         partial_states: BTreeMap::new(),
+        assembler: StateAssembler::default(),
+        states_discarded: 0,
+        partial_full: BTreeMap::new(),
     })
     .insert_non_send(ClientTransportBox(Box::new(transport)))
     .add_systems(FixedFirst, client_before_tick)
@@ -237,10 +263,11 @@ fn pump_transport(world: &mut World) {
             }
             Ok(ServerMessage::State {
                 tick,
+                full,
                 chunk,
                 chunks,
                 bodies,
-            }) => client.add_state_chunk(tick, chunk, chunks, bodies),
+            }) => client.add_state_chunk(tick, full, chunk, chunks, bodies),
             Err(_) => client.undecodable_packets += 1,
         }
     }

@@ -499,6 +499,49 @@ fn a_world_with_many_bodies_is_replicated_in_chunks() {
     assert_eq!(harness.undecodable_packets(), 0);
 }
 
+/// Spawns `count` boxes in one tick from client 0 and lets them settle to rest.
+fn spawn_resting_boxes(harness: &mut NetHarness, count: u32) {
+    let lines: Vec<String> = (0..count)
+        .map(|index| {
+            let x = (index % 10) as f32 * 1.2 - 5.0;
+            let z = (index / 10) as f32 * 1.2 - 3.0;
+            format!("physics.spawn_box rest_{index:02} {x} 1 {z} 0.5")
+        })
+        .collect();
+    harness.step(&[(0, lines)]);
+    harness.run_idle(600);
+}
+
+#[test]
+fn a_world_at_rest_costs_a_small_fraction_of_a_full_state_per_broadcast() {
+    let mut harness = harness(config(8, link(2, 1, 0.0), link(2, 1, 0.0)), 2);
+    spawn_resting_boxes(&mut harness, 60);
+    let before = harness.bytes().1;
+    harness.run_idle(640); // 10 seconds
+    let per_client = (harness.bytes().1 - before) / 2 / 10;
+    // Before deltas every broadcast listed all 60 bodies: about 60 * 90 bytes * 30 broadcasts/s.
+    let full_state_every_broadcast = 60 * 90 * 30;
+    println!(
+        "resting 60 boxes: {per_client} B/s per client (was about {full_state_every_broadcast})"
+    );
+    assert!(
+        per_client * 10 < full_state_every_broadcast,
+        "{per_client} B/s per client for a resting world"
+    );
+    assert_clients_converged(&mut harness, 0.05);
+}
+
+#[test]
+fn deltas_converge_with_loss_a_moving_body_among_resting_ones_and_a_removal() {
+    let mut harness = harness(config(8, link(2, 1, 0.1), link(2, 1, 0.1)), 2);
+    spawn_resting_boxes(&mut harness, 20);
+    harness.step(&[(0, line("physics.push rest_03 4 6 0"))]);
+    harness.step(&[(1, line("physics.remove rest_07"))]);
+    harness.run_idle(900);
+    assert_clients_converged(&mut harness, 0.05);
+    assert_eq!(harness.undecodable_packets(), 0);
+}
+
 /// Records the join and leave messages the server writes, and the sender of every `test.whoami`.
 #[derive(Resource, Default)]
 struct Observed {

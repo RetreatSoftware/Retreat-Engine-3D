@@ -5,7 +5,7 @@
 //! - `server_before_tick` (`FixedFirst`): reads the transport, answers `Hello` with `Welcome`, buffers
 //!   inputs and runs the command lines that are due for this tick (only commands on the allow-list);
 //! - `server_after_tick` (`FixedLast`): counts the tick and, every `state_interval_ticks`, broadcasts the
-//!   state of every physics body to every known client.
+//!   state of the physics bodies to every known client (full or delta, see `state_delta.rs`).
 //!
 //! Because these run inside `FixedMain`, a real app (Bevy's fixed loop) and the in-process harness
 //! (`simulate_tick`) run exactly the same server code.
@@ -19,6 +19,7 @@ use retreat_engine_api::{
 };
 
 use super::body_state::{BodyState, read_replicated_body_states};
+use super::state_delta::DeltaEncoder;
 use super::transport::{ConnectionId, ServerEvent, ServerTransport};
 use super::wire;
 use super::{ClientMessage, MAX_BODIES_PER_STATE_MESSAGE, ServerMessage};
@@ -50,6 +51,8 @@ pub struct NetServer {
     pub last_broadcast: Option<(u64, Vec<BodyState>)>,
     /// Packets that could not be decoded.
     pub undecodable_packets: u64,
+    /// Decides which bodies each broadcast lists (see `state_delta.rs`).
+    delta: DeltaEncoder,
 }
 
 impl NetServer {
@@ -83,6 +86,7 @@ pub fn install_server(
         rejected_lines: Vec::new(),
         last_broadcast: None,
         undecodable_packets: 0,
+        delta: DeltaEncoder::default(),
     })
     .insert_non_send(ServerTransportBox(Box::new(transport)))
     .add_systems(FixedFirst, server_before_tick)
@@ -106,6 +110,7 @@ fn server_before_tick(world: &mut World) {
                 ServerEvent::Packet { from, bytes } => match wire::decode_client_message(&bytes) {
                     Ok(ClientMessage::Hello { nonce }) => {
                         if server.known.insert(from) {
+                            server.delta.request_full_state();
                             world.write_message(NetClientJoined { client_id: from });
                         }
                         let welcome = ServerMessage::Welcome {
@@ -185,14 +190,16 @@ fn server_after_tick(world: &mut World) {
     if due {
         let bodies = read_replicated_body_states(world);
         // At least one message even when there are no bodies, so the client still hears the tick.
-        let pieces: Vec<&[BodyState]> = if bodies.is_empty() {
+        let (full, listed) = world.resource_mut::<NetServer>().delta.encode(&bodies);
+        let pieces: Vec<&[BodyState]> = if listed.is_empty() {
             vec![&[]]
         } else {
-            bodies.chunks(MAX_BODIES_PER_STATE_MESSAGE).collect()
+            listed.chunks(MAX_BODIES_PER_STATE_MESSAGE).collect()
         };
         for (index, piece) in pieces.iter().enumerate() {
             let bytes = wire::encode_server_message(&ServerMessage::State {
                 tick,
+                full,
                 chunk: index as u16,
                 chunks: pieces.len() as u16,
                 bodies: piece.to_vec(),
