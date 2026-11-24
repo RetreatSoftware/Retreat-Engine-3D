@@ -2,7 +2,8 @@
 # other way, waits for the world to settle and prints what it sees.
 # Join takes real time that a tick count cannot predict (a slow browser needs seconds): wait for it.
 wait_until 3000 assert.net_joined
-net.send physics.spawn_box net_b 2 4 0 1
+# (z -2: away from client A's box, so the two never collide; a collision of late-applied spawns diverges between machines and flaked in CI)
+net.send physics.spawn_box net_b 2 4 -2 1
 wait 40
 net.send physics.push net_b -2 0 0
 wait 380
