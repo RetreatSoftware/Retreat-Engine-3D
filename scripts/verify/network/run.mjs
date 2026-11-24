@@ -17,9 +17,22 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..", "..", "..");
 const exe = join(root, "target", "debug", process.platform === "win32" ? "retreat_sandbox.exe" : "retreat_sandbox");
-if (!existsSync(exe)) {
-  console.error(`network check: ${exe} does not exist; run \`cargo build -p retreat_sandbox\` first`);
+// A GitHub annotation shows on the run's page and through the API without a login, which the raw log
+// does not; outside CI this prints nothing extra.
+function annotate(report) {
+  if (process.env.GITHUB_ACTIONS) {
+    const text = report.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A").slice(0, 60000);
+    console.log(`::error title=Network check failed::${text}`);
+  }
+}
+function die(message) {
+  console.error(`network check: ${message}`);
+  annotate(message);
   process.exit(1);
+}
+process.on("uncaughtException", (error) => die(`unexpected error: ${error.stack ?? error}`));
+if (!existsSync(exe)) {
+  die(`${exe} does not exist; run \`cargo build -p retreat_sandbox\` first`);
 }
 const extra = process.argv.includes("--software-renderer") ? ["--software-renderer"] : [];
 const browserClient = process.argv.includes("--browser");
@@ -28,6 +41,7 @@ const TIMEOUT_MS = 90_000;
 
 function start(name, args, command = exe, fixedArgs = ["--headless", "--real-time", ...extra]) {
   const child = spawn(command, [...fixedArgs, ...args], { cwd: root });
+  child.on("error", (error) => die(`cannot start ${name} (${command}): ${error.message}`));
   const process_ = { name, child, output: "", exited: null };
   const collect = (chunk) => {
     process_.output += chunk.toString();
@@ -138,25 +152,11 @@ try {
 }
 if (failure) {
   // The tail of every process's output, so a failure on a machine without a terminal (CI) explains itself.
-  for (const p of processes) {
-    const tail = p.output.split("
-").slice(-40).join("
-");
-    console.error(`----- ${p.name} (exit ${p.exited}) -----
-${tail}`);
-  }
-  console.error(`network check: FAIL: ${failure}`);
-  if (process.env.GITHUB_ACTIONS) {
-    // A GitHub annotation: it shows on the run's page and through the API without a login, which the
-    // raw log does not.
-    const report = [failure, ...processes.map((p) => `----- ${p.name} (exit ${p.exited}) -----
-${p.output.split("
-").slice(-25).join("
-")}`)].join("
-");
-    console.log(`::error title=Network check failed::${report.replaceAll("%", "%25").replaceAll("", "%0D").replaceAll("
-", "%0A").slice(0, 60000)}`);
-  }
+  const tails = processes.map(
+    (p) => `----- ${p.name} (exit ${p.exited}) -----\n${p.output.split("\n").slice(-40).join("\n")}`,
+  );
+  console.error(`${tails.join("\n")}\nnetwork check: FAIL: ${failure}`);
+  annotate([failure, ...tails].join("\n"));
   process.exit(1);
 }
 console.log("network check: PASS");

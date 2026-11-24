@@ -75,6 +75,8 @@ jobs:
         with:
           node-version: 24
       - run: scripts/web/build.sh
+      - name: Install Bevy's Linux system libraries (the network check runs the native sandbox)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev mesa-vulkan-drivers
       - name: Network check with a browser client (native server and client, browser client B)
         run: |
           cargo build -p retreat_sandbox
