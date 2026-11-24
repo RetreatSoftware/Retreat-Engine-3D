@@ -178,6 +178,8 @@ pub fn install_client(
     config: ClientConfig,
     transport: impl ClientTransport + 'static,
 ) {
+    app.init_resource::<NetInputQueue>();
+    app.world_mut().resource_mut::<NetInputQueue>().accepting = true;
     app.insert_resource(NetClient {
         id: 0,
         phase: ClientPhase::Connecting,
@@ -278,7 +280,9 @@ fn client_before_tick(world: &mut World) {
     // Lines that client modules queued through the contract join the player's input.
     let mut lines = lines;
     if !world.resource::<NetClient>().replaying {
-        lines.extend(std::mem::take(&mut world.resource_mut::<NetInputQueue>().0));
+        lines.extend(std::mem::take(
+            &mut world.resource_mut::<NetInputQueue>().lines,
+        ));
     }
     let own_id = world.resource::<NetClient>().id;
     for line in &lines {

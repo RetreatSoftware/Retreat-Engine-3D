@@ -37,9 +37,23 @@ pub struct NetClientLeft {
 #[derive(Resource, Default, Debug, Clone, PartialEq, Eq)]
 pub struct NetAllowedCommands(pub BTreeSet<String>);
 
-/// Command lines a client module wants to send as the player's input this tick.
+/// Command lines a client module wants to send as the player's input this tick. The engine sets
+/// `accepting` when the app is a network client; until then [`NetInputQueue::push`] drops lines, so a
+/// single-player game does not collect lines nobody will run.
 #[derive(Resource, Default, Debug, Clone, PartialEq, Eq)]
-pub struct NetInputQueue(pub Vec<String>);
+pub struct NetInputQueue {
+    pub lines: Vec<String>,
+    pub accepting: bool,
+}
+
+impl NetInputQueue {
+    /// Queues `line` if this app is a network client.
+    pub fn push(&mut self, line: impl Into<String>) {
+        if self.accepting {
+            self.lines.push(line.into());
+        }
+    }
+}
 
 /// Adds `allow_client_command` to Bevy's `App`.
 pub trait AppNetExt {
@@ -94,8 +108,18 @@ mod tests {
             *app.world().resource::<NetCommandSender>(),
             NetCommandSender(None)
         );
-        assert!(app.world().resource::<NetInputQueue>().0.is_empty());
+        assert!(app.world().resource::<NetInputQueue>().lines.is_empty());
         app.world_mut()
             .write_message(NetClientJoined { client_id: 3 });
+    }
+
+    #[test]
+    fn the_input_queue_ignores_lines_until_the_app_is_a_client() {
+        let mut queue = NetInputQueue::default();
+        queue.push("player.move 1 0");
+        assert!(queue.lines.is_empty());
+        queue.accepting = true;
+        queue.push("player.move 1 0");
+        assert_eq!(queue.lines, ["player.move 1 0"]);
     }
 }
