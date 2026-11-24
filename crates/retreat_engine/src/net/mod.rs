@@ -24,6 +24,7 @@
 
 pub mod body_state;
 pub mod client;
+pub mod commands;
 pub mod harness;
 pub mod link;
 pub mod server;

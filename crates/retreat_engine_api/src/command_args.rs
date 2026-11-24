@@ -58,6 +58,12 @@ impl CommandArgs {
             })
     }
 
+    /// Every argument from `from` on (empty when there are fewer). For commands whose last argument
+    /// is a whole command line (`net.send physics.push a 1 0 0`).
+    pub fn rest(&self, from: usize) -> &[String] {
+        self.values.get(from..).unwrap_or(&[])
+    }
+
     /// Builds the error for a command that ran but did not succeed.
     pub fn failure(&self, message: impl Into<String>) -> CommandError {
         CommandError::Failed {

@@ -52,11 +52,11 @@ pub use builtin_commands::POSITION_TOLERANCE;
 pub use camera::GameCameraPlugin;
 pub use command_dispatch::dispatch_command_line;
 pub use command_script::{
-    CommandScript, CommandScriptSystems, PENDING_WORK_TIMEOUT, ScriptProgress,
+    CommandScript, CommandScriptSystems, PENDING_WORK_TIMEOUT, RealTimeScript, ScriptProgress,
 };
 pub use headless::HEADLESS_RESOLUTION;
 pub use input_actions::InputActionsPlugin;
-pub use launch_options::{DEFAULT_SEED, LaunchOptions};
+pub use launch_options::{DEFAULT_SEED, LaunchOptions, NetLaunch};
 pub use material::{MaterialCommandsPlugin, TEXTURE_FILE_EXTENSIONS};
 pub use model::{
     MODEL_FILE_EXTENSIONS, MODEL_NODE_NAME_SEPARATOR, ModelCommandsPlugin, namespaced_node_name,
@@ -88,6 +88,8 @@ pub struct RetreatEnginePlugin {
     pub headless: bool,
     /// Use the CPU fallback GPU adapter (`--software-renderer`).
     pub software_renderer: bool,
+    /// `--real-time`: scripts run in real time (see `RealTimeScript`).
+    pub real_time: bool,
     pub commands: RetreatCommandsPlugin,
 }
 
@@ -98,6 +100,7 @@ impl RetreatEnginePlugin {
             window_title: window_title.into(),
             headless: false,
             software_renderer: false,
+            real_time: false,
             commands: RetreatCommandsPlugin::default(),
         }
     }
@@ -114,6 +117,7 @@ impl RetreatEnginePlugin {
             window_title: window_title.into(),
             headless: options.headless,
             software_renderer: options.software_renderer,
+            real_time: options.real_time,
             commands: RetreatCommandsPlugin {
                 seed: options.seed,
                 command_script,
@@ -180,6 +184,9 @@ impl Plugin for RetreatEnginePlugin {
             );
             app.insert_resource(SnapshotSource::PrimaryWindow);
         }
+        if self.real_time {
+            app.insert_resource(RealTimeScript);
+        }
         self.commands.build(app);
         app.add_plugins((
             snapshot::SnapshotPlugin,
@@ -194,6 +201,7 @@ impl Plugin for RetreatEnginePlugin {
             AudioCommandsPlugin,
             AnimationCommandsPlugin,
             StorageCommandsPlugin,
+            net::commands::NetCommandsPlugin,
             UiPanelsPlugin,
             platform::PlatformPlugin,
         ));

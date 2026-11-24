@@ -1,0 +1,10 @@
+# Client B of the network check: joins a little later than A, spawns its own box and pushes it the
+# other way, waits for the world to settle and prints what it sees.
+wait 150
+assert.net_joined
+net.send physics.spawn_box net_b 2 4 0 1
+wait 40
+net.send physics.push net_b -2 0 0
+wait 380
+net.bodies
+quit

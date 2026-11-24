@@ -1,0 +1,6 @@
+# The server of the network check (see run.mjs): it waits for two clients to play, checks that both
+# joined, and prints what it sees. Started with --server 0 --real-time --headless.
+wait 1400
+assert.net_clients 2
+net.bodies
+quit

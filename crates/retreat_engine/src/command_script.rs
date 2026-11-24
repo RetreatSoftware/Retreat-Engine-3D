@@ -131,6 +131,11 @@ pub enum ScriptProgress {
     Failed(String),
 }
 
+/// Marker resource (`--real-time`): the script runs one line per fixed tick of real time, instead of
+/// one tick per frame as fast as frames come.
+#[derive(Resource)]
+pub struct RealTimeScript;
+
 /// The system that runs script lines (in `FixedUpdate`). Other plugins order against it:
 /// physics runs after it, so a body spawned by a line simulates in that same tick.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -143,8 +148,10 @@ pub(crate) struct CommandScriptPlugin {
 
 impl Plugin for CommandScriptPlugin {
     fn build(&self, app: &mut App) {
+        if !app.world().contains_resource::<RealTimeScript>() {
+            app.insert_resource(TimeUpdateStrategy::FixedTimesteps(1));
+        }
         app.insert_resource(self.script.clone())
-            .insert_resource(TimeUpdateStrategy::FixedTimesteps(1))
             .add_systems(
                 FixedUpdate,
                 run_next_script_line.in_set(CommandScriptSystems),

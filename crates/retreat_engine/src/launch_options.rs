@@ -6,7 +6,23 @@ use std::path::PathBuf;
 pub const DEFAULT_SEED: u64 = 0;
 
 /// Shown after every launch-argument error.
-const LAUNCH_USAGE: &str = "usage: <app> [--commands <script.cmds>] [--seed <whole number>] [--headless] [--software-renderer]";
+const LAUNCH_USAGE: &str = "usage: <app> [--commands <script.cmds>] [--seed <whole number>] [--headless] [--software-renderer] [--real-time] [--server <port> | --connect <https://host:port> [--cert-hash <64 hex digits>]]";
+
+/// Whether and how the app takes part in a network game.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum NetLaunch {
+    /// Single player.
+    #[default]
+    Off,
+    /// `--server <port>`: the authoritative server, listening on that UDP port (0 picks a free one).
+    Server { port: u16 },
+    /// `--connect <url>`: a predicting client. `cert_hash` pins a self-signed certificate (as printed
+    /// by the server); without it the system's certificate authorities are used.
+    Client {
+        url: String,
+        cert_hash: Option<String>,
+    },
+}
 
 /// What the app was asked to do at launch.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,6 +36,11 @@ pub struct LaunchOptions {
     /// `--software-renderer`: use the CPU fallback GPU adapter (WARP on Windows, lavapipe on
     /// Linux), so rendering works on machines without a GPU, such as CI.
     pub software_renderer: bool,
+    /// `--real-time`: a command script runs one line per fixed tick of *real* time instead of as fast
+    /// as frames come (needed when other machines must keep up, as in network checks).
+    pub real_time: bool,
+    /// `--server`, `--connect`, `--cert-hash`.
+    pub net: NetLaunch,
 }
 
 impl Default for LaunchOptions {
@@ -29,6 +50,8 @@ impl Default for LaunchOptions {
             seed: DEFAULT_SEED,
             headless: false,
             software_renderer: false,
+            real_time: false,
+            net: NetLaunch::Off,
         }
     }
 }
@@ -43,6 +66,7 @@ impl LaunchOptions {
     /// Parses arguments (without the program path). Pure, so it is tested directly.
     pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Self, String> {
         let mut options = Self::default();
+        let mut cert_hash: Option<String> = None;
         let mut args = args.into_iter();
         while let Some(flag) = args.next() {
             match flag.as_str() {
@@ -58,12 +82,42 @@ impl LaunchOptions {
                 }
                 "--headless" => options.headless = true,
                 "--software-renderer" => options.software_renderer = true,
+                "--real-time" => options.real_time = true,
+                "--server" => {
+                    let value = next_value(&mut args, "--server")?;
+                    let port = value.parse().map_err(|error| {
+                        format!("--server `{value}` is not a UDP port from 0 to 65535: {error}; {LAUNCH_USAGE}")
+                    })?;
+                    options.net = NetLaunch::Server { port };
+                }
+                "--connect" => {
+                    let url = next_value(&mut args, "--connect")?;
+                    options.net = NetLaunch::Client {
+                        url,
+                        cert_hash: None,
+                    };
+                }
+                "--cert-hash" => cert_hash = Some(next_value(&mut args, "--cert-hash")?),
                 unknown => {
                     return Err(format!(
                         "unknown launch argument `{unknown}`; {LAUNCH_USAGE}"
                     ));
                 }
             }
+        }
+        match (&mut options.net, cert_hash) {
+            (
+                NetLaunch::Client {
+                    cert_hash: slot, ..
+                },
+                Some(hash),
+            ) => *slot = Some(hash),
+            (_, Some(_)) => {
+                return Err(format!(
+                    "--cert-hash only makes sense with --connect; {LAUNCH_USAGE}"
+                ));
+            }
+            _ => {}
         }
         Ok(options)
     }
@@ -198,5 +252,43 @@ mod tests {
             "{error}"
         );
         assert!(error.contains("usage:"), "{error}");
+    }
+
+    #[test]
+    fn reads_the_network_options() {
+        let server = parse(&["--server", "4433", "--real-time"]).unwrap();
+        assert_eq!(server.net, NetLaunch::Server { port: 4433 });
+        assert!(server.real_time);
+        let client = parse(&["--connect", "https://127.0.0.1:4433", "--cert-hash", "ab"]).unwrap();
+        assert_eq!(
+            client.net,
+            NetLaunch::Client {
+                url: "https://127.0.0.1:4433".to_string(),
+                cert_hash: Some("ab".to_string())
+            }
+        );
+        // The order of --connect and --cert-hash does not matter.
+        let reversed = parse(&["--cert-hash", "ab", "--connect", "https://h:1"]).unwrap();
+        assert!(matches!(
+            reversed.net,
+            NetLaunch::Client {
+                cert_hash: Some(_),
+                ..
+            }
+        ));
+        assert_eq!(parse(&[]).unwrap().net, NetLaunch::Off);
+    }
+
+    #[test]
+    fn network_option_mistakes_are_explained() {
+        let error = parse(&["--cert-hash", "ab"]).unwrap_err();
+        assert!(
+            error.contains("--cert-hash only makes sense with --connect"),
+            "{error}"
+        );
+        let error = parse(&["--server", "port"]).unwrap_err();
+        assert!(error.contains("not a UDP port"), "{error}");
+        let error = parse(&["--connect"]).unwrap_err();
+        assert!(error.contains("--connect needs a value"), "{error}");
     }
 }

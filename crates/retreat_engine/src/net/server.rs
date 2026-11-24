@@ -51,6 +51,13 @@ pub struct NetServer {
     pub undecodable_packets: u64,
 }
 
+impl NetServer {
+    /// How many clients have said hello (and are still connected).
+    pub fn client_count(&self) -> usize {
+        self.known.len()
+    }
+}
+
 /// The server's transport (not `Send`: kept as a non-send resource).
 struct ServerTransportBox(Box<dyn ServerTransport>);
 

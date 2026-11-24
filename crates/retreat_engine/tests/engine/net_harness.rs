@@ -19,7 +19,8 @@ pub(crate) fn make_app() -> App {
         .init_asset::<Mesh>()
         .init_asset::<StandardMaterial>()
         .add_plugins(RetreatCommandsPlugin::default())
-        .add_plugins((PhysicsPlugin, StateHashPlugin));
+        .add_plugins((PhysicsPlugin, StateHashPlugin))
+        .add_plugins(retreat_engine::net::commands::NetCommandsPlugin);
     app.world_mut().spawn((
         Name::new("ground"),
         PhysicsBody {
@@ -387,5 +388,56 @@ fn input_before_the_handshake_is_never_applied() {
             .iter()
             .all(|state| state.name != "early"),
         "input made before joining must be dropped"
+    );
+}
+
+#[test]
+fn net_commands_send_input_report_status_and_check_roles() {
+    use retreat_engine_api::run_command_line;
+    let mut harness = harness(
+        config(1, LinkConditions::PERFECT, LinkConditions::PERFECT),
+        2,
+    );
+    // The client sends a command line through `net.send` (everything after it is the line).
+    let client_world = harness.client_apps[0].world_mut();
+    run_command_line(client_world, "assert.net_joined").unwrap();
+    run_command_line(client_world, "net.send physics.spawn_box via_net 0 3 0 1").unwrap();
+    run_command_line(client_world, "net.status").unwrap();
+    let error = run_command_line(client_world, "net.send").unwrap_err();
+    assert!(
+        error.to_string().contains("give the command line to send"),
+        "{error}"
+    );
+    let error = run_command_line(client_world, "assert.net_clients 2").unwrap_err();
+    assert!(
+        error.to_string().contains("not a network server"),
+        "{error}"
+    );
+    harness.run_idle(20);
+    assert!(
+        read_body_states(harness.server_app.world_mut())
+            .iter()
+            .any(|state| state.name == "via_net"),
+        "the server ran the line"
+    );
+    // Server side.
+    let server_world = harness.server_app.world_mut();
+    run_command_line(server_world, "assert.net_clients 2").unwrap();
+    let error = run_command_line(server_world, "assert.net_clients 3").unwrap_err();
+    assert!(
+        error.to_string().contains("knows 2 clients, expected 3"),
+        "{error}"
+    );
+    run_command_line(server_world, "net.status").unwrap();
+    run_command_line(server_world, "net.bodies").unwrap();
+    let error = run_command_line(server_world, "assert.net_joined").unwrap_err();
+    assert!(
+        error.to_string().contains("not a network client"),
+        "{error}"
+    );
+    let error = run_command_line(server_world, "net.send physics.push a 1 0 0").unwrap_err();
+    assert!(
+        error.to_string().contains("not a network client"),
+        "{error}"
     );
 }

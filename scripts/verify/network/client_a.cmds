@@ -1,0 +1,10 @@
+# Client A of the network check: joins, spawns a box, pushes it, waits for the world to settle and
+# prints what it sees. Started with --connect <url> --cert-hash <hex> --real-time --headless.
+wait 90
+assert.net_joined
+net.send physics.spawn_box net_a 0 3 0 1
+wait 40
+net.send physics.push net_a 3 0 0
+wait 420
+net.bodies
+quit

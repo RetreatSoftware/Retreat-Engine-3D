@@ -20,19 +20,16 @@ pub(crate) const SCRIPT_END_EXITS_APP: bool = true;
 /// `RetreatEnginePlugin` and the game's plugins, and runs it. Returns the app's exit status
 /// (code 1 when a script fails), so `fn main() -> AppExit` passes it to the shell.
 pub fn launch(window_title: &str, add_game_plugins: fn(&mut App)) -> AppExit {
-    let engine = LaunchOptions::from_env_args().and_then(|options| {
+    let prepared = LaunchOptions::from_env_args().and_then(|options| {
         let script = match &options.commands_file {
             Some(path) => Some(CommandScript::read_file(std::path::Path::new(path))?),
             None => None,
         };
-        Ok(RetreatEnginePlugin::from_launch_options(
-            window_title,
-            &options,
-            script,
-        ))
+        let engine = RetreatEnginePlugin::from_launch_options(window_title, &options, script);
+        Ok((engine, options))
     });
-    let engine = match engine {
-        Ok(engine) => engine,
+    let (engine, options) = match prepared {
+        Ok(prepared) => prepared,
         Err(message) => {
             eprintln!("{window_title}: {message}");
             return AppExit::error();
@@ -41,6 +38,10 @@ pub fn launch(window_title: &str, add_game_plugins: fn(&mut App)) -> AppExit {
     let mut app = App::new();
     app.add_plugins(engine);
     add_game_plugins(&mut app);
+    if let Err(message) = native_transport::install_net(&mut app, &options.net) {
+        eprintln!("{window_title}: {message}");
+        return AppExit::error();
+    }
     app.run()
 }
 

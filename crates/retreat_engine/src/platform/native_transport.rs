@@ -21,9 +21,64 @@ use std::sync::{Arc, Mutex};
 use wtransport::tls::{Sha256Digest, Sha256DigestFmt};
 use wtransport::{ClientConfig, Connection, Endpoint, Identity, ServerConfig};
 
+use bevy::prelude::App;
+
+use crate::NetLaunch;
+use crate::net::client::{ClientConfig as NetClientConfig, install_client};
+use crate::net::commands::NetAllowedCommands;
+use crate::net::server::{ServerConfig as NetServerConfig, install_server};
 use crate::net::transport::{
     ClientEvent, ClientTransport, ConnectionId, ServerEvent, ServerTransport,
 };
+
+/// Ticks between state broadcasts of a server started with `--server`.
+const SERVER_STATE_INTERVAL_TICKS: u64 = 2;
+/// Safety margin (ticks) a client started with `--connect` adds to the measured round trip.
+const CLIENT_MARGIN_TICKS: i64 = 6;
+
+/// Turns `--server` / `--connect` into the networking systems of `app`. Call it after the game's
+/// plugins (the server's allow-list is the game's `NetAllowedCommands` resource). A server prints one
+/// line, `retreat-net: listening on UDP port <port> certificate-hash <hex>`, so a script that starts
+/// clients can read the port and the certificate hash from its output.
+pub(crate) fn install_net(app: &mut App, net: &NetLaunch) -> Result<(), String> {
+    match net {
+        NetLaunch::Off => Ok(()),
+        NetLaunch::Server { port } => {
+            let transport = WebTransportServer::start(*port)?;
+            println!(
+                "retreat-net: listening on UDP port {} certificate-hash {}",
+                transport.port,
+                transport.certificate_hash_hex()
+            );
+            let allowed = app
+                .world()
+                .get_resource::<NetAllowedCommands>()
+                .map(|allowed| allowed.0.clone())
+                .unwrap_or_default();
+            install_server(
+                app,
+                NetServerConfig {
+                    allowed_commands: allowed,
+                    state_interval_ticks: SERVER_STATE_INTERVAL_TICKS,
+                },
+                transport,
+            );
+            Ok(())
+        }
+        NetLaunch::Client { url, cert_hash } => {
+            let transport = WebTransportClient::connect(url, cert_hash.as_deref())?;
+            install_client(
+                app,
+                NetClientConfig {
+                    margin_ticks: CLIENT_MARGIN_TICKS,
+                    nonce: std::process::id(),
+                },
+                transport,
+            );
+            Ok(())
+        }
+    }
+}
 
 fn runtime() -> Result<tokio::runtime::Runtime, String> {
     tokio::runtime::Builder::new_multi_thread()
