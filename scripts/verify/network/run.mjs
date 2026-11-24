@@ -146,6 +146,17 @@ if (failure) {
 ${tail}`);
   }
   console.error(`network check: FAIL: ${failure}`);
+  if (process.env.GITHUB_ACTIONS) {
+    // A GitHub annotation: it shows on the run's page and through the API without a login, which the
+    // raw log does not.
+    const report = [failure, ...processes.map((p) => `----- ${p.name} (exit ${p.exited}) -----
+${p.output.split("
+").slice(-25).join("
+")}`)].join("
+");
+    console.log(`::error title=Network check failed::${report.replaceAll("%", "%25").replaceAll("", "%0D").replaceAll("
+", "%0A").slice(0, 60000)}`);
+  }
   process.exit(1);
 }
 console.log("network check: PASS");
