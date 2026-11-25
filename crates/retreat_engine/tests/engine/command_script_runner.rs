@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
 use retreat_engine::{CommandScript, PendingCommandWork, RetreatCommandsPlugin};
-use retreat_engine_api::{AppCommandExt, CommandOutcome, SimulationRng};
+use retreat_engine_api::{AppCommandExt, CommandOutcome, NetReplaying, SimulationRng};
 
 /// More updates than any test script needs; a test that reaches it never quit.
 const MAX_UPDATES: u32 = 1000;
@@ -385,4 +385,21 @@ fn wait_until_checks_its_own_arguments() {
             .expect("fails")
             .contains("needs a tick limit and a command line")
     );
+}
+
+#[test]
+fn a_replaying_network_client_does_not_advance_its_script() {
+    let mut app = app_with_script("test.mark\nwait 2\ntest.mark\n");
+    app.insert_resource(NetReplaying(true));
+    for _ in 0..20 {
+        app.update();
+    }
+    assert!(app.world().resource::<MarkedTicks>().0.is_empty());
+    app.insert_resource(NetReplaying(false));
+    for _ in 0..20 {
+        app.update();
+    }
+    let marked = &app.world().resource::<MarkedTicks>().0;
+    assert_eq!(marked.len(), 2);
+    assert_eq!(marked[1] - marked[0], 4, "the wait counts live ticks only");
 }

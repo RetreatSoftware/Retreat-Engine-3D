@@ -28,11 +28,39 @@ pub struct HarnessConfig {
     pub seed: u64,
 }
 
+/// How a client's clock advances against the server's, like a real app's: a frame every
+/// `every_ticks` server ticks that simulates the time passed (times `speed`), at most
+/// `max_ticks_per_frame` ticks; the rest is lost, as Bevy loses it.
+#[derive(Clone, Copy, Debug)]
+pub struct ClientFrames {
+    pub every_ticks: u64,
+    pub max_ticks_per_frame: u64,
+    /// 1 keeps the server's rate; 0.9 is a clock that runs slow.
+    pub speed: f64,
+}
+
+impl Default for ClientFrames {
+    fn default() -> Self {
+        Self {
+            every_ticks: 1,
+            max_ticks_per_frame: 16,
+            speed: 1.0,
+        }
+    }
+}
+
+#[derive(Default)]
+struct ClientClock {
+    frames: ClientFrames,
+    owed_ticks: f64,
+}
+
 /// A server and clients in one process.
 pub struct NetHarness {
     pub server_app: App,
     pub client_apps: Vec<App>,
     network: LoopbackNetwork,
+    clocks: Vec<ClientClock>,
     /// Ticks stepped so far.
     pub global_tick: u64,
 }
@@ -96,6 +124,7 @@ impl NetHarness {
             server_app,
             client_apps,
             network,
+            clocks: (0..client_count).map(|_| ClientClock::default()).collect(),
             global_tick: 0,
         }
     }
@@ -115,9 +144,26 @@ impl NetHarness {
                     }
                 }
             }
+            let clock = &mut self.clocks[index];
+            let paced = f64::from(app.world().resource::<NetClient>().pacing.time_scale);
+            clock.owed_ticks += clock.frames.speed * paced;
+            if !self.global_tick.is_multiple_of(clock.frames.every_ticks) {
+                continue;
+            }
+            // A little slack, so adding 0.9 ten times makes nine whole ticks.
+            let whole = (clock.owed_ticks + 1.0e-9).floor();
+            clock.owed_ticks -= whole;
+            let ticks = (whole as u64).min(clock.frames.max_ticks_per_frame);
             process_client_states(app.world_mut());
-            simulate_tick(app.world_mut());
+            for _ in 0..ticks {
+                simulate_tick(app.world_mut());
+            }
         }
+    }
+
+    /// Changes how fast client `index` runs from now on.
+    pub fn set_client_frames(&mut self, index: usize, frames: ClientFrames) {
+        self.clocks[index].frames = frames;
     }
 
     /// Steps `ticks` times with no player input.

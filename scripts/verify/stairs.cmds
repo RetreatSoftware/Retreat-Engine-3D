@@ -1,0 +1,51 @@
+# Steps, slopes and teleport: the sandbox walker climbs a staircase, walks back down on the
+# ground, is stopped by a step that is too high, walks up a ramp and is respawned.
+physics.spawn_wall step_1 0.25 0.1 2.5 0.5 0.2 2
+physics.spawn_wall step_2 0.75 0.2 2.5 0.5 0.4 2
+physics.spawn_wall step_3 1.25 0.3 2.5 0.5 0.6 2
+physics.spawn_wall platform 2.5 0.4 2.5 2 0.8 2
+sandbox.walker_spawn -1.5 2.5
+wait 20
+assert.grounded walker_local true
+snapshot stairs_start
+input.set_axis walk_x 1
+wait 40
+snapshot stairs_climbing
+wait 30
+input.clear_axis walk_x
+wait 5
+assert.grounded walker_local true
+# On the platform (top 0.8): a ray from above meets the character's head at height 2.6.
+assert.velocity walker_local 0 0 0 0.05
+assert.ray_hit walker_local 2.4 3.0 5 2.5 0 -1 0 10
+snapshot stairs_top
+# Down again, staying on the ground.
+input.set_axis walk_x -1
+wait 70
+input.clear_axis walk_x
+wait 5
+assert.grounded walker_local true
+assert.ray_hit walker_local 3.2 -1.51 5 2.5 0 -1 0 10
+# A ledge of 0.8 is higher than a step: the platform's far side stops the walker.
+physics.teleport walker_local 4.2 0.91 2.5
+wait 10
+input.set_axis walk_x -1
+wait 60
+assert.velocity walker_local 0 0 0 0.05
+assert.grounded walker_local true
+snapshot stairs_blocked
+input.clear_axis walk_x
+# A ramp of 25 degrees.
+physics.spawn_ramp ramp 1 0.55 -1.5 4 0.2 2 25
+physics.teleport walker_local -2.5 0.91 -1.5
+wait 10
+input.set_axis walk_x 1
+wait 55
+input.clear_axis walk_x
+wait 20
+assert.grounded walker_local true
+assert.velocity walker_local 0 0 0 0.05
+snapshot stairs_ramp
+state.hash
+assert.state_hash 0x4767625639b2fb62
+quit

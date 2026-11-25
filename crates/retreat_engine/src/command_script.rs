@@ -15,7 +15,7 @@ use std::time::Duration;
 use bevy::platform::time::Instant;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
-use retreat_engine_api::{CommandOutcome, parse_command_line, run_command_line};
+use retreat_engine_api::{CommandOutcome, NetReplaying, parse_command_line, run_command_line};
 
 use crate::PendingCommandWork;
 use crate::builtin_commands::QuitRequested;
@@ -171,6 +171,14 @@ impl Plugin for CommandScriptPlugin {
 /// check fails the process (and CI). Waiting for [`PendingCommandWork`] is done by
 /// [`hold_time_while_script_waits`], which stops ticks entirely while work is in flight.
 fn run_next_script_line(world: &mut World) {
+    // A network client that rewinds runs past ticks again; the script belongs to the present, and
+    // what it did then is in the recorded inputs.
+    if world
+        .get_resource::<NetReplaying>()
+        .is_some_and(|replaying| replaying.0)
+    {
+        return;
+    }
     world.resource_scope(|world, mut script: Mut<CommandScript>| {
         if script.failure.is_some() {
             return;

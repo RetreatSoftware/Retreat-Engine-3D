@@ -23,7 +23,7 @@ const RADIUS: f32 = 0.4;
 
 /// The input a mover got last, and what it saw: state a rewind must repeat exactly.
 #[derive(Component, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-struct Mover {
+pub(crate) struct Mover {
     owner: u32,
     move_x: f32,
     yaw: f32,
@@ -161,7 +161,7 @@ fn held(id: &'static str, default_keys: &'static [InputKey]) -> InputAction {
     }
 }
 
-fn link(latency_ticks: u32, jitter_ticks: u32, loss: f32) -> LinkConditions {
+pub(crate) fn link(latency_ticks: u32, jitter_ticks: u32, loss: f32) -> LinkConditions {
     LinkConditions {
         latency_ticks,
         jitter_ticks,
@@ -170,7 +170,7 @@ fn link(latency_ticks: u32, jitter_ticks: u32, loss: f32) -> LinkConditions {
 }
 
 /// A harness with two joined clients and one character per client, spawned by the server.
-fn harness(margin_ticks: i64, conditions: LinkConditions) -> NetHarness {
+pub(crate) fn harness(margin_ticks: i64, conditions: LinkConditions) -> NetHarness {
     let config = HarnessConfig {
         margin_ticks,
         state_interval_ticks: 2,
@@ -201,7 +201,7 @@ fn harness(margin_ticks: i64, conditions: LinkConditions) -> NetHarness {
     harness
 }
 
-fn run_on_client(harness: &mut NetHarness, client: usize, line: &str) {
+pub(crate) fn run_on_client(harness: &mut NetHarness, client: usize, line: &str) {
     run_command_line(harness.client_apps[client].world_mut(), line).expect("a client command");
 }
 
@@ -214,7 +214,7 @@ fn find(world: &mut World, name: &str) -> Entity {
         .unwrap_or_else(|| panic!("no `{name}`"))
 }
 
-fn mover(world: &mut World, name: &str) -> (Mover, Transform, PhysicsVelocity) {
+pub(crate) fn mover(world: &mut World, name: &str) -> (Mover, Transform, PhysicsVelocity) {
     let entity = find(world, name);
     (
         world.get::<Mover>(entity).expect("mover").clone(),

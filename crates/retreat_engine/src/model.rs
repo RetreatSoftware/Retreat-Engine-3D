@@ -62,9 +62,28 @@ fn model_spawn_command(world: &mut World, args: &CommandArgs) -> CommandResult {
         return Err(args.failure(format!("scale must be a positive number, got {scale}")));
     }
     ensure_name_is_free(world, args, &name)?;
+    let transform = Transform::from_translation(translation).with_scale(Vec3::splat(scale));
+    spawn_model(world, &name, &path, transform, HAS_FILE_SYSTEM)
+        .map_err(|message| args.failure(message))?;
+    Ok(CommandOutcome::Continue)
+}
+
+/// True while the model's file is still loading.
+pub(crate) fn is_model_loading(world: &World, entity: Entity) -> bool {
+    world.get::<LoadingModel>(entity).is_some()
+}
+
+/// Spawns a model entity and starts loading its file (pending work until it is in the world).
+/// The caller checks that `name` is free.
+pub(crate) fn spawn_model(
+    world: &mut World,
+    name: &str,
+    path: &str,
+    transform: Transform,
+    has_file_system: bool,
+) -> Result<Entity, String> {
     let location =
-        resolve_asset_location(&path, "glTF model", &MODEL_FILE_EXTENSIONS, HAS_FILE_SYSTEM)
-            .map_err(|message| args.failure(message))?;
+        resolve_asset_location(path, "glTF model", &MODEL_FILE_EXTENSIONS, has_file_system)?;
     let is_outside_asset_folder = location.is_outside_asset_folder();
     let whole_file = location.clone().into_asset_path();
     // `#Scene0`: only the file's first scene, not the whole file.
@@ -74,16 +93,17 @@ fn model_spawn_command(world: &mut World, args: &CommandArgs) -> CommandResult {
     let gltf: Handle<Gltf> = load_asset(asset_server, whole_file, is_outside_asset_folder);
 
     world.resource_mut::<PendingCommandWork>().start();
-    world
+    let path = path.to_string();
+    Ok(world
         .spawn((
-            Name::new(name),
+            Name::new(name.to_string()),
             WorldAssetRoot(scene),
             ModelGltf(gltf),
-            Transform::from_translation(translation).with_scale(Vec3::splat(scale)),
+            transform,
             LoadingModel { path },
         ))
-        .observe(finish_model_load);
-    Ok(CommandOutcome::Continue)
+        .observe(finish_model_load)
+        .id())
 }
 
 /// Separates a model's name from the name of a node inside it: `fox/b_Head_05`.

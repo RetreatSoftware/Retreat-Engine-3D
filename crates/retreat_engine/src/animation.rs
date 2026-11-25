@@ -26,7 +26,7 @@ use bevy::gltf::Gltf;
 use bevy::prelude::*;
 use retreat_engine_api::{
     AnimationPlayback, AppCommandExt, ClipPlayback, CommandArgs, CommandError, CommandOutcome,
-    CommandResult,
+    CommandResult, NetReplaying,
 };
 
 use crate::CommandScriptSystems;
@@ -217,8 +217,13 @@ fn build_animation_rigs(world: &mut World) {
 fn advance_clip_times(
     mut commands: Commands,
     fixed_time: Res<Time<Fixed>>,
+    replaying: Option<Res<NetReplaying>>,
     mut models: Query<(&Name, &mut AnimationPlayback, &mut AnimationRig)>,
 ) {
+    // Poses are not rewound by a client's correction, so its replay must not advance them again.
+    if replaying.is_some_and(|replaying| replaying.0) {
+        return;
+    }
     let tick = fixed_time.delta_secs();
     for (name, mut playback, mut rig) in &mut models {
         let mut unknown: Vec<String> = Vec::new();

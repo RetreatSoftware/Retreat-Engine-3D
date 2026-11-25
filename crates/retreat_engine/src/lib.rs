@@ -12,6 +12,7 @@ mod audio;
 mod bridge_status;
 mod builtin_commands;
 mod camera;
+mod character_stepping;
 mod command_dispatch;
 mod command_script;
 mod entity_names;
@@ -28,12 +29,14 @@ mod physics;
 mod physics_queries;
 mod physics_snapshot;
 mod platform;
+mod render_smoothing;
 mod retired_bodies;
 mod shader_material;
 mod snapshot;
 mod state_hash;
 mod storage;
 mod ui_panels;
+mod visuals;
 
 use std::time::Duration;
 
@@ -79,6 +82,7 @@ pub use physics_snapshot::{PhysicsSnapshot, RollbackError, capture_physics, rest
 pub use platform::launch;
 #[cfg(not(target_arch = "wasm32"))]
 pub use platform::{WebTransportClient, WebTransportServer, parse_certificate_hash};
+pub use render_smoothing::RenderSmoothingPlugin;
 pub use retired_bodies::ROLLBACK_WINDOW_TICKS;
 pub use shader_material::{
     AppShaderMaterialExt, ShaderMaterialCommandsPlugin, ShaderMaterialRegistry,
@@ -89,6 +93,7 @@ pub use state_hash::{
 };
 pub use storage::StorageCommandsPlugin;
 pub use ui_panels::UiPanelsPlugin;
+pub use visuals::{VISUAL_NAME_SUFFIX, VisualsPlugin};
 
 /// Sets up the Bevy foundation every Retreat game runs on.
 pub struct RetreatEnginePlugin {
@@ -246,7 +251,7 @@ impl Plugin for RetreatEnginePlugin {
             platform::PlatformPlugin,
         ));
         // Bevy's plugin tuples hold at most 15 entries, so this one has its own call.
-        app.add_plugins(PerfCommandsPlugin);
+        app.add_plugins((PerfCommandsPlugin, RenderSmoothingPlugin, VisualsPlugin));
         // Scans the render world for failed pipelines, so it needs one.
         if !self.no_render {
             app.add_plugins(gpu_pipeline_errors::GpuPipelineErrorsPlugin);

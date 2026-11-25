@@ -52,8 +52,10 @@ impl Default for ServerLimits {
     fn default() -> Self {
         Self {
             rate_window_ticks: 64,
-            max_datagrams_per_window: 192,
-            max_inputs_per_window: 128,
+            max_datagrams_per_window: 384,
+            // One input per tick, plus bursts: a client that stalls (a second per frame at most)
+            // and then catches up sends several windows' worth at once.
+            max_inputs_per_window: 256,
             max_datagram_bytes: 1200,
             max_lines_per_input: 16,
             max_line_bytes: 256,

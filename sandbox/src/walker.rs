@@ -1,26 +1,29 @@
 //! A demo character controller, showing the engine capabilities a character module uses: analog
-//! input sent as a command line per tick, a ball cast for ground detection, an upright character
-//! body whose velocity the game sets, and synced state. It is not the arena's controller.
+//! input sent as a command line per tick, an upright character body that climbs steps and slopes
+//! (`CharacterStepping`) and whose velocity the game sets, synced state, and looks derived from it
+//! on each machine (a color per player, smoothing of the other players). It is not the arena's
+//! controller.
 //!
 //! - `sandbox.walker_spawn <x> <z>`: the sender's character (`walker_<client id>`, or
 //!   `walker_local` without a network).
 //! - `sandbox.walker_input <move_x> <move_z> <yaw> <jump 0|1>`: the sender's input for a tick.
 //! - Keys W A S D (axes `walk_x`, `walk_z`), Space (`walk_jump`), mouse look turns.
-//! - `assert.walker_grounded <name> <true|false>`.
 
 use bevy::prelude::*;
 use retreat_engine_api::{
-    AnalogInput, AppAxisExt, AppCommandExt, AppInputExt, AppNetExt, AppNetStateExt, CommandArgs,
-    CommandOutcome, CommandResult, HELD_ONLY, InputAction, InputActionSystems, InputActions,
+    AnalogInput, AppAxisExt, AppCommandExt, AppInputExt, AppNetExt, AppNetStateExt,
+    CharacterGround, CharacterStepping, CharacterVisual, CommandArgs, CommandOutcome,
+    CommandResult, EntityColor, HELD_ONLY, InputAction, InputActionSystems, InputActions,
     InputAxis, InputKey, NetCommandSender, NetInputQueue, NetLocalClient, NetState, PhysicsBody,
-    PhysicsControlSystems, PhysicsShape, PhysicsVelocity, PhysicsVelocitySet, RetiredEntity,
-    ShapeCast, cast_shape,
+    PhysicsControlSystems, PhysicsVelocity, PhysicsVelocitySet, RenderSmoothing, RetiredEntity,
 };
 use serde::{Deserialize, Serialize};
 
 const HALF_HEIGHT: f32 = 0.5;
 const RADIUS: f32 = 0.4;
 const SPEED: f32 = 4.0;
+const STEP_HEIGHT: f32 = 0.35;
+const MAX_SLOPE_DEGREES: f32 = 45.0;
 const GRAVITY: f32 = 19.6;
 /// Upward speed of a jump (about 1.5 m high under [`GRAVITY`]).
 const JUMP_SPEED: f32 = 7.67;
@@ -64,11 +67,6 @@ impl Plugin for WalkerPlugin {
                 "sandbox.walker_input <move_x> <move_z> <yaw> <jump>",
                 input_command,
             )
-            .register_command(
-                "assert.walker_grounded",
-                "assert.walker_grounded <name> <true|false>",
-                assert_grounded_command,
-            )
             .allow_client_command("sandbox.walker_spawn")
             .allow_client_command("sandbox.walker_input")
             .register_action(held("walk_left", &[InputKey::A]))
@@ -86,6 +84,7 @@ impl Plugin for WalkerPlugin {
                 negative_action: "walk_forward",
                 positive_action: "walk_back",
             })
+            .add_systems(Update, dress_walkers)
             .add_systems(
                 FixedUpdate,
                 (
@@ -134,12 +133,6 @@ fn spawn_command(world: &mut World, args: &CommandArgs) -> CommandResult {
     {
         return Err(args.failure(format!("`{name}` exists already")));
     }
-    let mesh = world
-        .resource_mut::<Assets<Mesh>>()
-        .add(Capsule3d::new(RADIUS, HALF_HEIGHT * 2.0));
-    let material = world
-        .resource_mut::<Assets<StandardMaterial>>()
-        .add(Color::srgb(0.9, 0.75, 0.2));
     world.spawn((
         Name::new(name),
         PhysicsBody::character(HALF_HEIGHT, RADIUS),
@@ -148,8 +141,10 @@ fn spawn_command(world: &mut World, args: &CommandArgs) -> CommandResult {
             owner,
             ..Walker::default()
         },
-        Mesh3d(mesh),
-        MeshMaterial3d(material),
+        CharacterStepping {
+            max_step_height: STEP_HEIGHT,
+            max_slope_degrees: MAX_SLOPE_DEGREES,
+        },
     ));
     Ok(CommandOutcome::Continue)
 }
@@ -209,65 +204,57 @@ fn send_input(
     }
 }
 
-/// Moves every walker: finds the ground with a ball cast and sets the body's velocity.
-fn move_walkers(world: &mut World) {
-    let dt = world.resource::<Time<Fixed>>().timestep().as_secs_f32();
-    let walkers: Vec<(Entity, Walker, Vec3, Vec3)> = world
-        .query_filtered::<(Entity, &Walker, &Transform, &PhysicsVelocity), Without<RetiredEntity>>()
-        .iter(world)
-        .map(|(entity, walker, transform, velocity)| {
-            (
-                entity,
-                walker.clone(),
-                transform.translation,
-                velocity.linear,
-            )
-        })
-        .collect();
-    for (entity, mut walker, position, velocity) in walkers {
-        let ground = cast_shape(
-            world,
-            &ShapeCast {
-                shape: PhysicsShape::Ball {
-                    radius: RADIUS * 0.9,
-                },
-                origin: position - Vec3::Y * HALF_HEIGHT,
-                rotation: Quat::IDENTITY,
-                direction: Vec3::NEG_Y,
-                max_distance: RADIUS * 0.1 + 0.05,
-                exclude: vec![entity],
-            },
-        );
-        walker.grounded = ground.is_some() && velocity.y <= 0.1;
-        let vertical = match (walker.grounded, walker.jump) {
+/// Moves every walker: the module sets the velocity it wants, with its own gravity; the engine's
+/// stepping lays it along the ground.
+fn move_walkers(
+    time: Res<Time<Fixed>>,
+    mut walkers: Query<
+        (Entity, &mut Walker, &CharacterGround, &PhysicsVelocity),
+        Without<RetiredEntity>,
+    >,
+    mut commands: Commands,
+) {
+    let dt = time.timestep().as_secs_f32();
+    for (entity, mut walker, ground, velocity) in &mut walkers {
+        walker.grounded = ground.grounded;
+        let vertical = match (ground.grounded, walker.jump) {
             (true, true) => JUMP_SPEED,
             (true, false) => 0.0,
-            (false, _) => velocity.y - GRAVITY * dt,
+            (false, _) => velocity.linear.y - GRAVITY * dt,
         };
         let heading = Quat::from_rotation_y(walker.yaw);
         let horizontal =
             heading * Vec3::new(walker.move_x, 0.0, walker.move_z).clamp_length_max(1.0) * SPEED;
-        world.entity_mut(entity).insert((
-            walker,
-            PhysicsVelocitySet(Vec3::new(horizontal.x, vertical, horizontal.z)),
-        ));
+        commands.entity(entity).insert(PhysicsVelocitySet(Vec3::new(
+            horizontal.x,
+            vertical,
+            horizontal.z,
+        )));
     }
 }
 
-fn assert_grounded_command(world: &mut World, args: &CommandArgs) -> CommandResult {
-    args.expect_count(2)?;
-    let name: String = args.parse(0, "name")?;
-    let expected: bool = args.parse(1, "grounded")?;
-    let found = world
-        .query::<(&Name, &Walker)>()
-        .iter(world)
-        .find(|(found, _)| found.as_str() == name)
-        .map(|(_, walker)| walker.grounded);
-    match found {
-        Some(grounded) if grounded == expected => Ok(CommandOutcome::Continue),
-        Some(grounded) => Err(args.failure(format!(
-            "`{name}` grounded is {grounded}, expected {expected}"
-        ))),
-        None => Err(args.failure(format!("there is no walker `{name}`"))),
+/// The color of each player's walker.
+const OWNER_COLORS: [Color; 4] = [
+    Color::srgb(0.9, 0.75, 0.2),
+    Color::srgb(0.2, 0.7, 0.85),
+    Color::srgb(0.85, 0.3, 0.55),
+    Color::srgb(0.45, 0.8, 0.3),
+];
+
+/// Looks, on each machine: a client creates other players' walkers from the server's state, so
+/// this runs on every new `Walker`. Other players are also drawn smoothly.
+fn dress_walkers(
+    walkers: Query<(Entity, &Walker), Added<Walker>>,
+    local: Res<NetLocalClient>,
+    mut commands: Commands,
+) {
+    for (entity, walker) in &walkers {
+        let color = OWNER_COLORS[walker.owner.unwrap_or(0) as usize % OWNER_COLORS.len()];
+        commands
+            .entity(entity)
+            .insert((EntityColor(color), CharacterVisual::default()));
+        if local.0.is_some() && walker.owner != local.0 {
+            commands.entity(entity).insert(RenderSmoothing::default());
+        }
     }
 }

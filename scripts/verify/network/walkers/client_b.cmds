@@ -1,7 +1,7 @@
 # Walkers check, client B: spawns its character, walks it east with the analog axis, turns with the
 # mouse and jumps. Every input travels as a command line per tick and is predicted.
 wait_until 3000 assert.net_joined
-net.send sandbox.walker_spawn -4 -4
+net.send sandbox.walker_spawn -4 -2.8
 wait 40
 input.set_axis walk_x 1
 wait 30

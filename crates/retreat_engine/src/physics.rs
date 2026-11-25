@@ -26,11 +26,13 @@ use bevy_rapier3d::prelude::{
 };
 use bevy_rapier3d::rapier::dynamics::CoefficientCombineRule;
 use retreat_engine_api::{
-    AppCommandExt, CommandArgs, CommandOutcome, CommandResult, InputActionSystems, PhysicsBody,
-    PhysicsBodyKind, PhysicsControlSystems, PhysicsShape, PhysicsVelocity, PhysicsVelocityChange,
-    PhysicsVelocitySet, Replicated, RetiredEntity,
+    AppCommandExt, AppNetStateExt, CharacterGround, CharacterStepping, CommandArgs, CommandOutcome,
+    CommandResult, InputActionSystems, PhysicsBody, PhysicsBodyKind, PhysicsControlSystems,
+    PhysicsShape, PhysicsTeleport, PhysicsVelocity, PhysicsVelocityChange, PhysicsVelocitySet,
+    Replicated, RetiredEntity,
 };
 
+use crate::character_stepping::{add_character_stepping_commands, step_characters};
 use crate::command_script::{CommandScriptSystems, fail_running_script};
 use crate::entity_names::{ensure_name_is_free, find_unique_entity_by_name};
 use crate::physics_queries::add_physics_queries;
@@ -54,6 +56,10 @@ impl Plugin for PhysicsPlugin {
             .expect("PhysicsPlugin needs Bevy's TimePlugin first (it owns the fixed timestep)")
             .timestep();
         add_physics_queries(app);
+        add_character_stepping_commands(app);
+        // Synced engine state: rolled back and replicated like a module's.
+        app.register_net_state::<CharacterStepping>()
+            .register_net_state::<CharacterGround>();
         app.add_plugins(RapierPhysicsPlugin::<NoUserData>::default().in_fixed_schedule())
             // One physics step per fixed tick, of exactly the fixed timestep: one source of
             // truth for "how long is a tick".
@@ -87,7 +93,8 @@ impl Plugin for PhysicsPlugin {
             .add_systems(
                 FixedUpdate,
                 (
-                    apply_velocity_requests
+                    (step_characters, apply_motion_requests)
+                        .chain()
                         .after(PhysicsControlSystems)
                         .before(PhysicsSet::SyncBackend),
                     configure_character_bodies
@@ -118,6 +125,16 @@ impl Plugin for PhysicsPlugin {
                 "physics.set_velocity",
                 "physics.set_velocity <name> <vx> <vy> <vz>",
                 set_velocity_command,
+            )
+            .register_command(
+                "physics.teleport",
+                "physics.teleport <name> <x> <y> <z>",
+                teleport_command,
+            )
+            .register_command(
+                "physics.spawn_ramp",
+                "physics.spawn_ramp <name> <x> <y> <z> <size_x> <size_y> <size_z> <degrees>",
+                spawn_ramp_command,
             )
             .register_command(
                 "assert.velocity",
@@ -256,28 +273,36 @@ fn create_physics_proxies(world: &mut World) {
     }
 }
 
-/// One entity's pending velocity requests.
-struct VelocityRequest {
+/// One entity's pending motion requests.
+struct MotionRequest {
     entity: Entity,
+    teleport: Option<Vec3>,
     set: Option<Vec3>,
     change: Option<Vec3>,
     proxy: Option<Entity>,
 }
 
-/// Applies every [`PhysicsVelocitySet`] and then [`PhysicsVelocityChange`] whose body exists in
-/// the physics world, and removes the requests. A request on an entity whose body does not exist yet
-/// waits for the tick it appears; one on a body that cannot move is dropped with a logged warning.
-fn apply_velocity_requests(world: &mut World) {
+/// Applies every [`PhysicsTeleport`], then [`PhysicsVelocitySet`], then [`PhysicsVelocityChange`]
+/// whose body exists in the physics world, and removes the requests. A request on an entity whose
+/// body does not exist yet waits for the tick it appears; one on a body that cannot move is dropped
+/// with a logged warning.
+fn apply_motion_requests(world: &mut World) {
     let mut requests = world.query_filtered::<(
         Entity,
+        Option<&PhysicsTeleport>,
         Option<&PhysicsVelocitySet>,
         Option<&PhysicsVelocityChange>,
         Option<&PhysicsProxy>,
-    ), Or<(With<PhysicsVelocitySet>, With<PhysicsVelocityChange>)>>();
-    let pending: Vec<VelocityRequest> = requests
+    ), Or<(
+        With<PhysicsTeleport>,
+        With<PhysicsVelocitySet>,
+        With<PhysicsVelocityChange>,
+    )>>();
+    let pending: Vec<MotionRequest> = requests
         .iter(world)
-        .map(|(entity, set, change, proxy)| VelocityRequest {
+        .map(|(entity, teleport, set, change, proxy)| MotionRequest {
             entity,
+            teleport: teleport.map(|teleport| teleport.0),
             set: set.map(|set| set.0),
             change: change.map(|change| change.0),
             proxy: proxy.map(PhysicsProxy::entity),
@@ -287,6 +312,7 @@ fn apply_velocity_requests(world: &mut World) {
         return;
     }
     let mut applied: Vec<Entity> = Vec::new();
+    let mut teleported = false;
     {
         let mut sets = world.query::<&mut RapierRigidBodySet>();
         let Ok(mut set) = sets.single_mut(world) else {
@@ -300,22 +326,37 @@ fn apply_velocity_requests(world: &mut World) {
                 continue;
             };
             if body.is_dynamic() {
+                if let Some(position) = request.teleport {
+                    body.set_translation(position, true);
+                    body.set_linvel(Vec3::ZERO, true);
+                    body.set_angvel(Vec3::ZERO, true);
+                    teleported = true;
+                }
                 let velocity = request.set.unwrap_or_else(|| body.linvel())
                     + request.change.unwrap_or(Vec3::ZERO);
                 body.set_linvel(velocity, true);
             } else {
                 warn!(
-                    "a velocity request on a fixed body was ignored (entity {})",
+                    "a motion request on a fixed body was ignored (entity {})",
                     request.entity
                 );
             }
             applied.push(request.entity);
         }
     }
-    for entity in applied {
-        world
-            .entity_mut(entity)
-            .remove::<(PhysicsVelocitySet, PhysicsVelocityChange)>();
+    for request in pending
+        .iter()
+        .filter(|request| applied.contains(&request.entity))
+    {
+        let mut entity = world.entity_mut(request.entity);
+        entity.remove::<(PhysicsTeleport, PhysicsVelocitySet, PhysicsVelocityChange)>();
+        // A teleported character stands on nothing until the next probe.
+        if request.teleport.is_some() && entity.contains::<CharacterGround>() {
+            entity.insert(CharacterGround::default());
+        }
+    }
+    if teleported {
+        sync_body_readouts(world);
     }
 }
 
@@ -664,4 +705,58 @@ fn assert_velocity_command(world: &mut World, args: &CommandArgs) -> CommandResu
             velocity.linear
         )))
     }
+}
+
+/// `physics.teleport <name> <x> <y> <z>`: asks for the body to be put there, at rest.
+fn teleport_command(world: &mut World, args: &CommandArgs) -> CommandResult {
+    args.expect_count(4)?;
+    let name: String = args.parse(0, "name")?;
+    let position = Vec3::new(
+        args.parse(1, "x")?,
+        args.parse(2, "y")?,
+        args.parse(3, "z")?,
+    );
+    if !position.is_finite() {
+        return Err(args.failure(format!("the position must be finite, got {position}")));
+    }
+    let owner = find_unique_entity_by_name(world, args, &name)?;
+    if !world.entity(owner).contains::<PhysicsBody>() {
+        return Err(args.failure(format!("`{name}` is not a physics body")));
+    }
+    world.entity_mut(owner).insert(PhysicsTeleport(position));
+    Ok(CommandOutcome::Continue)
+}
+
+/// `physics.spawn_ramp <name> <x> <y> <z> <size_x> <size_y> <size_z> <degrees>`: a fixed box
+/// tilted about the z axis (positive degrees rise towards +x).
+fn spawn_ramp_command(world: &mut World, args: &CommandArgs) -> CommandResult {
+    args.expect_count(8)?;
+    let name: String = args.parse(0, "name")?;
+    let center = Vec3::new(
+        args.parse(1, "x")?,
+        args.parse(2, "y")?,
+        args.parse(3, "z")?,
+    );
+    let size = Vec3::new(
+        args.parse(4, "size_x")?,
+        args.parse(5, "size_y")?,
+        args.parse(6, "size_z")?,
+    );
+    let degrees: f32 = args.parse(7, "degrees")?;
+    let body = PhysicsBody {
+        kind: PhysicsBodyKind::Fixed,
+        shape: PhysicsShape::Cuboid {
+            half_extents: size / 2.0,
+        },
+        shape_offset: Vec3::ZERO,
+    };
+    if !degrees.is_finite() {
+        return Err(args.failure("<degrees> must be finite"));
+    }
+    spawn_described(world, args, &name, body, center)?;
+    let ramp = find_unique_entity_by_name(world, args, &name)?;
+    if let Some(mut transform) = world.get_mut::<Transform>(ramp) {
+        transform.rotation = Quat::from_rotation_z(degrees.to_radians());
+    }
+    Ok(CommandOutcome::Continue)
 }

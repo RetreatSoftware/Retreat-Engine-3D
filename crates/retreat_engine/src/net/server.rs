@@ -30,6 +30,7 @@ use super::body_state::{BodyState, read_replicated_body_states};
 use super::limits::{ConnectionGuard, Refusal, ServerLimits, Verdict, check_input_content};
 use super::module_state::{MAX_MODULE_STATE_BYTES, ModuleState, encoded_size, read_module_states};
 use super::state_delta::{DeltaEncoder, ReplicatedState, split_into_chunks};
+use super::tick_pacing::{InputWindow, TIMING_INTERVAL_TICKS, schedule_input};
 use super::transport::{ConnectionId, ServerEvent, ServerTransport};
 use super::wire;
 use super::{ClientMessage, ServerMessage};
@@ -106,6 +107,10 @@ struct ConnectionState {
     connected_at: u64,
     /// Mutes of `guard` already added to `ServerStats::connections_muted`.
     mutes_counted: u32,
+    /// How early its inputs arrived since the last timing report.
+    timing: InputWindow,
+    /// The tick of the last late input scheduled for it (see `schedule_input`).
+    spread_end: u64,
 }
 
 /// The authoritative simulation's networking state.
@@ -213,6 +218,8 @@ fn server_before_tick(world: &mut World) {
                                 guard: ConnectionGuard::new(next),
                                 connected_at: next,
                                 mutes_counted: 0,
+                                timing: InputWindow::default(),
+                                spread_end: 0,
                             },
                         );
                     }
@@ -399,7 +406,16 @@ fn handle_packet(
             if !apply_verdict(world, server, transport, from, verdict) {
                 return;
             }
-            if let Some(refusal) = check_input_content(&limits, next, tick, &lines) {
+            let refusal = check_input_content(&limits, next, tick, &lines);
+            // Refused for its tick or not, the client needs to hear how far off it is.
+            if matches!(
+                refusal,
+                None | Some(Refusal::InputTooOld) | Some(Refusal::InputTick)
+            ) && let Some(state) = server.connections.get_mut(&from)
+            {
+                state.timing.record(next, tick);
+            }
+            if let Some(refusal) = refusal {
                 if refusal == Refusal::InputTooOld {
                     server.stats.inputs_too_old += 1;
                     return;
@@ -407,13 +423,15 @@ fn handle_packet(
                 refuse_content(world, server, transport, next, from, refusal);
                 return;
             }
-            // An input for a tick that is already running or past runs now, late.
-            let target = if tick < next {
+            // An input for a tick that is already running or past runs late: in the next ticks,
+            // one per tick, so a burst does not collapse into one tick.
+            if tick < next {
                 server.late_inputs += 1;
-                next
-            } else {
-                tick
+            }
+            let Some(state) = server.connections.get_mut(&from) else {
+                return;
             };
+            let target = schedule_input(next, tick, &mut state.spread_end);
             server
                 .buffered
                 .entry(target)
@@ -484,6 +502,9 @@ fn server_after_tick(world: &mut World) {
             server.known.clone(),
         )
     };
+    if tick.is_multiple_of(TIMING_INTERVAL_TICKS) {
+        send_timing_reports(world, &mut *transport.0);
+    }
     if due {
         let state = ReplicatedState {
             bodies: read_replicated_body_states(world),
@@ -537,4 +558,24 @@ fn sendable_module_states(world: &mut World) -> Vec<ModuleState> {
         fail_running_script(world, message);
     }
     states
+}
+
+/// Tells each client that sent inputs how early they arrived.
+fn send_timing_reports(world: &mut World, transport: &mut dyn ServerTransport) {
+    let mut server = world.resource_mut::<NetServer>();
+    let server = &mut *server;
+    for (id, state) in &mut server.connections {
+        let Some(report) = state.timing.take() else {
+            continue;
+        };
+        if !server.known.contains(id) {
+            continue;
+        }
+        let bytes = wire::encode_server_message(&ServerMessage::Timing {
+            slack: report.slack,
+            oldest_tick: report.oldest_tick,
+        });
+        server.stats.bytes_sent += bytes.len() as u64;
+        transport.send(*id, bytes);
+    }
 }

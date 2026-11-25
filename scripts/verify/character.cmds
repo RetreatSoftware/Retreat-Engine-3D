@@ -1,10 +1,10 @@
 # Character controller capabilities: analog axes, mouse look, an upright character body, ground
-# detection by shape cast, velocity set and readout, ray and shape casts. Without a network the
+# readout, velocity set and readout, ray and shape casts. Without a network the
 # sandbox walker takes its input directly.
 physics.spawn_wall wall_east 2 1 2 0.4 2 2
 sandbox.walker_spawn -2 2
 wait 20
-assert.walker_grounded walker_local true
+assert.grounded walker_local true
 assert.velocity walker_local 0 0 0 0.05
 assert.ray_hit wall_east 1.8 0 1 2 1 0 0 20
 assert.ball_cast_hit wall_east 1.6 0.2 0 1 2 1 0 0 20
@@ -38,16 +38,16 @@ input.key_down Space
 wait 3
 input.key_up Space
 wait 18
-assert.walker_grounded walker_local false
+assert.grounded walker_local false
 snapshot character_jump
 wait 60
-assert.walker_grounded walker_local true
+assert.grounded walker_local true
 # A character body feels no engine gravity: it keeps the velocity it is given.
 physics.spawn_character floater 0 4 -2 0.5 0.4
 physics.set_velocity floater 0 0.5 0
 wait 20
 assert.velocity floater 0 0.5 0 0.001
 state.hash
-assert.state_hash 0x9d1a8527f0432af5
+assert.state_hash 0x342bb3ca078f8af8
 snapshot character_end
 quit

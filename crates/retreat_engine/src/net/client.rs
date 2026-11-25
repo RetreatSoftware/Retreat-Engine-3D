@@ -16,6 +16,7 @@
 //! plus a margin for jitter (negative margins make inputs late on purpose, in tests).
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use bevy::app::{FixedFirst, FixedLast, RunFixedMainLoop, RunFixedMainLoopSystems};
 use bevy::prelude::*;
@@ -29,15 +30,20 @@ use super::module_state::{
     ModuleState, apply_module_states, module_state_lists_match, read_module_states,
 };
 use super::state_delta::{ReplicatedState, StateAssembler};
+use super::tick_pacing::{ClientPacing, TimingReport};
 use super::transport::{ClientEvent, ClientTransport};
 use super::wire;
 use super::{ClientMessage, MAX_HISTORY_TICKS, ServerMessage, simulate_tick, state_lists_match};
 use crate::physics::{spawn_body_from_description, sync_body_readouts};
 use crate::physics_snapshot::{PhysicsSnapshot, capture_physics, restore_physics};
+use crate::render_smoothing::{absorb_correction, poses_before_correction};
 use crate::retired_bodies::revive_retired_entities;
 
 /// A partly received state is kept for this many ticks while newer ones arrive.
 const PARTIAL_STATE_TICKS: u64 = 64;
+
+/// The longest frame a client simulates in full.
+pub const CLIENT_MAX_FRAME_TIME: Duration = Duration::from_secs(1);
 
 /// A client repeats its `Hello` this often while it waits for a `Welcome`.
 pub const HELLO_RESEND_TICKS: u64 = 16;
@@ -81,6 +87,10 @@ pub struct ClientStats {
     pub bytes_received: u64,
     /// Bytes of every datagram sent to the server.
     pub bytes_sent: u64,
+    /// Extra ticks run because inputs were arriving late.
+    pub catch_up_ticks: u64,
+    /// Times the tick number jumped because the client was hopelessly behind.
+    pub resyncs: u64,
     /// Module state values from the server that this client cannot use (type not registered,
     /// another version or damaged): the server and client builds differ.
     pub unusable_module_states: u64,
@@ -136,6 +146,8 @@ pub struct NetClient {
     partial_full: BTreeMap<u64, bool>,
     /// The transport reported `Connected`. Hellos (and the round-trip clock) start only then.
     connected: bool,
+    /// Keeps the lead over the server right (see `tick_pacing.rs`).
+    pub pacing: ClientPacing,
 }
 
 impl NetClient {
@@ -237,6 +249,11 @@ pub fn install_client(
     app.init_resource::<NetLocalClient>();
     app.init_resource::<NetReplaying>();
     app.world_mut().resource_mut::<NetInputQueue>().accepting = true;
+    // A slow frame must not lose simulated time (Bevy caps a frame at 250 ms by default): a
+    // client that ticks slower than the server falls behind it.
+    if let Some(mut clock) = app.world_mut().get_resource_mut::<Time<Virtual>>() {
+        clock.set_max_delta(CLIENT_MAX_FRAME_TIME);
+    }
     app.insert_resource(NetClient {
         id: 0,
         phase: ClientPhase::Connecting,
@@ -261,6 +278,7 @@ pub fn install_client(
         states_discarded: 0,
         partial_full: BTreeMap::new(),
         connected: false,
+        pacing: ClientPacing::default(),
     })
     .insert_non_send(ClientTransportBox(Box::new(transport)))
     .add_systems(FixedFirst, client_before_tick)
@@ -319,6 +337,11 @@ fn pump_transport(world: &mut World) {
                 chunks,
                 ReplicatedState { bodies, states },
             ),
+            Ok(ServerMessage::Timing { slack, oldest_tick }) => {
+                if client.phase == ClientPhase::Running {
+                    client.pacing.on_report(TimingReport { slack, oldest_tick });
+                }
+            }
             Err(_) => client.undecodable_packets += 1,
         }
     }
@@ -452,6 +475,34 @@ pub fn process_client_states(world: &mut World) {
     for (tick, state) in ready {
         receive_state(world, tick, state);
     }
+    keep_pace(world);
+}
+
+/// Does what the server's timing reports asked for: runs the missing ticks (live ones: they send
+/// inputs), jumps a hopeless gap, or slows the clock.
+fn keep_pace(world: &mut World) {
+    let pacing = world.resource::<NetClient>().pacing;
+    if let Some(mut clock) = world.get_resource_mut::<Time<Virtual>>()
+        && clock.relative_speed() != pacing.time_scale
+    {
+        clock.set_relative_speed(pacing.time_scale);
+    }
+    if pacing.jump == 0 && pacing.catch_up == 0 {
+        return;
+    }
+    if pacing.jump > 0 {
+        let mut client = world.resource_mut::<NetClient>();
+        let tick = client.tick + pacing.jump;
+        client.start_at(tick);
+        client.stats.resyncs += 1;
+    }
+    for _ in 0..pacing.catch_up {
+        simulate_tick(world);
+        world.resource_mut::<NetClient>().stats.catch_up_ticks += 1;
+    }
+    let mut client = world.resource_mut::<NetClient>();
+    let tick = client.tick;
+    client.pacing.adjusted(tick);
 }
 
 fn receive_state(world: &mut World, server_tick: u64, mut server: ReplicatedState) {
@@ -519,6 +570,7 @@ fn correct(world: &mut World, server_tick: u64, server: &ReplicatedState) {
         return;
     }
     world.resource_mut::<NetClient>().stats.corrections += 1;
+    let drawn_before = poses_before_correction(world);
     // An entity the server still lists is alive, even if this client had removed it.
     let listed = server.states.iter().map(|state| state.entity.as_str());
     revive_retired_entities(world, &listed.collect());
@@ -558,6 +610,7 @@ fn correct(world: &mut World, server_tick: u64, server: &ReplicatedState) {
     }
     world.resource_mut::<NetInputQueue>().lines = queued_for_next_tick;
     world.insert_resource(NetReplaying(false));
+    absorb_correction(world, &drawn_before);
     let mut client = world.resource_mut::<NetClient>();
     client.replaying = false;
     client.replay_lines.clear();

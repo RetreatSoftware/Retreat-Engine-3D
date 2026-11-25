@@ -12,6 +12,11 @@
 //!
 //! Analog input: [`AnalogInput`] (mouse look and axes per fixed tick) and [`CursorCapture`].
 //!
+//! Character motion: [`CharacterStepping`] climbs stairs and slopes, [`CharacterGround`] says what a
+//! character stands on, [`PhysicsTeleport`] puts a body somewhere else.
+//!
+//! Looks (render only): [`EntityColor`], [`CharacterVisual`], [`RenderSmoothing`].
+//!
 //! Camera: an entity with a [`GameCamera`] is a perspective camera; the engine maps it onto
 //! Bevy's camera components, modules only edit the description.
 //!
@@ -40,6 +45,7 @@
 
 mod analog_input;
 mod animation_playback;
+mod character_motion;
 mod command_args;
 mod command_error;
 mod command_line;
@@ -54,9 +60,11 @@ mod save_store;
 mod simulation_rng;
 mod sound_playback;
 mod ui_panel;
+mod visuals;
 
 pub use analog_input::{AnalogInput, AppAxisExt, CursorCapture, InputAxis};
 pub use animation_playback::{AnimationPlayback, ClipPlayback, MAX_CLIP_SPEED};
+pub use character_motion::{CharacterGround, CharacterStepping, PhysicsTeleport};
 pub use command_args::CommandArgs;
 pub use command_error::CommandError;
 pub use command_line::{ParsedCommandLine, parse_command_line};
@@ -96,3 +104,4 @@ pub use ui_panel::{
     PANEL_MARGIN, PanelAnchor, PanelDirection, PanelLayout, PanelRect, ROW_MAX_BUTTON_WIDTH,
     TITLE_HEIGHT, UiButtonEntry, UiPanel, UiPanels, compute_panel_layout, visible_entries,
 };
+pub use visuals::{CharacterVisual, EntityColor, RenderSmoothing};

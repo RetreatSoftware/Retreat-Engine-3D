@@ -8,7 +8,7 @@
 use super::{ClientMessage, ServerMessage};
 
 /// The version of the wire format this build speaks. Bump it whenever a message type changes.
-pub const WIRE_VERSION: u8 = 8;
+pub const WIRE_VERSION: u8 = 9;
 
 /// Why bytes could not be turned into a message.
 #[derive(Debug, Clone, PartialEq, Eq)]

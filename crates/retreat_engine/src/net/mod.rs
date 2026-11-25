@@ -34,6 +34,7 @@ pub mod link;
 pub mod module_state;
 pub mod server;
 pub mod state_delta;
+pub mod tick_pacing;
 pub mod transport;
 pub mod wire;
 
@@ -75,6 +76,10 @@ pub enum ServerMessage {
         client_id: u32,
         tick: u64,
     },
+    /// How early this client's inputs arrived lately (see `tick_pacing.rs`): the smallest `slack`
+    /// (input tick minus the server's next tick; negative is late) and the oldest input tick
+    /// measured.
+    Timing { slack: i64, oldest_tick: u64 },
     /// The state of the physics bodies after the server simulated `tick`: every body when `full`,
     /// otherwise only the bodies that are not resting (see `state_delta.rs`).
     ///

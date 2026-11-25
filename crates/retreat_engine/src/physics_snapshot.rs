@@ -28,7 +28,10 @@ use bevy_rapier3d::plugin::context::{
 use bevy_rapier3d::prelude::RigidBody;
 use bevy_rapier3d::rapier::dynamics::{CCDSolver, IntegrationParameters, IslandManager};
 use bevy_rapier3d::rapier::geometry::{DefaultBroadPhase, NarrowPhase};
-use retreat_engine_api::{PhysicsBody, RetiredEntity, SimulationRng};
+use retreat_engine_api::{
+    PhysicsBody, PhysicsTeleport, PhysicsVelocityChange, PhysicsVelocitySet, RetiredEntity,
+    SimulationRng,
+};
 
 use crate::net::module_state::{ModuleStateSnapshot, capture_module_state, restore_module_state};
 use crate::physics::sync_body_readouts;
@@ -57,6 +60,8 @@ pub struct PhysicsSnapshot {
     proxies: BTreeSet<Entity>,
     /// Entities that were retired at capture time.
     retired: BTreeSet<Entity>,
+    /// Motion requests not applied yet (their bodies did not exist).
+    requests: PendingMotion,
     /// Every registered module component (`NetState`).
     module_state: ModuleStateSnapshot,
 }
@@ -135,7 +140,9 @@ pub fn capture_physics(world: &mut World) -> Result<PhysicsSnapshot, String> {
     let rng = world.get_resource::<SimulationRng>().cloned();
     let fixed_elapsed = world.resource::<Time<Fixed>>().elapsed();
     let module_state = capture_module_state(world);
+    let requests = PendingMotion::capture(world);
     Ok(PhysicsSnapshot {
+        requests,
         module_state,
         islands,
         broad_phase,
@@ -240,6 +247,51 @@ pub fn restore_physics(world: &mut World, snapshot: &PhysicsSnapshot) -> Result<
         }
     }
     restore_module_state(world, &snapshot.module_state);
+    snapshot.requests.restore(world);
     sync_body_readouts(world);
     Ok(())
+}
+
+/// The motion requests waiting at capture time. A rewind must also take back requests made since,
+/// or the replay would apply them early.
+#[derive(Default)]
+struct PendingMotion {
+    teleports: Vec<(Entity, PhysicsTeleport)>,
+    sets: Vec<(Entity, PhysicsVelocitySet)>,
+    changes: Vec<(Entity, PhysicsVelocityChange)>,
+}
+
+impl PendingMotion {
+    fn capture(world: &mut World) -> Self {
+        Self {
+            teleports: all_of(world),
+            sets: all_of(world),
+            changes: all_of(world),
+        }
+    }
+
+    fn restore(&self, world: &mut World) {
+        replace_all(world, &self.teleports);
+        replace_all(world, &self.sets);
+        replace_all(world, &self.changes);
+    }
+}
+
+fn all_of<T: Component + Copy>(world: &mut World) -> Vec<(Entity, T)> {
+    world
+        .query::<(Entity, &T)>()
+        .iter(world)
+        .map(|(entity, value)| (entity, *value))
+        .collect()
+}
+
+fn replace_all<T: Component + Copy>(world: &mut World, saved: &[(Entity, T)]) {
+    for (entity, _) in all_of::<T>(world) {
+        world.entity_mut(entity).remove::<T>();
+    }
+    for (entity, value) in saved {
+        if let Ok(mut entity) = world.get_entity_mut(*entity) {
+            entity.insert(*value);
+        }
+    }
 }
