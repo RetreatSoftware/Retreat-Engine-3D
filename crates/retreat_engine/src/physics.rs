@@ -89,7 +89,7 @@ impl Plugin for PhysicsPlugin {
                 "physics.push <name> <vx> <vy> <vz>",
                 push_command,
             );
-        crate::retired_bodies::register_remove_command(app);
+        crate::retired_bodies::register_remove_commands(app);
     }
 }
 
@@ -169,7 +169,7 @@ fn create_physics_proxies(world: &mut World) {
         Has<ChildOf>,
     ), (
         Added<PhysicsBody>,
-        Without<crate::retired_bodies::RetiredBody>,
+        Without<retreat_engine_api::RetiredEntity>,
     )>();
     let mut new_bodies: Vec<(String, Entity, PhysicsBody, Transform)> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
@@ -316,8 +316,8 @@ pub fn spawn_physics_box(world: &mut World, name: &str, center: Vec3, size: f32)
 }
 
 /// Spawns a body from its replicated description (any [`PhysicsShape`]), marked [`PhysicsBox`] so
-/// `physics.reset` and a client's "the server removed it" step find it. The mesh follows the shape;
-/// a `shape_offset` moves the collider only. Same caller duties as [`spawn_physics_box`].
+/// `physics.reset` finds it. The mesh follows the shape; a `shape_offset` moves the collider only.
+/// Same caller duties as [`spawn_physics_box`].
 pub fn spawn_body_from_description(
     world: &mut World,
     name: &str,

@@ -8,6 +8,7 @@
 mod drop_box;
 mod scene;
 mod stripes_material;
+mod tally;
 mod toolbar;
 
 use bevy::prelude::*;
@@ -30,6 +31,8 @@ fn add_sandbox_plugins(app: &mut App) {
         stripes_material::StripesMaterialPlugin,
         drop_box::DropBoxPlugin,
         toolbar::SandboxToolbarPlugin,
+        // A demo of module state: `sandbox.tally_add`, rolled back and replicated.
+        tally::TallyPlugin,
         // The first gameplay module (Retreat-Modules): `spawner.rain <count>`.
         retreat_module_spawner::SpawnerModulePlugin,
         // The orbit camera module: `orbit.start`, arrow keys held rotate the sandbox camera.

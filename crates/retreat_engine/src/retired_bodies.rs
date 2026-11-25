@@ -1,9 +1,10 @@
-//! Deferred destruction of physics bodies (`RemovePhysicsBody`), so a rollback can always restore.
+//! Deferred destruction of replicated entities (`RemovePhysicsBody`, `RemoveNetEntity`), so a
+//! rollback can always restore.
 //!
-//! A despawned body cannot be brought back by `restore_physics`, so a client that rewinds past the
+//! A despawned entity cannot be brought back by `restore_physics`, so a client that rewinds past the
 //! despawn would refuse the correction. Instead of despawning, a body is **retired**:
 //! - `retire_requested_bodies` (a tick system) turns a `RemovePhysicsBody` request into a
-//!   [`RetiredBody`] on the game entity and its proxy, hides the entity and disables its Rapier body
+//!   [`RetiredEntity`] on the game entity and its proxy, hides the entity and disables its Rapier body
 //!   (the body set is part of the physics snapshot, so a restore re-enables it by itself);
 //! - a retired body is invisible to everything that compares machines: `state.hash`, replication
 //!   (`read_body_states`) and state application skip it, so server and client agree no matter when
@@ -17,30 +18,35 @@
 //! Limit: the entity keeps its `Name` until the purge, so a new body cannot reuse the name of a
 //! retired one inside the window (the players module uses a fresh id per connection).
 
-use std::time::Duration;
+use std::collections::BTreeSet;
 
 use bevy::prelude::*;
 use bevy_rapier3d::plugin::context::RapierRigidBodySet;
 use retreat_engine_api::{
-    AppCommandExt, CommandArgs, CommandOutcome, CommandResult, PhysicsBody, RemovePhysicsBody,
+    AppCommandExt, CommandArgs, CommandOutcome, CommandResult, PhysicsBody, RemoveNetEntity,
+    RemovePhysicsBody, RetiredEntity,
 };
 
 use crate::entity_names::find_unique_entity_by_name;
-use crate::physics::PhysicsProxy;
+use crate::physics::{PhysicsProxy, PhysicsProxyOf};
 
 /// Fixed ticks a retired body is kept: the most a client can rewind (its history length).
 /// `net::MAX_HISTORY_TICKS` is this value, so there is one source of truth.
 pub const ROLLBACK_WINDOW_TICKS: u64 = 512;
 
-/// On a retired game entity and on its proxy: the fixed time at which it was retired.
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RetiredBody {
-    pub since: Duration,
+/// Registers `physics.remove` and `net.remove`.
+pub(crate) fn register_remove_commands(app: &mut App) {
+    app.register_command("physics.remove", "physics.remove <name>", remove_command)
+        .register_command("net.remove", "net.remove <name>", remove_net_entity_command);
 }
 
-/// Registers `physics.remove`.
-pub(crate) fn register_remove_command(app: &mut App) {
-    app.register_command("physics.remove", "physics.remove <name>", remove_command);
+/// `net.remove <name>`: asks for a replicated entity (with or without a body) to be removed safely.
+fn remove_net_entity_command(world: &mut World, args: &CommandArgs) -> CommandResult {
+    args.expect_count(1)?;
+    let name: String = args.parse(0, "name")?;
+    let entity = find_unique_entity_by_name(world, args, &name)?;
+    world.entity_mut(entity).insert(RemoveNetEntity);
+    Ok(CommandOutcome::Continue)
 }
 
 /// `physics.remove <name>`: asks for the body to be removed safely (see the module docs).
@@ -55,20 +61,25 @@ fn remove_command(world: &mut World, args: &CommandArgs) -> CommandResult {
     Ok(CommandOutcome::Continue)
 }
 
-/// Retires every body that has a [`RemovePhysicsBody`] request.
+/// Retires every entity that has a [`RemovePhysicsBody`] or [`RemoveNetEntity`] request.
 pub(crate) fn retire_requested_bodies(world: &mut World) {
-    let mut requests = world.query_filtered::<(Entity, Option<&PhysicsProxy>, Has<RetiredBody>), With<RemovePhysicsBody>>();
+    let mut requests = world.query_filtered::<
+        (Entity, Option<&PhysicsProxy>, Has<RetiredEntity>),
+        Or<(With<RemovePhysicsBody>, With<RemoveNetEntity>)>,
+    >();
     let requested: Vec<(Entity, Option<Entity>, bool)> = requests
         .iter(world)
         .map(|(entity, proxy, retired)| (entity, proxy.map(PhysicsProxy::entity), retired))
         .collect();
     let since = world.resource::<Time<Fixed>>().elapsed();
     for (entity, proxy, already_retired) in requested {
-        world.entity_mut(entity).remove::<RemovePhysicsBody>();
+        world
+            .entity_mut(entity)
+            .remove::<(RemovePhysicsBody, RemoveNetEntity)>();
         if already_retired {
             continue;
         }
-        let retired = RetiredBody { since };
+        let retired = RetiredEntity { since };
         world
             .entity_mut(entity)
             .insert((retired, Visibility::Hidden));
@@ -77,23 +88,62 @@ pub(crate) fn retire_requested_bodies(world: &mut World) {
             continue;
         };
         world.entity_mut(proxy).insert(retired);
-        let mut sets = world.query::<&mut RapierRigidBodySet>();
-        if let Ok(mut set) = sets.single_mut(world)
-            && let Some(handle) = set.entity2body().get(&proxy).copied()
-            && let Some(body) = set.bodies.get_mut(handle)
-        {
-            body.set_enabled(false);
+        set_body_enabled(world, proxy, false);
+    }
+}
+
+/// Brings back retired entities **without a physics body** that have one of these names, unless a
+/// live entity already has it: a client calls it for what the server still lists (the server refused
+/// a removal the client predicted, or has not made it yet). Bodies are not revived this way: a
+/// re-enabled Rapier body kept falling through its contacts (found by a harness test), so a body is
+/// only brought back by restoring a snapshot taken before its removal.
+pub(crate) fn revive_retired_entities(world: &mut World, names: &BTreeSet<&str>) {
+    let mut named = world.query_filtered::<
+        (Entity, &Name, Has<RetiredEntity>),
+        (Without<PhysicsProxyOf>, Without<PhysicsBody>),
+    >();
+    let mut live: BTreeSet<String> = BTreeSet::new();
+    let mut retired: Vec<(String, Entity)> = Vec::new();
+    for (entity, name, is_retired) in named.iter(world) {
+        if !names.contains(name.as_str()) {
+            continue;
+        }
+        if is_retired {
+            retired.push((name.as_str().to_string(), entity));
+        } else {
+            live.insert(name.as_str().to_string());
+        }
+    }
+    for (name, entity) in retired {
+        if live.contains(&name) {
+            continue;
+        }
+        let mut owner = world.entity_mut(entity);
+        owner.remove::<RetiredEntity>();
+        if owner.contains::<Visibility>() {
+            owner.insert(Visibility::Inherited);
         }
     }
 }
 
-/// Despawns bodies retired more than the rollback window ago (their proxy goes with them).
+/// Switches the simulation of a proxy's Rapier body on or off.
+fn set_body_enabled(world: &mut World, proxy: Entity, enabled: bool) {
+    let mut sets = world.query::<&mut RapierRigidBodySet>();
+    if let Ok(mut set) = sets.single_mut(world)
+        && let Some(handle) = set.entity2body().get(&proxy).copied()
+        && let Some(body) = set.bodies.get_mut(handle)
+    {
+        body.set_enabled(enabled);
+    }
+}
+
+/// Despawns entities retired more than the rollback window ago (a body's proxy goes with it).
 pub(crate) fn purge_retired_bodies(world: &mut World) {
     let timestep = world.resource::<Time<Fixed>>().timestep();
     let now = world.resource::<Time<Fixed>>().elapsed();
     let keep_for = timestep * (ROLLBACK_WINDOW_TICKS as u32 + 1);
     let expired: Vec<Entity> = world
-        .query_filtered::<(Entity, &RetiredBody), With<PhysicsBody>>()
+        .query_filtered::<(Entity, &RetiredEntity), Without<PhysicsProxyOf>>()
         .iter(world)
         .filter(|(_, retired)| now >= retired.since + keep_for)
         .map(|(entity, _)| entity)

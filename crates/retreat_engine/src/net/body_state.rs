@@ -7,10 +7,9 @@
 
 use bevy::prelude::*;
 use bevy_rapier3d::plugin::context::RapierRigidBodySet;
-use retreat_engine_api::{PhysicsBody, PhysicsBodyKind, Replicated, SyncedKind};
+use retreat_engine_api::{PhysicsBody, PhysicsBodyKind, Replicated, RetiredEntity, SyncedKind};
 use serde::{Deserialize, Serialize};
 
-use crate::RetiredBody;
 use crate::physics::PhysicsProxy;
 
 /// One body's replicated state.
@@ -37,7 +36,7 @@ pub fn read_body_states(world: &mut World) -> Vec<BodyState> {
         &PhysicsBody,
         &PhysicsProxy,
         Option<&Replicated>,
-    ), Without<RetiredBody>>();
+    ), Without<RetiredEntity>>();
     let owner_list: Vec<(String, PhysicsBody, Entity, Replicated)> = owners
         .iter(world)
         .map(|(name, body, proxy, replicated)| {
@@ -120,9 +119,9 @@ pub fn apply_body_states(world: &mut World, states: &[BodyState]) -> ApplyReport
         &PhysicsBody,
         &PhysicsProxy,
         Option<&Replicated>,
-    ), Without<RetiredBody>>();
+    ), Without<RetiredEntity>>();
     let retired_names: Vec<String> = world
-        .query_filtered::<&Name, With<RetiredBody>>()
+        .query_filtered::<&Name, With<RetiredEntity>>()
         .iter(world)
         .map(|name| name.as_str().to_string())
         .collect();

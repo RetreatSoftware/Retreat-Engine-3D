@@ -8,7 +8,7 @@
 use super::{ClientMessage, ServerMessage};
 
 /// The version of the wire format this build speaks. Bump it whenever a message type changes.
-pub const WIRE_VERSION: u8 = 6;
+pub const WIRE_VERSION: u8 = 7;
 
 /// Why bytes could not be turned into a message.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,6 +127,12 @@ mod tests {
             full: true,
             tick: 99,
             bodies: vec![body("a"), body("b")],
+            states: vec![crate::net::module_state::ModuleState {
+                entity: "match".to_string(),
+                id: "match.score".to_string(),
+                version: 1,
+                data: vec![1, 2, 3],
+            }],
         };
         assert_eq!(
             decode_server_message(&encode_server_message(&message)),
@@ -167,6 +173,7 @@ mod tests {
             chunks: 1,
             tick: 1,
             bodies: vec![body("a")],
+            states: Vec::new(),
         });
         let two = encode_server_message(&ServerMessage::State {
             chunk: 0,
@@ -174,6 +181,7 @@ mod tests {
             chunks: 1,
             tick: 1,
             bodies: vec![body("a"), body("b")],
+            states: Vec::new(),
         });
         let per_body = two.len() - one.len();
         assert!(per_body <= 90, "one body takes {per_body} bytes");
@@ -208,6 +216,7 @@ mod tests {
             chunks: 1,
             tick: 7,
             bodies: vec![body("a")],
+            states: Vec::new(),
         });
         for cut in 1..bytes.len() {
             assert!(
@@ -237,6 +246,7 @@ mod tests {
             chunks: 1,
             tick: u64::MAX,
             bodies,
+            states: Vec::new(),
         });
         assert!(
             bytes.len() <= 1200,

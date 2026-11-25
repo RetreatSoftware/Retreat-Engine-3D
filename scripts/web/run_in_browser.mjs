@@ -169,7 +169,7 @@ async function main() {
     }
     if (message.method !== "Runtime.consoleAPICalled") return;
     const text = message.params.args.map((arg) => arg.value ?? arg.description ?? "").join(" ");
-    if (/ERROR|state\.hash|panicked|net-body|net-stats|net client/.test(text)) console.log(`[page] ${text.replace(/%c/g, "")}`);
+    if (/ERROR|state\.hash|panicked|net-body|net-state|net-stats|net client/.test(text)) console.log(`[page] ${text.replace(/%c/g, "")}`);
   });
   await devtools.call("Runtime.enable", {}, sessionId);
   await devtools.call("Page.navigate", { url: pageUrl }, sessionId);

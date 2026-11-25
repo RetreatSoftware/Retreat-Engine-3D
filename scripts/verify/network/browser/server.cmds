@@ -7,6 +7,8 @@ wait 3300
 # (No client count here: the native client has already left by now. That both clients took part shows in
 # the bodies: net_a came from the native client and net_b from the browser client.)
 net.bodies
+assert.tally tally 5
+net.states
 net.stats
 # Traffic budget (measured: about 60-120 KB sent, 5-30 KB received) with 3x headroom, and no refusals:
 # every client here is honest, so any refusal is a bug in the client or in the limits.

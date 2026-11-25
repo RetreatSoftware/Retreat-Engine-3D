@@ -9,5 +9,7 @@ publish.workspace = true
 # `serialize`: Vec3 and Quat can be serialized (network messages).
 bevy = { workspace = true, features = ["serialize"] }
 serde.workspace = true
+# Encodes module state (`NetState`).
+postcard.workspace = true
 retreat_rng.workspace = true
 serde_json.workspace = true

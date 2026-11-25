@@ -6,6 +6,8 @@
 //! - `net.status`: logs the role, tick and counters.
 //! - `net.bodies`: logs one line per physics body, `net-body <name> <x> <y> <z>`, so a script that
 //!   starts several processes can compare what each of them sees.
+//! - `net.states`: logs one line per module state value, `net-state <entity> <id> v<version> <hex>`.
+//! - `net.remove <name>` (registered with the physics commands): removes a replicated entity safely.
 //! - `assert.net_joined`: fails unless this client has joined the server.
 //! - `assert.net_clients <n>`: fails unless this server knows exactly `n` clients.
 //! - `net.stats`: logs one greppable line, `net-stats role=<server|client> bytes_sent=<n> ...`, with
@@ -28,6 +30,7 @@ use retreat_engine_api::{
 
 use super::body_state::read_body_states;
 use super::client::{ClientPhase, NetClient};
+use super::module_state::read_module_states;
 use super::server::NetServer;
 
 /// Adds the `net.*` commands.
@@ -39,6 +42,7 @@ impl Plugin for NetCommandsPlugin {
         app.register_command("net.send", "net.send <command line...>", send_command)
             .register_command("net.status", "net.status", status_command)
             .register_command("net.bodies", "net.bodies", bodies_command)
+            .register_command("net.states", "net.states", states_command)
             .register_command(
                 "assert.net_joined",
                 "assert.net_joined",
@@ -153,6 +157,23 @@ fn bodies_command(world: &mut World, args: &CommandArgs) -> CommandResult {
         info!(
             "net-body {} {:.4} {:.4} {:.4}",
             body.name, body.translation.x, body.translation.y, body.translation.z
+        );
+    }
+    Ok(CommandOutcome::Continue)
+}
+
+/// `net.states`.
+fn states_command(world: &mut World, args: &CommandArgs) -> CommandResult {
+    args.expect_count(0)?;
+    for state in read_module_states(world) {
+        let data: String = state
+            .data
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        info!(
+            "net-state {} {} v{} {data}",
+            state.entity, state.id, state.version
         );
     }
     Ok(CommandOutcome::Continue)

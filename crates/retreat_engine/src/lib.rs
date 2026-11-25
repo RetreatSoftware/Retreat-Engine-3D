@@ -77,7 +77,7 @@ pub use physics_snapshot::{PhysicsSnapshot, RollbackError, capture_physics, rest
 pub use platform::launch;
 #[cfg(not(target_arch = "wasm32"))]
 pub use platform::{WebTransportClient, WebTransportServer, parse_certificate_hash};
-pub use retired_bodies::{ROLLBACK_WINDOW_TICKS, RetiredBody};
+pub use retired_bodies::ROLLBACK_WINDOW_TICKS;
 pub use shader_material::{
     AppShaderMaterialExt, ShaderMaterialCommandsPlugin, ShaderMaterialRegistry,
 };

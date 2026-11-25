@@ -19,15 +19,22 @@ use std::collections::BTreeMap;
 
 use bevy::app::{FixedFirst, FixedLast, RunFixedMainLoop, RunFixedMainLoopSystems};
 use bevy::prelude::*;
-use retreat_engine_api::{NetCommandSender, NetInputQueue, Replicated, run_command_line};
+use retreat_engine_api::{
+    NetCommandSender, NetInputQueue, NetStateRegistry, PhysicsBody, Replicated, RetiredEntity,
+    run_command_line,
+};
 
 use super::body_state::{BodyState, apply_body_states, read_replicated_body_states};
-use super::state_delta::StateAssembler;
+use super::module_state::{
+    ModuleState, apply_module_states, module_state_lists_match, read_module_states,
+};
+use super::state_delta::{ReplicatedState, StateAssembler};
 use super::transport::{ClientEvent, ClientTransport};
 use super::wire;
 use super::{ClientMessage, MAX_HISTORY_TICKS, ServerMessage, simulate_tick, state_lists_match};
-use crate::physics::{PHYSICS_PROXY_NAME_SUFFIX, PhysicsBox, spawn_body_from_description};
+use crate::physics::spawn_body_from_description;
 use crate::physics_snapshot::{PhysicsSnapshot, capture_physics, restore_physics};
+use crate::retired_bodies::revive_retired_entities;
 
 /// A partly received state is kept for this many ticks while newer ones arrive.
 const PARTIAL_STATE_TICKS: u64 = 64;
@@ -74,14 +81,17 @@ pub struct ClientStats {
     pub bytes_received: u64,
     /// Bytes of every datagram sent to the server.
     pub bytes_sent: u64,
+    /// Module state values from the server that this client cannot use (type not registered,
+    /// another version or damaged): the server and client builds differ.
+    pub unusable_module_states: u64,
 }
 
 /// One tick of a client's history.
 struct HistoryEntry {
     /// Physics state after the client simulated this tick.
     snapshot: PhysicsSnapshot,
-    /// Body states after this tick.
-    bodies: Vec<BodyState>,
+    /// Replicated bodies and module states after this tick.
+    state: ReplicatedState,
     /// The command lines the client ran just before this tick.
     inputs: Vec<String>,
 }
@@ -114,9 +124,9 @@ pub struct NetClient {
     replaying: bool,
     replay_lines: Vec<String>,
     /// Server states received and not processed yet.
-    pending_states: Vec<(u64, Vec<BodyState>)>,
+    pending_states: Vec<(u64, ReplicatedState)>,
     /// State chunks of ticks that are not complete yet: tick -> chunks received so far (by index).
-    partial_states: BTreeMap<u64, Vec<Option<Vec<BodyState>>>>,
+    partial_states: BTreeMap<u64, Vec<Option<ReplicatedState>>>,
     /// Rebuilds whole states from the deltas the server sends.
     assembler: StateAssembler,
     /// Complete states discarded because they were not usable (a delta before any full state, or
@@ -137,7 +147,16 @@ impl NetClient {
 
     /// Body states this client had after `tick`, if still in its history.
     pub fn states_at(&self, tick: u64) -> Option<&[BodyState]> {
-        self.history.get(&tick).map(|entry| entry.bodies.as_slice())
+        self.history
+            .get(&tick)
+            .map(|entry| entry.state.bodies.as_slice())
+    }
+
+    /// Module states this client had after `tick`, if still in its history.
+    pub fn module_states_at(&self, tick: u64) -> Option<&[ModuleState]> {
+        self.history
+            .get(&tick)
+            .map(|entry| entry.state.states.as_slice())
     }
 
     /// Collects one chunk of a state; when every chunk of the tick has arrived, the whole state
@@ -148,7 +167,7 @@ impl NetClient {
         full: bool,
         chunk: u16,
         chunks: u16,
-        bodies: Vec<BodyState>,
+        piece: ReplicatedState,
     ) {
         let (chunk, chunks) = (usize::from(chunk), usize::from(chunks));
         if chunks == 0 || chunk >= chunks {
@@ -163,16 +182,19 @@ impl NetClient {
             self.undecodable_packets += 1;
             return;
         }
-        slots[chunk] = Some(bodies);
+        slots[chunk] = Some(piece);
         if slots.iter().all(Option::is_some) {
-            let complete: Vec<BodyState> = self
+            let mut complete = ReplicatedState::default();
+            for piece in self
                 .partial_states
                 .remove(&tick)
                 .into_iter()
                 .flatten()
                 .flatten()
-                .flatten()
-                .collect();
+            {
+                complete.bodies.extend(piece.bodies);
+                complete.states.extend(piece.states);
+            }
             let full = self.partial_full.remove(&tick).unwrap_or(full);
             match self.assembler.assemble(tick, full, complete) {
                 Some(whole) => self.pending_states.push((tick, whole)),
@@ -211,6 +233,7 @@ pub fn install_client(
     transport: impl ClientTransport + 'static,
 ) {
     app.init_resource::<NetInputQueue>();
+    app.init_resource::<NetStateRegistry>();
     app.world_mut().resource_mut::<NetInputQueue>().accepting = true;
     app.insert_resource(NetClient {
         id: 0,
@@ -284,7 +307,14 @@ fn pump_transport(world: &mut World) {
                 chunk,
                 chunks,
                 bodies,
-            }) => client.add_state_chunk(tick, full, chunk, chunks, bodies),
+                states,
+            }) => client.add_state_chunk(
+                tick,
+                full,
+                chunk,
+                chunks,
+                ReplicatedState { bodies, states },
+            ),
             Err(_) => client.undecodable_packets += 1,
         }
     }
@@ -363,7 +393,7 @@ fn client_after_tick(world: &mut World) {
         client.tick
     };
     let snapshot = capture_physics(world).expect("a client has physics");
-    let bodies = read_replicated_body_states(world);
+    let state = read_replicated_state(world);
     let mut client = world.resource_mut::<NetClient>();
     let inputs = std::mem::take(&mut client.current_inputs);
     let replaying = client.replaying;
@@ -371,7 +401,7 @@ fn client_after_tick(world: &mut World) {
         tick,
         HistoryEntry {
             snapshot,
-            bodies,
+            state,
             inputs: inputs.clone(),
         },
     );
@@ -391,6 +421,14 @@ fn client_after_tick(world: &mut World) {
     }
 }
 
+/// What this machine has of the replicated state now.
+fn read_replicated_state(world: &mut World) -> ReplicatedState {
+    ReplicatedState {
+        bodies: read_replicated_body_states(world),
+        states: read_module_states(world),
+    }
+}
+
 /// Handles the server states received so far: matches them against the history and corrects on a
 /// mismatch. Must run outside `FixedMain` (the plugin schedules it before the fixed loop; the
 /// in-process harness calls it before each tick).
@@ -404,29 +442,45 @@ pub fn process_client_states(world: &mut World) {
     };
     world.resource_mut::<NetClient>().pending_states = waiting;
     ready.sort_by_key(|(tick, _)| *tick);
-    for (tick, bodies) in ready {
-        receive_state(world, tick, bodies);
+    for (tick, state) in ready {
+        receive_state(world, tick, state);
     }
 }
 
-fn receive_state(world: &mut World, server_tick: u64, server_bodies: Vec<BodyState>) {
+fn receive_state(world: &mut World, server_tick: u64, mut server: ReplicatedState) {
+    let registry = world.resource::<NetStateRegistry>().clone();
+    // Values this build cannot read are left out, or they would force a correction every time.
+    let received = server.states.len();
+    server.states.retain(|state| state.is_usable(&registry));
+    let unusable = (received - server.states.len()) as u64;
+    if unusable > 0 {
+        warn_once!(
+            "net client: the server sends module state this build cannot use (type not registered \
+             with `register_net_state`, another `NetState::VERSION` or damaged data); update the \
+             older side"
+        );
+    }
     let mut client = world.resource_mut::<NetClient>();
     client.stats.states_received += 1;
+    client.stats.unusable_module_states += unusable;
     let Some(entry) = client.history.get(&server_tick) else {
         client.stats.states_without_history += 1;
         return;
     };
-    if state_lists_match(&entry.bodies, &server_bodies) {
+    if state_lists_match(&entry.state.bodies, &server.bodies)
+        && module_state_lists_match(&registry, &entry.state.states, &server.states)
+    {
         client.stats.states_matching += 1;
         // Ticks before the confirmed one can never need a rollback again.
         client.history = client.history.split_off(&server_tick);
         return;
     }
-    correct(world, server_tick, &server_bodies);
+    correct(world, server_tick, &server);
 }
 
 /// Rewinds to `server_tick`, applies the server's states and replays the inputs since.
-fn correct(world: &mut World, server_tick: u64, server_bodies: &[BodyState]) {
+fn correct(world: &mut World, server_tick: u64, server: &ReplicatedState) {
+    let server_bodies = &server.bodies;
     let replay_inputs: Vec<(u64, Vec<String>)> = {
         let client = world.resource::<NetClient>();
         let present = client.tick;
@@ -458,6 +512,9 @@ fn correct(world: &mut World, server_tick: u64, server_bodies: &[BodyState]) {
         return;
     }
     world.resource_mut::<NetClient>().stats.corrections += 1;
+    // An entity the server still lists is alive, even if this client had removed it.
+    let listed = server.states.iter().map(|state| state.entity.as_str());
+    revive_retired_entities(world, &listed.collect());
     // Bodies the server has and this client lacks are created at the server's pose; bodies the
     // server lacks are removed.
     let report = apply_body_states(world, server_bodies);
@@ -467,8 +524,10 @@ fn correct(world: &mut World, server_tick: u64, server_bodies: &[BodyState]) {
         }
     }
     for name in &report.missing_from_states {
-        despawn_body_named(world, name.trim_end_matches(PHYSICS_PROXY_NAME_SUFFIX));
+        despawn_body_named(world, name);
     }
+    // After the bodies, so a body created above gets its module state.
+    apply_module_states(world, &server.states);
     // Replay: the history of every tick after `server_tick` is rebuilt.
     {
         let mut client = world.resource_mut::<NetClient>();
@@ -493,7 +552,7 @@ fn correct(world: &mut World, server_tick: u64, server_bodies: &[BodyState]) {
     client.replay_lines.clear();
     // The corrected state at `server_tick` is the server's.
     if let Some(entry) = client.history.get_mut(&server_tick) {
-        entry.bodies = server_bodies.to_vec();
+        entry.state = server.clone();
     }
 }
 
@@ -513,9 +572,11 @@ fn create_body_from_state(world: &mut World, state: &BodyState) {
     );
 }
 
-/// Despawns the physics box with this name, if there is one.
+/// Despawns the body with this name that the server no longer has (not a retired one: it is not
+/// part of the shared state).
 fn despawn_body_named(world: &mut World, name: &str) {
-    let mut query = world.query_filtered::<(Entity, &Name), With<PhysicsBox>>();
+    let mut query =
+        world.query_filtered::<(Entity, &Name), (With<PhysicsBody>, Without<RetiredEntity>)>();
     let found: Vec<Entity> = query
         .iter(world)
         .filter(|(_, entity_name)| entity_name.as_str() == name)

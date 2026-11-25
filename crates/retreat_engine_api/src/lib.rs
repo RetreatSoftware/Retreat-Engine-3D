@@ -22,6 +22,9 @@
 //! Networking (what a module sees): [`NetCommandSender`], [`NetClientJoined`], [`NetClientLeft`],
 //! [`NetAllowedCommands`], [`NetInputQueue`].
 //!
+//! Module state: a component that implements [`NetState`] and is registered with
+//! [`AppNetStateExt::register_net_state`] is rolled back and replicated.
+//!
 //! Saving: [`SaveStore`] keeps one versioned JSON document per module; the engine decides where
 //! it lives (file, browser storage, memory).
 //!
@@ -39,6 +42,7 @@ mod command_registry;
 mod game_camera;
 mod input_actions;
 mod net;
+mod net_state;
 mod physics_body;
 mod save_store;
 mod simulation_rng;
@@ -63,6 +67,10 @@ pub use net::{
     AcceptEveryone, AppNetExt, NetAllowedCommands, NetClientJoined, NetClientLeft,
     NetCommandSender, NetIdentity, NetIdentityCheck, NetIdentityDecision, NetIdentityRequest,
     NetInputQueue, NetPlayerIds, Replicated, SyncedKind, add_net_contract,
+};
+pub use net_state::{
+    AppNetStateExt, NetState, NetStateRegistry, NetStateType, RemoveNetEntity, RetiredEntity,
+    decode_net_state, encode_net_state,
 };
 pub use physics_body::{
     PhysicsBody, PhysicsBodyKind, PhysicsShape, PhysicsVelocityChange, RemovePhysicsBody,

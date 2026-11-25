@@ -242,8 +242,8 @@ fn the_fixed_clock_is_rewound_with_the_physics() {
 
 #[test]
 fn a_retired_body_is_brought_back_by_a_restore_and_replays_the_same_hash() {
-    use retreat_engine::RetiredBody;
     use retreat_engine_api::RemovePhysicsBody;
+    use retreat_engine_api::RetiredEntity;
     let mut app = test_app();
     drop_boxes(&mut app, 8);
     run_ticks(&mut app, 10);
@@ -264,9 +264,9 @@ fn a_retired_body_is_brought_back_by_a_restore_and_replays_the_same_hash() {
         hash(app)
     };
     let first = replay(&mut app);
-    assert!(app.world().entity(doomed).contains::<RetiredBody>());
+    assert!(app.world().entity(doomed).contains::<RetiredEntity>());
     restore_physics(app.world_mut(), &snapshot).expect("a retired body does not refuse a restore");
-    assert!(!app.world().entity(doomed).contains::<RetiredBody>());
+    assert!(!app.world().entity(doomed).contains::<RetiredEntity>());
     assert_eq!(
         replay(&mut app),
         first,

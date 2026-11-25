@@ -1,5 +1,6 @@
-//! Rollback spike: capture the whole physics state and restore it later, so a client can rewind to
-//! an earlier tick and re-simulate (client-side prediction, FRAMEWORK.md §12).
+//! Rollback: capture the simulation state (physics and module state) and restore it later, so a
+//! client can rewind to an earlier tick and re-simulate (client-side prediction, FRAMEWORK.md §12).
+//! Module state (`NetState` components) is captured and restored by `net/module_state.rs`.
 //!
 //! A snapshot clones Rapier's simulation parts that carry state between steps: the body, collider
 //! and joint sets, the island manager, broad phase, narrow phase, CCD solver and integration
@@ -27,9 +28,9 @@ use bevy_rapier3d::plugin::context::{
 use bevy_rapier3d::prelude::RigidBody;
 use bevy_rapier3d::rapier::dynamics::{CCDSolver, IntegrationParameters, IslandManager};
 use bevy_rapier3d::rapier::geometry::{DefaultBroadPhase, NarrowPhase};
-use retreat_engine_api::{PhysicsBody, SimulationRng};
+use retreat_engine_api::{PhysicsBody, RetiredEntity, SimulationRng};
 
-use crate::RetiredBody;
+use crate::net::module_state::{ModuleStateSnapshot, capture_module_state, restore_module_state};
 
 /// Everything needed to rewind the physics world to the moment of capture.
 pub struct PhysicsSnapshot {
@@ -55,6 +56,8 @@ pub struct PhysicsSnapshot {
     proxies: BTreeSet<Entity>,
     /// Entities that were retired at capture time.
     retired: BTreeSet<Entity>,
+    /// Every registered module component (`NetState`).
+    module_state: ModuleStateSnapshot,
 }
 
 /// Why a snapshot could not be restored.
@@ -64,6 +67,8 @@ pub enum RollbackError {
     NoPhysicsContext(String),
     /// Bodies that existed at capture time are gone (names, sorted).
     BodiesDespawned(Vec<String>),
+    /// Entities with module state at capture time are gone (names, sorted).
+    StateEntitiesDespawned(Vec<String>),
 }
 
 impl std::fmt::Display for RollbackError {
@@ -75,6 +80,12 @@ impl std::fmt::Display for RollbackError {
             RollbackError::BodiesDespawned(names) => write!(
                 f,
                 "physics bodies {} were despawned after the snapshot was captured and cannot be                  brought back; delay despawning bodies until the rollback window has passed",
+                names.join(", ")
+            ),
+            RollbackError::StateEntitiesDespawned(names) => write!(
+                f,
+                "entities {} with module state were despawned after the snapshot was captured and \
+                 cannot be brought back; remove them with `RemoveNetEntity`, never by despawning",
                 names.join(", ")
             ),
         }
@@ -118,11 +129,13 @@ pub fn capture_physics(world: &mut World) -> Result<PhysicsSnapshot, String> {
             names.insert(entity, name.as_str().to_string());
         }
     }
-    let mut retired_query = world.query_filtered::<Entity, With<RetiredBody>>();
+    let mut retired_query = world.query_filtered::<Entity, With<RetiredEntity>>();
     let retired: BTreeSet<Entity> = retired_query.iter(world).collect();
     let rng = world.get_resource::<SimulationRng>().cloned();
     let fixed_elapsed = world.resource::<Time<Fixed>>().elapsed();
+    let module_state = capture_module_state(world);
     Ok(PhysicsSnapshot {
+        module_state,
         islands,
         broad_phase,
         narrow_phase,
@@ -168,13 +181,17 @@ pub fn restore_physics(world: &mut World, snapshot: &PhysicsSnapshot) -> Result<
         names.dedup();
         return Err(RollbackError::BodiesDespawned(names));
     }
+    let missing_state = snapshot.module_state.despawned_entities(world);
+    if !missing_state.is_empty() {
+        return Err(RollbackError::StateEntitiesDespawned(missing_state));
+    }
     // Retired after the capture: bring them back (the body set restore below re-enables the bodies).
-    let mut retired_query = world.query_filtered::<Entity, With<RetiredBody>>();
+    let mut retired_query = world.query_filtered::<Entity, With<RetiredEntity>>();
     let retired_now: Vec<Entity> = retired_query.iter(world).collect();
     for entity in retired_now {
         if !snapshot.retired.contains(&entity) {
             let mut entity_mut = world.entity_mut(entity);
-            entity_mut.remove::<RetiredBody>();
+            entity_mut.remove::<RetiredEntity>();
             if entity_mut.contains::<Visibility>() {
                 entity_mut.insert(Visibility::Inherited);
             }
@@ -221,5 +238,6 @@ pub fn restore_physics(world: &mut World, snapshot: &PhysicsSnapshot) -> Result<
             *current = *transform;
         }
     }
+    restore_module_state(world, &snapshot.module_state);
     Ok(())
 }

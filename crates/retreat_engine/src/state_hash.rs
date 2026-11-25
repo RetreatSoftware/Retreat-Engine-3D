@@ -3,12 +3,14 @@
 //! machine and platform).
 //!
 //! The hash covers every rigid body: its `Name`, then the exact bits of its translation and
-//! rotation, in name order. It uses FNV-1a (64-bit), written out here, because Rust's
+//! rotation, in name order; then every module state value (`NetState`) in (entity name, id) order. It uses FNV-1a (64-bit), written out here, because Rust's
 //! `DefaultHasher` may change between Rust versions and would break recorded hashes.
 
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::RigidBody;
 use retreat_engine_api::{AppCommandExt, CommandArgs, CommandOutcome, CommandResult};
+
+use crate::net::module_state::read_module_states;
 
 /// Registers `state.hash` and `assert.state_hash`.
 pub struct StateHashPlugin;
@@ -68,7 +70,7 @@ pub fn compute_state_hash(world: &mut World) -> Result<(u64, usize), String> {
     let mut bodies: Vec<(String, Transform)> = Vec::new();
     let mut query = world.query_filtered::<
         (Entity, Option<&Name>, &Transform),
-        (With<RigidBody>, Without<crate::RetiredBody>),
+        (With<RigidBody>, Without<retreat_engine_api::RetiredEntity>),
     >();
     for (entity, name, transform) in query.iter(world) {
         let Some(name) = name else {
@@ -98,6 +100,15 @@ pub fn compute_state_hash(world: &mut World) -> Result<(u64, usize), String> {
         ] {
             hasher.write(&value.to_bits().to_le_bytes());
         }
+    }
+    // Module state, when there is any (a world without it hashes as before).
+    for state in read_module_states(world) {
+        hasher.write(state.entity.as_bytes());
+        hasher.write(&[0]);
+        hasher.write(state.id.as_bytes());
+        hasher.write(&[0, state.version]);
+        hasher.write(&(state.data.len() as u64).to_le_bytes());
+        hasher.write(&state.data);
     }
     Ok((hasher.finish(), bodies.len()))
 }

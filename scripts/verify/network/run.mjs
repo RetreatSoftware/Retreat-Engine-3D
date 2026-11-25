@@ -88,6 +88,11 @@ function waitFor(what, check) {
   });
 }
 
+// The module state values a process printed with `net.states`, as sorted lines.
+function moduleStates(output) {
+  return [...output.matchAll(/net-state (\S+ \S+ v\d+ [0-9a-f]*)/g)].map((match) => match[1]).sort();
+}
+
 function bodies(output) {
   const found = new Map();
   for (const match of output.matchAll(/net-body (\S+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+)/g)) {
@@ -172,6 +177,15 @@ try {
         }
       }
       if (failure) break;
+    }
+    if (!failure && scenario === "boxes") {
+      const reference = JSON.stringify(moduleStates(processes[0].output));
+      const different = processes.find((p) => JSON.stringify(moduleStates(p.output)) !== reference);
+      if (reference === "[]" || different) {
+        failure = `module state differs: server ${reference}, ${different?.name ?? "server"} ${JSON.stringify(moduleStates((different ?? processes[0]).output))}`;
+      } else {
+        console.log(`network check: module state on every process: ${reference}`);
+      }
     }
     if (!failure && isPreset) {
       // Exactly one player must have moved forward (client a held ArrowUp, which is -z), the idle one stays at

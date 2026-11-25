@@ -208,6 +208,7 @@ pub fn add_net_contract(app: &mut App) {
         .init_resource::<NetInputQueue>()
         .init_resource::<NetIdentity>()
         .init_resource::<NetPlayerIds>()
+        .init_resource::<crate::NetStateRegistry>()
         .add_message::<NetClientJoined>()
         .add_message::<NetClientLeft>();
 }

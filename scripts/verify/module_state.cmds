@@ -1,0 +1,14 @@
+# Module state (NetState): a counter without a body is created, hashed and removed safely.
+sandbox.tally_add tally 2
+sandbox.tally_add tally 3
+assert.tally tally 5
+assert.entity_exists tally
+net.states
+# The hash covers module state: it is checked on Windows, Linux and in the browser.
+state.hash
+assert.state_hash 0x3e4d76ac75d8a497
+net.remove tally
+wait 2
+assert.tally_absent tally
+state.hash
+quit

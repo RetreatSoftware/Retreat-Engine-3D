@@ -3,10 +3,14 @@
 # Join takes real time that a tick count cannot predict (a slow browser needs seconds): wait for it.
 wait_until 3000 assert.net_joined
 net.send physics.spawn_box net_a 0 3 0 1
+# Module state: both clients add to one counter; every machine must end with 5.
+net.send sandbox.tally_add tally 2
 wait 40
 net.send physics.push net_a 3 0 0
 wait 420
 net.bodies
+assert.tally tally 5
+net.states
 net.stats
 # Traffic budget (measured: about 3 KB sent, 13-23 KB received) with headroom. Corrections depend
 # on real timing; the bound only catches a prediction that stopped converging.

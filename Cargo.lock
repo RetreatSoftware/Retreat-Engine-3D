@@ -5408,6 +5408,7 @@ name = "retreat_engine_api"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "postcard",
  "retreat_rng",
  "serde",
  "serde_json",
@@ -5495,6 +5496,7 @@ dependencies = [
  "retreat_module_players",
  "retreat_module_sfx",
  "retreat_module_spawner",
+ "serde",
 ]
 
 [[package]]

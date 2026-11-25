@@ -18,6 +18,8 @@
 //! over it, creates bodies it did not know, and replays its inputs for ticks `s+1..` up to its present.
 //! The server is always right; clients only guess ahead.
 //!
+//! **Module state.** `NetState` components (`module_state.rs`) travel and roll back with the bodies.
+//!
 //! **Limits.** Bodies created from server state start with zero velocity until the next correction; a body
 //! despawned directly inside the history window refuses the rollback (remove bodies with
 //! `RemovePhysicsBody`, see `retired_bodies.rs`);
@@ -29,6 +31,7 @@ pub mod commands;
 pub mod harness;
 pub mod limits;
 pub mod link;
+pub mod module_state;
 pub mod server;
 pub mod state_delta;
 pub mod transport;
@@ -38,6 +41,7 @@ use bevy::app::FixedMain;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 use body_state::BodyState;
+use module_state::ModuleState;
 use serde::{Deserialize, Serialize};
 
 /// Largest distance (world units) between predicted and server positions that still counts as
@@ -74,8 +78,10 @@ pub enum ServerMessage {
     /// The state of the physics bodies after the server simulated `tick`: every body when `full`,
     /// otherwise only the bodies that are not resting (see `state_delta.rs`).
     ///
-    /// A state is cut into chunks of at most [`MAX_BODIES_PER_STATE_MESSAGE`] bodies so that every
-    /// message fits one datagram: chunk `chunk` of `chunks` (both counted from 0 and 1). The client
+    /// `states` is the module state (`NetState` components), full or delta like the bodies.
+    ///
+    /// A state is cut into chunks (at most [`MAX_BODIES_PER_STATE_MESSAGE`] bodies and about
+    /// [`state_delta::MAX_STATE_PAYLOAD_BYTES`] bytes each) so that every message fits one datagram: chunk `chunk` of `chunks` (both counted from 0 and 1). The client
     /// uses a tick only when all of its chunks arrived.
     State {
         tick: u64,
@@ -83,6 +89,7 @@ pub enum ServerMessage {
         chunk: u16,
         chunks: u16,
         bodies: Vec<BodyState>,
+        states: Vec<ModuleState>,
     },
 }
 

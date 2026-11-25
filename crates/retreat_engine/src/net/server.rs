@@ -23,15 +23,17 @@ use bevy::app::{FixedFirst, FixedLast};
 use bevy::prelude::*;
 use retreat_engine_api::{
     NetAllowedCommands, NetClientJoined, NetClientLeft, NetCommandSender, NetIdentity,
-    NetIdentityDecision, NetIdentityRequest, NetPlayerIds, run_command_line,
+    NetIdentityDecision, NetIdentityRequest, NetPlayerIds, NetStateRegistry, run_command_line,
 };
 
 use super::body_state::{BodyState, read_replicated_body_states};
 use super::limits::{ConnectionGuard, Refusal, ServerLimits, Verdict, check_input_content};
-use super::state_delta::DeltaEncoder;
+use super::module_state::{MAX_MODULE_STATE_BYTES, ModuleState, encoded_size, read_module_states};
+use super::state_delta::{DeltaEncoder, ReplicatedState, split_into_chunks};
 use super::transport::{ConnectionId, ServerEvent, ServerTransport};
 use super::wire;
-use super::{ClientMessage, MAX_BODIES_PER_STATE_MESSAGE, ServerMessage};
+use super::{ClientMessage, ServerMessage};
+use crate::command_script::fail_running_script;
 
 /// How the server behaves.
 #[derive(Clone, Debug)]
@@ -122,6 +124,10 @@ pub struct NetServer {
     pub rejected_lines: Vec<String>,
     /// The state broadcast most recently.
     pub last_broadcast: Option<(u64, Vec<BodyState>)>,
+    /// The module states of the broadcast made most recently.
+    pub last_broadcast_states: Vec<ModuleState>,
+    /// Module state values too large for a datagram, never sent (each also fails a running script).
+    pub oversized_states: u64,
     /// Packets that could not be decoded.
     pub undecodable_packets: u64,
     /// Refusal counters.
@@ -162,6 +168,7 @@ pub fn install_server(
         .extend(config.allowed_commands);
     app.init_resource::<NetIdentity>();
     app.init_resource::<NetPlayerIds>();
+    app.init_resource::<NetStateRegistry>();
     app.insert_resource(NetServer {
         tick: 0,
         buffered: BTreeMap::new(),
@@ -170,6 +177,8 @@ pub fn install_server(
         late_inputs: 0,
         rejected_lines: Vec::new(),
         last_broadcast: None,
+        last_broadcast_states: Vec::new(),
+        oversized_states: 0,
         undecodable_packets: 0,
         stats: ServerStats::default(),
         limits: config.limits,
@@ -476,21 +485,22 @@ fn server_after_tick(world: &mut World) {
         )
     };
     if due {
-        let bodies = read_replicated_body_states(world);
-        // At least one message even when there are no bodies, so the client still hears the tick.
-        let (full, listed) = world.resource_mut::<NetServer>().delta.encode(&bodies);
-        let pieces: Vec<&[BodyState]> = if listed.is_empty() {
-            vec![&[]]
-        } else {
-            listed.chunks(MAX_BODIES_PER_STATE_MESSAGE).collect()
+        let state = ReplicatedState {
+            bodies: read_replicated_body_states(world),
+            states: sendable_module_states(world),
         };
-        for (index, piece) in pieces.iter().enumerate() {
+        let (full, listed) = world.resource_mut::<NetServer>().delta.encode(&state);
+        // At least one message even when there is nothing to list, so the client hears the tick.
+        let pieces = split_into_chunks(listed);
+        let chunks = pieces.len() as u16;
+        for (index, piece) in pieces.into_iter().enumerate() {
             let bytes = wire::encode_server_message(&ServerMessage::State {
                 tick,
                 full,
                 chunk: index as u16,
-                chunks: pieces.len() as u16,
-                bodies: piece.to_vec(),
+                chunks,
+                bodies: piece.bodies,
+                states: piece.states,
             });
             world.resource_mut::<NetServer>().stats.bytes_sent +=
                 (bytes.len() * known.len()) as u64;
@@ -498,7 +508,33 @@ fn server_after_tick(world: &mut World) {
                 transport.0.send(*id, bytes.clone());
             }
         }
-        world.resource_mut::<NetServer>().last_broadcast = Some((tick, bodies));
+        let mut server = world.resource_mut::<NetServer>();
+        server.last_broadcast_states = state.states;
+        server.last_broadcast = Some((tick, state.bodies));
     }
     world.insert_non_send(transport);
+}
+
+/// The module states to broadcast: all of them, except values too large for one datagram, which
+/// are reported (an error and a failed script) and never sent.
+fn sendable_module_states(world: &mut World) -> Vec<ModuleState> {
+    let mut states = read_module_states(world);
+    let mut too_large = Vec::new();
+    states.retain(|state| {
+        let size = encoded_size(state);
+        if size > MAX_MODULE_STATE_BYTES {
+            too_large.push(format!(
+                "net state `{}` of `{}` takes {size} bytes, more than {MAX_MODULE_STATE_BYTES}, \
+                 and is not sent; split it over several components or entities",
+                state.id, state.entity
+            ));
+        }
+        size <= MAX_MODULE_STATE_BYTES
+    });
+    world.resource_mut::<NetServer>().oversized_states += too_large.len() as u64;
+    for message in too_large {
+        error!("{message}");
+        fail_running_script(world, message);
+    }
+    states
 }
