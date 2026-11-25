@@ -38,17 +38,18 @@ const MIME_TYPES = {
 
 function usage(message) {
   console.error(`run_in_browser: ${message}`);
-  console.error("usage: node scripts/web/run_in_browser.mjs <script.cmds> [--seed <n>] [--timeout <seconds>] [--query <extra URL query>]");
+  console.error("usage: node scripts/web/run_in_browser.mjs <script.cmds> [--seed <n>] [--timeout <seconds>] [--query <extra URL query>] [--click-for-pointer-lock]");
   process.exit(2);
 }
 
 function parseArguments(argv) {
-  const options = { script: null, seed: "0", timeoutSeconds: DEFAULT_TIMEOUT_SECONDS, query: "" };
+  const options = { script: null, seed: "0", timeoutSeconds: DEFAULT_TIMEOUT_SECONDS, query: "", clickForPointerLock: false };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--seed") options.seed = argv[++index] ?? usage("--seed needs a value");
     else if (argument === "--timeout") options.timeoutSeconds = Number(argv[++index]);
     else if (argument === "--query") options.query = argv[++index] ?? usage("--query needs a value");
+    else if (argument === "--click-for-pointer-lock") options.clickForPointerLock = true;
     else if (argument.startsWith("--")) usage(`unknown option ${argument}`);
     else options.script = argument.replaceAll("\\", "/");
   }
@@ -202,6 +203,27 @@ async function main() {
     console.log(`run_in_browser: snapshot ${file}`);
   }
 
+  // A browser grants the pointer lock only after a click: the script has asked for the capture, so a
+  // real click (a trusted input event) on the canvas must end with the canvas holding the lock.
+  let pointerLockFailure = null;
+  if (options.clickForPointerLock && status.script === "passed") {
+    const holder = () => evaluate("document.pointerLockElement?.id ?? null");
+    const before = await holder();
+    const { x, y } = await evaluate(
+      "(() => { const r = document.getElementById('retreat-canvas').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()",
+    );
+    let after = before;
+    for (let attempt = 0; attempt < 10 && after !== "retreat-canvas"; attempt += 1) {
+      for (const type of ["mousePressed", "mouseReleased"]) {
+        await devtools.call("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 }, sessionId);
+        await new Promise((wait) => setTimeout(wait, 300));
+      }
+      after = await holder();
+    }
+    console.log(`run_in_browser: pointer lock before a click ${before}, after ${after}`);
+    if (after !== "retreat-canvas") pointerLockFailure = "a click did not give the canvas the pointer lock";
+  }
+
   // Browser audio waits for a user gesture: report the audio contexts before and after a real
   // key press (a trusted input event), so the page's resume-on-gesture handling is visible.
   const audioBefore = await evaluate("window.__retreat.audioState()").catch(() => []);
@@ -220,6 +242,10 @@ async function main() {
   browser.kill();
   server.close();
 
+  if (pointerLockFailure) {
+    console.error(`run_in_browser: FAIL ${options.script}: ${pointerLockFailure}`);
+    process.exit(1);
+  }
   if (status.script === "passed") {
     console.log(`run_in_browser: PASS ${options.script}`);
     process.exit(0);

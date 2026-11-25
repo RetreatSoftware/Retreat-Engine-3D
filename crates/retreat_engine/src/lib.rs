@@ -5,6 +5,7 @@
 //! (registry, built-in commands, simulation RNG, command scripts, snapshots), so games
 //! and modules do not configure these themselves.
 
+mod analog_input;
 mod animation;
 mod asset_paths;
 mod audio;
@@ -24,6 +25,7 @@ pub mod net;
 mod pending_command_work;
 mod perf;
 mod physics;
+mod physics_queries;
 mod physics_snapshot;
 mod platform;
 mod retired_bodies;

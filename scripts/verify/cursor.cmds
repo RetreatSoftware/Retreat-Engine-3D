@@ -1,0 +1,11 @@
+# Cursor capture as the game sees it. Whether a browser really grants the lock needs a click and is
+# checked by `run_in_browser.mjs <this script> --click-for-pointer-lock`.
+assert.cursor_not_wanted
+input.capture_cursor
+wait 2
+assert.cursor_wanted
+input.release_cursor
+wait 2
+assert.cursor_not_wanted
+input.capture_cursor
+quit

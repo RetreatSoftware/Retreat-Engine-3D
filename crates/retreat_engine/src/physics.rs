@@ -20,17 +20,20 @@
 //! everywhere. Direct use of `RigidBody` / `Collider` is rejected with an error.
 
 use bevy::prelude::*;
-use bevy_rapier3d::plugin::context::RapierRigidBodySet;
+use bevy_rapier3d::plugin::context::{RapierContextColliders, RapierRigidBodySet};
 use bevy_rapier3d::prelude::{
     Collider, NoUserData, PhysicsSet, RapierPhysicsPlugin, RigidBody, TimestepMode,
 };
+use bevy_rapier3d::rapier::dynamics::CoefficientCombineRule;
 use retreat_engine_api::{
-    AppCommandExt, CommandArgs, CommandOutcome, CommandResult, PhysicsBody, PhysicsBodyKind,
-    PhysicsShape, PhysicsVelocityChange, Replicated,
+    AppCommandExt, CommandArgs, CommandOutcome, CommandResult, InputActionSystems, PhysicsBody,
+    PhysicsBodyKind, PhysicsControlSystems, PhysicsShape, PhysicsVelocity, PhysicsVelocityChange,
+    PhysicsVelocitySet, Replicated, RetiredEntity,
 };
 
 use crate::command_script::{CommandScriptSystems, fail_running_script};
 use crate::entity_names::{ensure_name_is_free, find_unique_entity_by_name};
+use crate::physics_queries::add_physics_queries;
 
 /// Color of boxes spawned by `physics.spawn_box`.
 const PHYSICS_BOX_COLOR: Color = Color::srgb(0.85, 0.35, 0.25);
@@ -50,6 +53,7 @@ impl Plugin for PhysicsPlugin {
             .get_resource::<Time<Fixed>>()
             .expect("PhysicsPlugin needs Bevy's TimePlugin first (it owns the fixed timestep)")
             .timestep();
+        add_physics_queries(app);
         app.add_plugins(RapierPhysicsPlugin::<NoUserData>::default().in_fixed_schedule())
             // One physics step per fixed tick, of exactly the fixed timestep: one source of
             // truth for "how long is a tick".
@@ -68,15 +72,31 @@ impl Plugin for PhysicsPlugin {
                     crate::retired_bodies::retire_requested_bodies,
                     crate::retired_bodies::purge_retired_bodies,
                     create_physics_proxies,
-                    apply_velocity_changes,
                 )
                     .chain()
                     .after(CommandScriptSystems)
+                    .before(PhysicsControlSystems),
+            )
+            .configure_sets(
+                FixedUpdate,
+                PhysicsControlSystems
+                    .after(CommandScriptSystems)
+                    .after(InputActionSystems)
                     .before(PhysicsSet::SyncBackend),
             )
             .add_systems(
                 FixedUpdate,
-                copy_proxy_poses_to_owners.after(PhysicsSet::Writeback),
+                (
+                    apply_velocity_requests
+                        .after(PhysicsControlSystems)
+                        .before(PhysicsSet::SyncBackend),
+                    configure_character_bodies
+                        .after(PhysicsSet::SyncBackend)
+                        .before(PhysicsSet::StepSimulation),
+                    (copy_proxy_poses_to_owners, sync_body_readouts)
+                        .chain()
+                        .after(PhysicsSet::Writeback),
+                ),
             )
             .register_command(
                 "physics.spawn_box",
@@ -84,6 +104,26 @@ impl Plugin for PhysicsPlugin {
                 spawn_box_command,
             )
             .register_command("physics.reset", "physics.reset", reset_command)
+            .register_command(
+                "physics.spawn_character",
+                "physics.spawn_character <name> <x> <y> <z> <half_height> <radius>",
+                spawn_character_command,
+            )
+            .register_command(
+                "physics.spawn_wall",
+                "physics.spawn_wall <name> <x> <y> <z> <size_x> <size_y> <size_z>",
+                spawn_wall_command,
+            )
+            .register_command(
+                "physics.set_velocity",
+                "physics.set_velocity <name> <vx> <vy> <vz>",
+                set_velocity_command,
+            )
+            .register_command(
+                "assert.velocity",
+                "assert.velocity <name> <vx> <vy> <vz> <tolerance>",
+                assert_velocity_command,
+            )
             .register_command(
                 "physics.push",
                 "physics.push <name> <vx> <vy> <vz>",
@@ -97,7 +137,7 @@ impl Plugin for PhysicsPlugin {
 /// the library-neutral description onto Rapier.
 fn rapier_components(physics_body: &PhysicsBody) -> (RigidBody, Collider) {
     let body = match physics_body.kind {
-        PhysicsBodyKind::Dynamic => RigidBody::Dynamic,
+        PhysicsBodyKind::Dynamic | PhysicsBodyKind::Character => RigidBody::Dynamic,
         PhysicsBodyKind::Fixed => RigidBody::Fixed,
     };
     let shape = match physics_body.shape {
@@ -105,6 +145,10 @@ fn rapier_components(physics_body: &PhysicsBody) -> (RigidBody, Collider) {
             Collider::cuboid(half_extents.x, half_extents.y, half_extents.z)
         }
         PhysicsShape::Ball { radius } => Collider::ball(radius),
+        PhysicsShape::Capsule {
+            half_height,
+            radius,
+        } => Collider::capsule_y(half_height, radius),
     };
     let collider = if physics_body.shape_offset == Vec3::ZERO {
         shape
@@ -212,14 +256,32 @@ fn create_physics_proxies(world: &mut World) {
     }
 }
 
-/// Applies every [`PhysicsVelocityChange`] whose body exists in the physics world, then removes the
-/// component. A change on an entity whose body does not exist yet waits for the tick it appears; a
-/// change on a body that cannot move is dropped with a logged warning.
-fn apply_velocity_changes(world: &mut World) {
-    let mut requests = world.query::<(Entity, &PhysicsVelocityChange, Option<&PhysicsProxy>)>();
-    let pending: Vec<(Entity, Vec3, Option<Entity>)> = requests
+/// One entity's pending velocity requests.
+struct VelocityRequest {
+    entity: Entity,
+    set: Option<Vec3>,
+    change: Option<Vec3>,
+    proxy: Option<Entity>,
+}
+
+/// Applies every [`PhysicsVelocitySet`] and then [`PhysicsVelocityChange`] whose body exists in
+/// the physics world, and removes the requests. A request on an entity whose body does not exist yet
+/// waits for the tick it appears; one on a body that cannot move is dropped with a logged warning.
+fn apply_velocity_requests(world: &mut World) {
+    let mut requests = world.query_filtered::<(
+        Entity,
+        Option<&PhysicsVelocitySet>,
+        Option<&PhysicsVelocityChange>,
+        Option<&PhysicsProxy>,
+    ), Or<(With<PhysicsVelocitySet>, With<PhysicsVelocityChange>)>>();
+    let pending: Vec<VelocityRequest> = requests
         .iter(world)
-        .map(|(entity, change, proxy)| (entity, change.0, proxy.map(PhysicsProxy::entity)))
+        .map(|(entity, set, change, proxy)| VelocityRequest {
+            entity,
+            set: set.map(|set| set.0),
+            change: change.map(|change| change.0),
+            proxy: proxy.map(PhysicsProxy::entity),
+        })
         .collect();
     if pending.is_empty() {
         return;
@@ -230,22 +292,113 @@ fn apply_velocity_changes(world: &mut World) {
         let Ok(mut set) = sets.single_mut(world) else {
             return;
         };
-        for (entity, change, proxy) in &pending {
-            let handle = proxy.and_then(|proxy| set.entity2body().get(&proxy).copied());
+        for request in &pending {
+            let handle = request
+                .proxy
+                .and_then(|proxy| set.entity2body().get(&proxy).copied());
             let Some(body) = handle.and_then(|handle| set.bodies.get_mut(handle)) else {
                 continue;
             };
             if body.is_dynamic() {
-                let velocity = body.linvel() + *change;
+                let velocity = request.set.unwrap_or_else(|| body.linvel())
+                    + request.change.unwrap_or(Vec3::ZERO);
                 body.set_linvel(velocity, true);
             } else {
-                warn!("a PhysicsVelocityChange on a fixed body was ignored (entity {entity})");
+                warn!(
+                    "a velocity request on a fixed body was ignored (entity {})",
+                    request.entity
+                );
             }
-            applied.push(*entity);
+            applied.push(request.entity);
         }
     }
     for entity in applied {
-        world.entity_mut(entity).remove::<PhysicsVelocityChange>();
+        world
+            .entity_mut(entity)
+            .remove::<(PhysicsVelocitySet, PhysicsVelocityChange)>();
+    }
+}
+
+/// Gives a new character body its properties (see `PhysicsBodyKind::Character`) before its first
+/// step. They are set on the physics body itself, not as extra components, because every proxy
+/// must have the same components (see the module docs).
+fn configure_character_bodies(world: &mut World) {
+    let mut owners =
+        world.query_filtered::<(&PhysicsBody, &PhysicsProxy), Without<RetiredEntity>>();
+    let characters: Vec<Entity> = owners
+        .iter(world)
+        .filter(|(body, _)| body.kind == PhysicsBodyKind::Character)
+        .map(|(_, proxy)| proxy.entity())
+        .collect();
+    if characters.is_empty() {
+        return;
+    }
+    let mut contexts = world.query::<(&mut RapierRigidBodySet, &mut RapierContextColliders)>();
+    let Ok((mut set, mut colliders)) = contexts.single_mut(world) else {
+        return;
+    };
+    for proxy in characters {
+        let Some(handle) = set.entity2body().get(&proxy).copied() else {
+            continue;
+        };
+        let Some(body) = set.bodies.get_mut(handle) else {
+            continue;
+        };
+        if body.gravity_scale() == 0.0 {
+            continue;
+        }
+        body.set_gravity_scale(0.0, false);
+        body.lock_rotations(true, false);
+        body.enable_ccd(true);
+        body.activation_mut().normalized_linear_threshold = -1.0;
+        body.activation_mut().angular_threshold = -1.0;
+        let attached = body.colliders().to_vec();
+        for collider in attached {
+            if let Some(collider) = colliders.colliders.get_mut(collider) {
+                collider.set_friction(0.0);
+                collider.set_friction_combine_rule(CoefficientCombineRule::Min);
+            }
+        }
+    }
+}
+
+/// Copies every live body's pose and velocity from the physics body set to its game entity
+/// (`Transform`, [`PhysicsVelocity`]). Runs after each step, and after a rewind or a server
+/// correction, so game code never reads a pose from the future.
+pub(crate) fn sync_body_readouts(world: &mut World) {
+    let mut owners = world.query_filtered::<(Entity, &PhysicsProxy), Without<RetiredEntity>>();
+    let owners: Vec<(Entity, Entity)> = owners
+        .iter(world)
+        .map(|(owner, proxy)| (owner, proxy.entity()))
+        .collect();
+    let mut sets = world.query::<&RapierRigidBodySet>();
+    let Ok(set) = sets.single(world) else {
+        return;
+    };
+    let readouts: Vec<(Entity, Vec3, Quat, PhysicsVelocity)> = owners
+        .into_iter()
+        .filter_map(|(owner, proxy)| {
+            let body = set.bodies.get(*set.entity2body().get(&proxy)?)?;
+            let velocity = PhysicsVelocity {
+                linear: body.linvel(),
+                angular: body.angvel(),
+            };
+            Some((owner, body.translation(), *body.rotation(), velocity))
+        })
+        .collect();
+    for (owner, translation, rotation, velocity) in readouts {
+        let Ok(mut entity) = world.get_entity_mut(owner) else {
+            continue;
+        };
+        if let Some(mut transform) = entity.get_mut::<Transform>()
+            && (transform.translation != translation || transform.rotation != rotation)
+        {
+            transform.translation = translation;
+            transform.rotation = rotation;
+        }
+        if let Some(mut current) = entity.get_mut::<PhysicsVelocity>() {
+            current.set_if_neq(velocity);
+        }
     }
 }
 
@@ -333,6 +486,10 @@ pub fn spawn_body_from_description(
         )
         .into(),
         PhysicsShape::Ball { radius } => Sphere::new(radius).into(),
+        PhysicsShape::Capsule {
+            half_height,
+            radius,
+        } => Capsule3d::new(radius, half_height * 2.0).into(),
     };
     let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
     let material = world
@@ -400,5 +557,111 @@ fn push_command(world: &mut World, args: &CommandArgs) -> CommandResult {
     }
     let velocity = body.linvel() + change;
     body.set_linvel(velocity, true);
+    sync_body_readouts(world);
     Ok(CommandOutcome::Continue)
+}
+
+/// `physics.spawn_character <name> <x> <y> <z> <half_height> <radius>`: an upright character
+/// capsule centered at (x, y, z).
+fn spawn_character_command(world: &mut World, args: &CommandArgs) -> CommandResult {
+    args.expect_count(6)?;
+    let name: String = args.parse(0, "name")?;
+    let center = Vec3::new(
+        args.parse(1, "x")?,
+        args.parse(2, "y")?,
+        args.parse(3, "z")?,
+    );
+    let body = PhysicsBody::character(args.parse(4, "half_height")?, args.parse(5, "radius")?);
+    spawn_described(world, args, &name, body, center)
+}
+
+/// `physics.spawn_wall <name> <x> <y> <z> <size_x> <size_y> <size_z>`: a fixed box.
+fn spawn_wall_command(world: &mut World, args: &CommandArgs) -> CommandResult {
+    args.expect_count(7)?;
+    let name: String = args.parse(0, "name")?;
+    let center = Vec3::new(
+        args.parse(1, "x")?,
+        args.parse(2, "y")?,
+        args.parse(3, "z")?,
+    );
+    let size = Vec3::new(
+        args.parse(4, "size_x")?,
+        args.parse(5, "size_y")?,
+        args.parse(6, "size_z")?,
+    );
+    let body = PhysicsBody {
+        kind: PhysicsBodyKind::Fixed,
+        shape: PhysicsShape::Cuboid {
+            half_extents: size / 2.0,
+        },
+        shape_offset: Vec3::ZERO,
+    };
+    spawn_described(world, args, &name, body, center)
+}
+
+fn spawn_described(
+    world: &mut World,
+    args: &CommandArgs,
+    name: &str,
+    body: PhysicsBody,
+    center: Vec3,
+) -> CommandResult {
+    if !body.shape.is_valid() || !center.is_finite() {
+        return Err(args.failure("sizes must be greater than 0 and every number finite"));
+    }
+    ensure_name_is_free(world, args, name)?;
+    ensure_name_is_free(world, args, &format!("{name}{PHYSICS_PROXY_NAME_SUFFIX}"))?;
+    spawn_body_from_description(
+        world,
+        name,
+        &body,
+        Replicated::full(),
+        Transform::from_translation(center),
+    );
+    Ok(CommandOutcome::Continue)
+}
+
+/// `physics.set_velocity <name> <vx> <vy> <vz>`: asks for the body's linear velocity to be set
+/// (applied in this tick's physics, or when the body exists).
+fn set_velocity_command(world: &mut World, args: &CommandArgs) -> CommandResult {
+    args.expect_count(4)?;
+    let name: String = args.parse(0, "name")?;
+    let velocity = Vec3::new(
+        args.parse(1, "vx")?,
+        args.parse(2, "vy")?,
+        args.parse(3, "vz")?,
+    );
+    if !velocity.is_finite() {
+        return Err(args.failure(format!("the velocity must be finite, got {velocity}")));
+    }
+    let owner = find_unique_entity_by_name(world, args, &name)?;
+    if !world.entity(owner).contains::<PhysicsBody>() {
+        return Err(args.failure(format!("`{name}` is not a physics body")));
+    }
+    world.entity_mut(owner).insert(PhysicsVelocitySet(velocity));
+    Ok(CommandOutcome::Continue)
+}
+
+/// `assert.velocity <name> <vx> <vy> <vz> <tolerance>`: the body's linear velocity.
+fn assert_velocity_command(world: &mut World, args: &CommandArgs) -> CommandResult {
+    args.expect_count(5)?;
+    let name: String = args.parse(0, "name")?;
+    let expected = Vec3::new(
+        args.parse(1, "vx")?,
+        args.parse(2, "vy")?,
+        args.parse(3, "vz")?,
+    );
+    let tolerance: f32 = args.parse(4, "tolerance")?;
+    let owner = find_unique_entity_by_name(world, args, &name)?;
+    let Some(velocity) = world.get::<PhysicsVelocity>(owner) else {
+        return Err(args.failure(format!("`{name}` is not a physics body")));
+    };
+    if velocity.linear.distance(expected) <= tolerance {
+        Ok(CommandOutcome::Continue)
+    } else {
+        Err(args.failure(format!(
+            "`{name}` moves at {}, expected {expected} within {tolerance}",
+            velocity.linear
+        )))
+    }
 }

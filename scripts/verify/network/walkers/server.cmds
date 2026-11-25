@@ -1,0 +1,12 @@
+# Walkers check, server: waits for both characters, lets them come to rest and prints what it sees.
+wait_until 20000 assert.net_clients 2
+wait_until 20000 assert.entity_exists walker_0
+wait_until 20000 assert.entity_exists walker_1
+wait 500
+net.bodies
+net.states
+net.stats
+assert.net_bytes_below sent 1000000
+assert.net_bytes_below received 800000
+assert.net_refusals_at_most 0
+quit

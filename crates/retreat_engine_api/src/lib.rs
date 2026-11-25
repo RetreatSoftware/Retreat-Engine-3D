@@ -10,6 +10,8 @@
 //! Input: named actions bound to keys in data ([`InputAction`], [`InputActions`]); a key press runs
 //! the action's command, and [`InputActions::is_held`] serves continuous input.
 //!
+//! Analog input: [`AnalogInput`] (mouse look and axes per fixed tick) and [`CursorCapture`].
+//!
 //! Camera: an entity with a [`GameCamera`] is a perspective camera; the engine maps it onto
 //! Bevy's camera components, modules only edit the description.
 //!
@@ -32,8 +34,11 @@
 //! [`compute_panel_layout`].
 //!
 //! Physics: an entity with a [`PhysicsBody`] becomes a rigid body; the types name no physics
-//! library, so modules do not depend on one.
+//! library, so modules do not depend on one. [`PhysicsVelocity`] reads a body's velocity,
+//! [`cast_ray`] and [`cast_shape`] query the bodies, and systems that drive bodies run in
+//! [`PhysicsControlSystems`].
 
+mod analog_input;
 mod animation_playback;
 mod command_args;
 mod command_error;
@@ -44,11 +49,13 @@ mod input_actions;
 mod net;
 mod net_state;
 mod physics_body;
+mod physics_queries;
 mod save_store;
 mod simulation_rng;
 mod sound_playback;
 mod ui_panel;
 
+pub use analog_input::{AnalogInput, AppAxisExt, CursorCapture, InputAxis};
 pub use animation_playback::{AnimationPlayback, ClipPlayback, MAX_CLIP_SPEED};
 pub use command_args::CommandArgs;
 pub use command_error::CommandError;
@@ -66,15 +73,18 @@ pub use input_actions::{
 pub use net::{
     AcceptEveryone, AppNetExt, NetAllowedCommands, NetClientJoined, NetClientLeft,
     NetCommandSender, NetIdentity, NetIdentityCheck, NetIdentityDecision, NetIdentityRequest,
-    NetInputQueue, NetPlayerIds, Replicated, SyncedKind, add_net_contract,
+    NetInputQueue, NetLocalClient, NetPlayerIds, NetReplaying, Replicated, SyncedKind,
+    add_net_contract,
 };
 pub use net_state::{
     AppNetStateExt, NetState, NetStateRegistry, NetStateType, RemoveNetEntity, RetiredEntity,
     decode_net_state, encode_net_state,
 };
 pub use physics_body::{
-    PhysicsBody, PhysicsBodyKind, PhysicsShape, PhysicsVelocityChange, RemovePhysicsBody,
+    PhysicsBody, PhysicsBodyKind, PhysicsControlSystems, PhysicsShape, PhysicsVelocity,
+    PhysicsVelocityChange, PhysicsVelocitySet, RemovePhysicsBody,
 };
+pub use physics_queries::{CastHit, PhysicsCaster, RayCast, ShapeCast, cast_ray, cast_shape};
 pub use save_store::{
     MemorySaveBackend, SAVE_FORMAT_VERSION, SaveBackend, SaveError, SaveStore, SavedData,
     decode_save, encode_save, is_valid_module_id, serde_json,

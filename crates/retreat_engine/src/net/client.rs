@@ -20,8 +20,8 @@ use std::collections::BTreeMap;
 use bevy::app::{FixedFirst, FixedLast, RunFixedMainLoop, RunFixedMainLoopSystems};
 use bevy::prelude::*;
 use retreat_engine_api::{
-    NetCommandSender, NetInputQueue, NetStateRegistry, PhysicsBody, Replicated, RetiredEntity,
-    run_command_line,
+    NetCommandSender, NetInputQueue, NetLocalClient, NetReplaying, NetStateRegistry, PhysicsBody,
+    Replicated, RetiredEntity, run_command_line,
 };
 
 use super::body_state::{BodyState, apply_body_states, read_replicated_body_states};
@@ -32,7 +32,7 @@ use super::state_delta::{ReplicatedState, StateAssembler};
 use super::transport::{ClientEvent, ClientTransport};
 use super::wire;
 use super::{ClientMessage, MAX_HISTORY_TICKS, ServerMessage, simulate_tick, state_lists_match};
-use crate::physics::spawn_body_from_description;
+use crate::physics::{spawn_body_from_description, sync_body_readouts};
 use crate::physics_snapshot::{PhysicsSnapshot, capture_physics, restore_physics};
 use crate::retired_bodies::revive_retired_entities;
 
@@ -234,6 +234,8 @@ pub fn install_client(
 ) {
     app.init_resource::<NetInputQueue>();
     app.init_resource::<NetStateRegistry>();
+    app.init_resource::<NetLocalClient>();
+    app.init_resource::<NetReplaying>();
     app.world_mut().resource_mut::<NetInputQueue>().accepting = true;
     app.insert_resource(NetClient {
         id: 0,
@@ -274,6 +276,7 @@ fn pump_transport(world: &mut World) {
     let Some(mut transport) = world.remove_non_send::<ClientTransportBox>() else {
         return;
     };
+    let mut joined_as = None;
     let mut client = world.resource_mut::<NetClient>();
     for event in transport.0.poll() {
         let bytes = match event {
@@ -299,6 +302,7 @@ fn pump_transport(world: &mut World) {
                     client.id = client_id;
                     client.start_at(start as u64);
                     client.phase = ClientPhase::Running;
+                    joined_as = Some(client_id);
                 }
             }
             Ok(ServerMessage::State {
@@ -339,6 +343,9 @@ fn pump_transport(world: &mut World) {
         }
     }
     client.steps += 1;
+    if let Some(client_id) = joined_as {
+        world.insert_resource(NetLocalClient(Some(client_id)));
+    }
     world.insert_non_send(transport);
 }
 
@@ -528,6 +535,8 @@ fn correct(world: &mut World, server_tick: u64, server: &ReplicatedState) {
     }
     // After the bodies, so a body created above gets its module state.
     apply_module_states(world, &server.states);
+    // The replay's first tick must read the corrected poses and velocities.
+    sync_body_readouts(world);
     // Replay: the history of every tick after `server_tick` is rebuilt.
     {
         let mut client = world.resource_mut::<NetClient>();
@@ -535,6 +544,7 @@ fn correct(world: &mut World, server_tick: u64, server: &ReplicatedState) {
         client.tick = server_tick;
         client.replaying = true;
     }
+    world.insert_resource(NetReplaying(true));
     // Module systems keep queueing lines in `NetInputQueue` while ticks replay, but a replay runs
     // the recorded inputs instead. Set aside the lines queued for the next real tick and put them
     // back afterwards; without this the replay's lines pile up and go out as one oversized `Input`
@@ -547,6 +557,7 @@ fn correct(world: &mut World, server_tick: u64, server: &ReplicatedState) {
         world.resource_mut::<NetInputQueue>().lines.clear();
     }
     world.resource_mut::<NetInputQueue>().lines = queued_for_next_tick;
+    world.insert_resource(NetReplaying(false));
     let mut client = world.resource_mut::<NetClient>();
     client.replaying = false;
     client.replay_lines.clear();

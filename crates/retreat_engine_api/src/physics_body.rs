@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 /// Makes an entity physical. Read once, in the tick it is added; later edits are ignored.
 #[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[require(Transform, crate::Replicated)]
+#[require(Transform, crate::Replicated, PhysicsVelocity)]
 pub struct PhysicsBody {
     pub kind: PhysicsBodyKind,
     pub shape: PhysicsShape,
@@ -24,6 +24,10 @@ pub struct PhysicsBody {
 pub enum PhysicsBodyKind {
     /// Moved by gravity and collisions.
     Dynamic,
+    /// An upright character: moved by collisions and by the velocity the game sets. Its rotation is
+    /// locked, it feels **no engine gravity** (the controller adds its own), has no friction, never
+    /// sleeps and uses continuous collision detection. Replicated like a dynamic body.
+    Character,
     /// Never moves; others collide with it.
     Fixed,
 }
@@ -35,7 +39,48 @@ pub enum PhysicsShape {
     Cuboid { half_extents: Vec3 },
     /// A sphere.
     Ball { radius: f32 },
+    /// An upright (Y axis) capsule: a cylinder of height `2 * half_height` with a half-sphere of
+    /// `radius` on each end, so it is `2 * (half_height + radius)` tall.
+    Capsule { half_height: f32, radius: f32 },
 }
+
+impl PhysicsShape {
+    /// Whether every size is a positive finite number.
+    pub fn is_valid(&self) -> bool {
+        let positive = |value: f32| value.is_finite() && value > 0.0;
+        match *self {
+            PhysicsShape::Cuboid { half_extents } => {
+                half_extents.to_array().into_iter().all(positive)
+            }
+            PhysicsShape::Ball { radius } => positive(radius),
+            PhysicsShape::Capsule {
+                half_height,
+                radius,
+            } => positive(half_height) && positive(radius),
+        }
+    }
+}
+
+/// A body's velocity (units and radians per second), kept by the engine: current at the start of a
+/// tick, also right after a client's rewind. Read only; writing it changes nothing (use
+/// [`PhysicsVelocitySet`] or [`PhysicsVelocityChange`]).
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
+pub struct PhysicsVelocity {
+    pub linear: Vec3,
+    pub angular: Vec3,
+}
+
+/// A request to set a moving body's linear velocity once. Applied before the physics step of the
+/// tick when inserted from [`PhysicsControlSystems`] (before any [`PhysicsVelocityChange`]), then
+/// removed. It waits until the body exists.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct PhysicsVelocitySet(pub Vec3);
+
+/// The `FixedUpdate` set for systems that drive bodies (character controllers): it runs after the
+/// tick's commands and input and before velocity requests and the physics step, so the server, a
+/// client and a replay act in the same order.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PhysicsControlSystems;
 
 /// A request to change a dynamic body's velocity once: the engine adds `0` (units per second) to its
 /// linear velocity and wakes it, then removes this component. It stays on the entity until the body
@@ -52,6 +97,18 @@ pub struct PhysicsVelocityChange(pub Vec3);
 pub struct RemovePhysicsBody;
 
 impl PhysicsBody {
+    /// An upright character capsule centered on the entity.
+    pub fn character(half_height: f32, radius: f32) -> Self {
+        Self {
+            kind: PhysicsBodyKind::Character,
+            shape: PhysicsShape::Capsule {
+                half_height,
+                radius,
+            },
+            shape_offset: Vec3::ZERO,
+        }
+    }
+
     /// A dynamic box with edge length `size`, centered on the entity.
     pub fn dynamic_cube(size: f32) -> Self {
         Self {

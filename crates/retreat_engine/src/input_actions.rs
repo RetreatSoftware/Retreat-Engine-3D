@@ -11,6 +11,8 @@
 //! 3. `update_held_actions` (`FixedUpdate`, in `InputActionSystems`, after the script line of the
 //!    tick) recomputes `InputActions::is_held` from `pressed`, so held state is per fixed tick.
 //!
+//! Mouse look, axes and cursor capture are in `analog_input.rs`.
+//!
 //! Commands: `input.key_down <key>`, `input.key_up <key>`, `input.tap <key>` (down for exactly one
 //! tick), `input.bind <action> <key>`, `input.unbind <action> <key>`, `input.list`,
 //! `assert.input_held <action>`, `assert.input_not_held <action>`.
@@ -27,6 +29,7 @@ use retreat_engine_api::{
 };
 
 use crate::CommandScriptSystems;
+use crate::analog_input::{add_analog_input, check_axis_actions, update_analog_input};
 use crate::command_dispatch::dispatch_command_line;
 
 /// What an [`InputKey`] is in Bevy: a keyboard key or a mouse button.
@@ -144,7 +147,8 @@ impl Plugin for InputActionsPlugin {
             )
             .add_systems(
                 FixedUpdate,
-                update_held_actions
+                (update_held_actions, update_analog_input)
+                    .chain()
                     .in_set(InputActionSystems)
                     .after(CommandScriptSystems),
             )
@@ -152,11 +156,13 @@ impl Plugin for InputActionsPlugin {
                 Update,
                 (dispatch_pressed_actions, release_tapped_keys).chain(),
             );
+        add_analog_input(app);
     }
 
     /// Runs after every plugin's `build`, so an action may name a command that a plugin added
     /// later than its own.
     fn finish(&self, app: &mut App) {
+        check_axis_actions(app.world());
         let Some(registry) = app.world().get_resource::<CommandRegistry>() else {
             return;
         };

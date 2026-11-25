@@ -85,12 +85,12 @@ pub fn read_body_states(world: &mut World) -> Vec<BodyState> {
     states
 }
 
-/// True when a body is part of the replicated state: it moves (`PhysicsBodyKind::Dynamic`) and its
+/// True when a body is part of the replicated state: it moves (dynamic or character) and its
 /// `Replicated` lists at least one kind. This is the one rule for "is replicated": the server's
 /// state, the client's history and the client's apply step all use it. Fixed bodies never move and
 /// every machine has them from its own scene, so they are not sent.
 fn is_replicated_body(kind: PhysicsBodyKind, synced: &[SyncedKind]) -> bool {
-    kind == PhysicsBodyKind::Dynamic && !synced.is_empty()
+    kind != PhysicsBodyKind::Fixed && !synced.is_empty()
 }
 
 /// The state of every replicated body (see `is_replicated_body`), sorted by name.

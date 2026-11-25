@@ -15,6 +15,8 @@
 //! - `primary_window(title)`: the window settings (a canvas element in the browser).
 //! - `asset_meta_check()`: whether the asset server looks for `.meta` files.
 //! - `store_snapshot(name, png)`: keeps a snapshot (a file, or memory for the bridge).
+//! - `pointer_is_locked()`: whether the browser holds the pointer lock; `None` natively, where the
+//!   window grants every request.
 //! - `PlatformPlugin`: platform-only systems (the browser bridge `window.__retreat`).
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -28,7 +30,7 @@ pub use native::native_transport::{
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use native::{
     AUDIO_NEEDS_USER_GESTURE, HAS_FILE_SYSTEM, PlatformPlugin, SAVE_LOCATION, SCRIPT_END_EXITS_APP,
-    asset_meta_check, platform_save_backend, primary_window, store_snapshot,
+    asset_meta_check, platform_save_backend, pointer_is_locked, primary_window, store_snapshot,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -38,5 +40,5 @@ pub use wasm::launch;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use wasm::{
     AUDIO_NEEDS_USER_GESTURE, HAS_FILE_SYSTEM, PlatformPlugin, SAVE_LOCATION, SCRIPT_END_EXITS_APP,
-    asset_meta_check, platform_save_backend, primary_window, store_snapshot,
+    asset_meta_check, platform_save_backend, pointer_is_locked, primary_window, store_snapshot,
 };

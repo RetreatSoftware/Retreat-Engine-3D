@@ -1,0 +1,53 @@
+# Character controller capabilities: analog axes, mouse look, an upright character body, ground
+# detection by shape cast, velocity set and readout, ray and shape casts. Without a network the
+# sandbox walker takes its input directly.
+physics.spawn_wall wall_east 2 1 2 0.4 2 2
+sandbox.walker_spawn -2 2
+wait 20
+assert.walker_grounded walker_local true
+assert.velocity walker_local 0 0 0 0.05
+assert.ray_hit wall_east 1.8 0 1 2 1 0 0 20
+assert.ball_cast_hit wall_east 1.6 0.2 0 1 2 1 0 0 20
+assert.ray_miss 0 5 2 0 1 0 20
+snapshot character_start
+# Mouse movement is reported for the tick it arrives in.
+input.look 100 0
+assert.input_look 100 0
+assert.input_look 0 0
+input.look -100 0
+# Walk east on the axis until the wall stops the capsule (its center rests at x 1.4).
+input.set_axis walk_x 1
+assert.input_axis walk_x 1
+wait 20
+assert.velocity walker_local 4 0 0 0.05
+snapshot character_walking
+wait 90
+assert.ray_hit walker_local 4.4 -3.4 0.9 2 1 0 0 20
+assert.velocity walker_local 0 0 0 0.05
+snapshot character_wall
+input.clear_axis walk_x
+assert.input_axis walk_x 0
+# Keys drive the same axis.
+input.key_down A
+wait 30
+assert.input_axis walk_x -1
+input.key_up A
+wait 5
+# Jump: off the ground, then back on it.
+input.key_down Space
+wait 3
+input.key_up Space
+wait 18
+assert.walker_grounded walker_local false
+snapshot character_jump
+wait 60
+assert.walker_grounded walker_local true
+# A character body feels no engine gravity: it keeps the velocity it is given.
+physics.spawn_character floater 0 4 -2 0.5 0.4
+physics.set_velocity floater 0 0.5 0
+wait 20
+assert.velocity floater 0 0.5 0 0.001
+state.hash
+assert.state_hash 0x9d1a8527f0432af5
+snapshot character_end
+quit

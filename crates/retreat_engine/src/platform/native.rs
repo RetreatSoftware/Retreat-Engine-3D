@@ -162,6 +162,11 @@ impl retreat_engine_api::SaveBackend for FileSaveBackend {
     }
 }
 
+/// A native window grants every cursor grab, so there is nothing to ask.
+pub(crate) fn pointer_is_locked() -> Option<bool> {
+    None
+}
+
 #[cfg(test)]
 mod save_backend_tests {
     use super::*;

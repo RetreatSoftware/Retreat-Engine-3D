@@ -4,11 +4,13 @@
 // all three worlds agree.
 //
 // Run from Retreat-Engine-3D after `cargo build -p retreat_sandbox`:
-//   node scripts/verify/network/run.mjs [--software-renderer] [--browser] [--scenario players|preset_players]
+//   node scripts/verify/network/run.mjs [--software-renderer] [--browser] [--scenario players|preset_players|walkers]
 // The default scenario spawns and pushes boxes with `net.send`; `--scenario players` uses the players
 // module: each client holds a movement key and the engine predicts and sends the movement.
 // `--scenario preset_players` is the first tested preset (engine + players + orbit_camera + menu): one
 // client that renders (so it writes PNGs) moves its player; the check asserts the player moved.
+// `--scenario walkers`: each client drives a character with analog input (axis, mouse look, jump); the check
+// also compares the module state and requires both characters to have walked.
 // With --browser, client B is the browser build (headless Chrome through scripts/web/run_in_browser.mjs,
 // WebTransport from the page): run scripts/web/build.sh first.
 // Exit code 0 = every process exited cleanly and the three worlds agree (positions within 0.05).
@@ -41,12 +43,12 @@ if (!existsSync(exe)) {
 const extra = process.argv.includes("--software-renderer") ? ["--software-renderer"] : [];
 const browserClient = process.argv.includes("--browser");
 const scenario = process.argv.includes("--scenario") ? process.argv[process.argv.indexOf("--scenario") + 1] : "boxes";
-if (!["boxes", "players", "preset_players"].includes(scenario)) die(`unknown scenario ${scenario}; use boxes, players or preset_players`);
+if (!["boxes", "players", "preset_players", "walkers"].includes(scenario)) die(`unknown scenario ${scenario}; use boxes, players, preset_players or walkers`);
 const isPreset = scenario === "preset_players";
 const TOLERANCE = 0.05;
 // The browser variant waits much longer (the page needs many seconds to load) and its scripts too.
 const TIMEOUT_MS = browserClient ? 240_000 : 90_000;
-const scenarioFolder = scenario === "players" || isPreset ? scenario : browserClient ? "browser" : "";
+const scenarioFolder = scenario !== "boxes" ? scenario : browserClient ? "browser" : "";
 const scriptDir = join(here, scenarioFolder);
 const webScriptDir = `scripts/verify/network${scenarioFolder ? `/${scenarioFolder}` : ""}`;
 
@@ -157,12 +159,10 @@ try {
   if (!failure) {
     const views = processes.map((p) => ({ name: p.name, bodies: bodies(p.output) }));
     const reference = views[0].bodies;
-    const expectedNames = isPreset
-      ? ["player_0", "player_1", "sandbox_cube", "sandbox_ground"]
-      : scenario === "players"
-        ? ["player_0", "player_1", "sandbox_cube", "sandbox_ground"]
-        : // The sandbox always has the players module, so each joined client has its player body.
-          ["net_a", "net_b", "player_0", "player_1", "sandbox_cube", "sandbox_ground"];
+    // The sandbox always has the players module, so each joined client has its player body.
+    const sceneNames = ["player_0", "player_1", "sandbox_cube", "sandbox_ground"];
+    const extraNames = { boxes: ["net_a", "net_b"], walkers: ["walker_0", "walker_1"] }[scenario] ?? [];
+    const expectedNames = [...sceneNames, ...extraNames].sort();
     for (const view of views) {
       const names = [...view.bodies.keys()].sort();
       if (JSON.stringify(names) !== JSON.stringify(expectedNames)) {
@@ -178,7 +178,14 @@ try {
       }
       if (failure) break;
     }
-    if (!failure && scenario === "boxes") {
+    if (!failure && scenario === "walkers") {
+      // Both characters spawn at x -4 and walk east.
+      for (const name of ["walker_0", "walker_1"]) {
+        const x = reference.get(name)[0];
+        if (x < -3) failure = `${name} did not walk east: x ${x}`;
+      }
+    }
+    if (!failure && (scenario === "boxes" || scenario === "walkers")) {
       const reference = JSON.stringify(moduleStates(processes[0].output));
       const different = processes.find((p) => JSON.stringify(moduleStates(p.output)) !== reference);
       if (reference === "[]" || different) {

@@ -385,3 +385,10 @@ impl retreat_engine_api::SaveBackend for LocalStorageSaveBackend {
 #[cfg(test)]
 #[path = "wasm_tests.rs"]
 mod wasm_tests;
+
+/// Whether the page holds the pointer lock (the browser grants it only after a click and takes
+/// it back on Escape).
+pub(crate) fn pointer_is_locked() -> Option<bool> {
+    let document = web_sys::window()?.document()?;
+    Some(document.pointer_lock_element().is_some())
+}

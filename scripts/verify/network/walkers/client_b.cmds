@@ -1,0 +1,26 @@
+# Walkers check, client B: spawns its character, walks it east with the analog axis, turns with the
+# mouse and jumps. Every input travels as a command line per tick and is predicted.
+wait_until 3000 assert.net_joined
+net.send sandbox.walker_spawn -4 -4
+wait 40
+input.set_axis walk_x 1
+wait 30
+input.look -40 0
+wait 10
+input.key_down Space
+wait 4
+input.key_up Space
+input.clear_axis walk_x
+wait_until 20000 assert.entity_exists walker_0
+wait_until 20000 assert.entity_exists walker_1
+wait 500
+net.bodies
+net.states
+net.stats
+# Budgets: an input line every tick (measured well under half of these).
+assert.net_bytes_below sent 400000
+assert.net_bytes_below received 400000
+assert.net_corrections_at_most 400
+# Stay connected while the others print.
+wait 600
+quit

@@ -31,6 +31,7 @@ use bevy_rapier3d::rapier::geometry::{DefaultBroadPhase, NarrowPhase};
 use retreat_engine_api::{PhysicsBody, RetiredEntity, SimulationRng};
 
 use crate::net::module_state::{ModuleStateSnapshot, capture_module_state, restore_module_state};
+use crate::physics::sync_body_readouts;
 
 /// Everything needed to rewind the physics world to the moment of capture.
 pub struct PhysicsSnapshot {
@@ -239,5 +240,6 @@ pub fn restore_physics(world: &mut World, snapshot: &PhysicsSnapshot) -> Result<
         }
     }
     restore_module_state(world, &snapshot.module_state);
+    sync_body_readouts(world);
     Ok(())
 }

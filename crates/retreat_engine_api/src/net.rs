@@ -9,6 +9,7 @@
 //!   connection ends; a module reacts (spawn a player body, remove it).
 //! - [`NetAllowedCommands`]: the command ids a server runs when a client sends them (anything else is
 //!   refused). A module adds its own with [`AppNetExt::allow_client_command`].
+//! - [`NetLocalClient`] / [`NetReplaying`]: a client's own id, and whether it is replaying.
 //! - [`NetInputQueue`]: a **client** module pushes the command lines for the player's input here; the
 //!   engine runs them on the client and sends them to the server, once per tick. In single player nothing
 //!   drains it.
@@ -35,6 +36,16 @@ pub struct NetClientJoined {
 pub struct NetClientLeft {
     pub client_id: u32,
 }
+
+/// On a client, its own client id once it has joined (written by the engine); `None` on a server,
+/// without a network and before joining. A module uses it to find what is "mine".
+#[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NetLocalClient(pub Option<u32>);
+
+/// True while a client replays past ticks after a correction (written by the engine). Systems with
+/// one-shot effects outside the simulation (sounds, particles) skip them while it is true.
+#[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NetReplaying(pub bool);
 
 /// Command ids a server runs for clients.
 #[derive(Resource, Default, Debug, Clone, PartialEq, Eq)]
@@ -206,6 +217,8 @@ pub fn add_net_contract(app: &mut App) {
     app.init_resource::<NetCommandSender>()
         .init_resource::<NetAllowedCommands>()
         .init_resource::<NetInputQueue>()
+        .init_resource::<NetLocalClient>()
+        .init_resource::<NetReplaying>()
         .init_resource::<NetIdentity>()
         .init_resource::<NetPlayerIds>()
         .init_resource::<crate::NetStateRegistry>()
