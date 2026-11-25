@@ -8,14 +8,17 @@
 //! - Colors are applied copy-on-write to every material at or below the entity, also to parts that
 //!   appear later (a model that finishes loading).
 //!
-//! Commands: `visual.set_color <name> <r> <g> <b>`,
+//! - `HideVisuals` hides an entity and everything below it.
+//!
+//! Commands: `visual.set_color|set_color_flat <name> <r> <g> <b>`, `visual.hide|show <name>`,
 //! `visual.set_character <name> <model|shape> <scale> <offset_y> <yaw>`,
 //! `visual.play <name> <clip> <speed>`, `assert.visual_ready <name>`.
 
 use bevy::prelude::*;
 use retreat_engine_api::{
     AnimationPlayback, AppCommandExt, CharacterVisual, ClipPlayback, CommandArgs, CommandOutcome,
-    CommandResult, EntityColor, PhysicsBody, PhysicsShape,
+    CommandResult, EntityColor, EntityColorFlat, HideVisuals, PhysicsBody, PhysicsShape,
+    RetiredEntity,
 };
 
 use crate::entity_names::find_unique_entity_by_name;
@@ -39,6 +42,7 @@ struct BuiltVisual {
 #[derive(Component)]
 struct AppliedColor {
     color: Color,
+    flat: bool,
     material: Handle<StandardMaterial>,
 }
 
@@ -48,13 +52,25 @@ impl Plugin for VisualsPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            (build_character_visuals, apply_entity_colors).chain(),
+            (
+                build_character_visuals,
+                apply_entity_colors,
+                apply_hidden_visuals,
+            )
+                .chain(),
         )
         .register_command(
             "visual.set_color",
             "visual.set_color <name> <red> <green> <blue>",
             set_color_command,
         )
+        .register_command(
+            "visual.set_color_flat",
+            "visual.set_color_flat <name> <red> <green> <blue>",
+            set_color_flat_command,
+        )
+        .register_command("visual.hide", "visual.hide <name>", hide_command)
+        .register_command("visual.show", "visual.show <name>", show_command)
         .register_command(
             "visual.set_character",
             "visual.set_character <name> <model|shape> <scale> <offset_y> <yaw>",
@@ -213,7 +229,7 @@ fn spawn_shape(world: &mut World, owner: Entity, name: String, transform: Transf
 struct KeepsColor;
 
 fn apply_entity_colors(
-    colored: Query<(Entity, &EntityColor)>,
+    colored: Query<(Entity, &EntityColor, Has<EntityColorFlat>)>,
     children: Query<&Children>,
     mut parts: Query<
         (
@@ -225,24 +241,27 @@ fn apply_entity_colors(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut commands: Commands,
 ) {
-    for (owner, color) in &colored {
+    for (owner, color, flat) in &colored {
         for part in std::iter::once(owner).chain(children.iter_descendants(owner)) {
             let Ok((mut material, applied)) = parts.get_mut(part) else {
                 continue;
             };
-            if applied
-                .as_ref()
-                .is_some_and(|applied| applied.color == color.0 && applied.material == material.0)
-            {
+            if applied.as_ref().is_some_and(|applied| {
+                applied.color == color.0 && applied.flat == flat && applied.material == material.0
+            }) {
                 continue;
             }
             let Some(mut copy) = materials.get(&material.0).cloned() else {
                 continue;
             };
             copy.base_color = color.0;
+            if flat {
+                copy.base_color_texture = None;
+            }
             material.0 = materials.add(copy);
             let record = AppliedColor {
                 color: color.0,
+                flat,
                 material: material.0.clone(),
             };
             commands.entity(part).insert(record);
@@ -312,6 +331,52 @@ fn play_command(world: &mut World, args: &CommandArgs) -> CommandResult {
         speed,
         ..ClipPlayback::looping(clip)
     }];
+    Ok(CommandOutcome::Continue)
+}
+
+/// Hides entities with `HideVisuals` and shows them again when it is removed (a retired entity
+/// stays hidden).
+fn apply_hidden_visuals(
+    mut commands: Commands,
+    hidden: Query<(Entity, Option<&Visibility>), With<HideVisuals>>,
+    mut shown_again: RemovedComponents<HideVisuals>,
+    retired: Query<(), With<RetiredEntity>>,
+    alive: Query<()>,
+) {
+    for entity in shown_again.read() {
+        if alive.contains(entity) && !hidden.contains(entity) && !retired.contains(entity) {
+            commands.entity(entity).insert(Visibility::Inherited);
+        }
+    }
+    for (entity, visibility) in &hidden {
+        if visibility != Some(&Visibility::Hidden) {
+            commands.entity(entity).insert(Visibility::Hidden);
+        }
+    }
+}
+
+fn hide_command(world: &mut World, args: &CommandArgs) -> CommandResult {
+    args.expect_count(1)?;
+    let name: String = args.parse(0, "name")?;
+    let entity = find_unique_entity_by_name(world, args, &name)?;
+    world.entity_mut(entity).insert(HideVisuals);
+    Ok(CommandOutcome::Continue)
+}
+
+fn show_command(world: &mut World, args: &CommandArgs) -> CommandResult {
+    args.expect_count(1)?;
+    let name: String = args.parse(0, "name")?;
+    let entity = find_unique_entity_by_name(world, args, &name)?;
+    world.entity_mut(entity).remove::<HideVisuals>();
+    Ok(CommandOutcome::Continue)
+}
+
+/// `visual.set_color_flat <name> <r> <g> <b>`: like `visual.set_color`, without the texture.
+fn set_color_flat_command(world: &mut World, args: &CommandArgs) -> CommandResult {
+    set_color_command(world, args)?;
+    let name: String = args.parse(0, "name")?;
+    let entity = find_unique_entity_by_name(world, args, &name)?;
+    world.entity_mut(entity).insert(EntityColorFlat);
     Ok(CommandOutcome::Continue)
 }
 

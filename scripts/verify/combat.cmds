@@ -1,0 +1,41 @@
+# A lag-compensated shot, health, a hidden downed character with respawn, and the readouts:
+# hit counter below the toolbar, health bottom left, crosshair in the middle.
+sandbox.walker_spawn -2.5 2.5
+sandbox.walker_dummy 1.5 2.5
+wait 20
+assert.ui_text walker_health health 100
+assert.ui_text walker_hits hits 0
+# Without a network there is no past: view tick 0 shoots at the present. East is yaw -pi/2.
+assert.lag_ray_hit walker_99 0 -1.9 1.4 2.5 1 0 0 20
+sandbox.walker_fire -1.5708 0 0
+wait 2
+assert.walker_health walker_99 50
+assert.ui_text walker_hits hits 1
+snapshot combat_hit
+input.key_down MouseLeft
+wait 2
+input.key_up MouseLeft
+# The held button fires along the walker's own view (north), which misses.
+assert.walker_health walker_99 50
+sandbox.walker_fire -1.5708 0 0
+wait 2
+assert.walker_health walker_99 0
+# Downed: not drawn, and shots pass through where it lies.
+sandbox.walker_fire -1.5708 0 0
+wait 2
+assert.walker_health walker_99 0
+assert.ui_text walker_hits hits 2
+snapshot combat_downed
+physics.teleport walker_99 1.5 0.91 0.5
+wait 140
+assert.walker_health walker_99 100
+assert.position walker_99 1.5 0.9 2.5
+snapshot combat_respawned
+# The layout follows what is shown: without the toolbar the counter moves up.
+ui.hide_panel toolbar
+ui.hide_widget walker_crosshair
+wait 2
+snapshot combat_layout
+state.hash
+assert.state_hash 0x2f7a8c1e5387e3cb
+quit

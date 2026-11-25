@@ -35,14 +35,14 @@ mod shader_material;
 mod snapshot;
 mod state_hash;
 mod storage;
+mod ui_hud;
 mod ui_panels;
 mod visuals;
-
-use std::time::Duration;
 
 use bevy::app::ScheduleRunnerPlugin;
 use bevy::asset::UnapprovedPathMode;
 use bevy::audio::{AudioPlugin, Volume};
+use bevy::log::LogPlugin;
 use bevy::prelude::*;
 use bevy::render::RenderPlugin;
 use bevy::render::settings::WgpuSettings;
@@ -92,6 +92,7 @@ pub use state_hash::{
     LastStateHash, StateHashPlugin, compute_state_hash, format_state_hash, parse_state_hash,
 };
 pub use storage::StorageCommandsPlugin;
+pub use ui_hud::UiHudPlugin;
 pub use ui_panels::UiPanelsPlugin;
 pub use visuals::{VISUAL_NAME_SUFFIX, VisualsPlugin};
 
@@ -171,6 +172,18 @@ impl RetreatEnginePlugin {
         }
     }
 
+    /// Without a renderer Bevy's camera plugin logs an error that means nothing (it looks for the
+    /// render sub-app), so that one source is silenced then.
+    fn log_plugin(&self) -> LogPlugin {
+        let mut plugin = LogPlugin::default();
+        if self.no_render {
+            plugin
+                .filter
+                .push_str(",bevy_extract::extract_resource=off");
+        }
+        plugin
+    }
+
     fn render_plugin(&self) -> RenderPlugin {
         RenderPlugin {
             render_creation: WgpuSettings {
@@ -207,12 +220,18 @@ impl Plugin for RetreatEnginePlugin {
                     .set(self.asset_plugin())
                     .set(self.render_plugin())
                     .set(self.audio_plugin())
+                    .set(self.log_plugin())
                     // Winit runs the window event loop; there is no window.
                     .disable::<WinitPlugin>(),
             );
-            // Replaces winit's loop: run frames back to back, with no pause between them.
+            // Replaces winit's loop: frames run back to back under a deterministic script, and
+            // about once per tick otherwise (see `headless_frame_wait`).
             // (`DefaultPlugins` only contains this plugin when built without winit.)
-            app.add_plugins(ScheduleRunnerPlugin::run_loop(Duration::ZERO));
+            let wait = LaunchOptions::headless_frame_wait(
+                self.commands.command_script.is_some(),
+                self.real_time,
+            );
+            app.add_plugins(ScheduleRunnerPlugin::run_loop(wait));
             if !self.no_render {
                 app.add_plugins(headless::HeadlessRenderPlugin);
             }
@@ -251,7 +270,12 @@ impl Plugin for RetreatEnginePlugin {
             platform::PlatformPlugin,
         ));
         // Bevy's plugin tuples hold at most 15 entries, so this one has its own call.
-        app.add_plugins((PerfCommandsPlugin, RenderSmoothingPlugin, VisualsPlugin));
+        app.add_plugins((
+            PerfCommandsPlugin,
+            RenderSmoothingPlugin,
+            VisualsPlugin,
+            UiHudPlugin,
+        ));
         // Scans the render world for failed pipelines, so it needs one.
         if !self.no_render {
             app.add_plugins(gpu_pipeline_errors::GpuPipelineErrorsPlugin);

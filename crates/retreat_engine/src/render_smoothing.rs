@@ -1,8 +1,11 @@
-//! Smooth drawing of entities with `RenderSmoothing` (contract `visuals.rs`), without touching the
-//! simulation:
+//! Where entities are drawn, without touching the simulation (contract `visuals.rs`:
+//! `RenderSmoothing`, `RemoteInterpolation`, `DrawnPose`):
 //! - `remember_previous_pose` (`FixedFirst`) keeps the pose before the tick;
 //! - a client's correction reports how far it moved the entity ([`poses_before_correction`],
 //!   [`absorb_correction`]); that jump becomes an offset that fades out;
+//! - `compute_drawn_poses` (`Update`, `DrawnPoseSystems`) decides the pose to draw: the server's past
+//!   at the view tick for remote-interpolated entities (`net/lag_compensation.rs`), else between
+//!   the two ticks plus the offset; game cameras read it from `DrawnPose`;
 //! - in `PostUpdate`, just for transform propagation, `Transform` holds the pose to draw (between
 //!   the two ticks, plus the offset); right after, the simulation pose is put back. So
 //!   `GlobalTransform` (what is drawn, children included) is smooth and every simulation system
@@ -19,10 +22,12 @@ use bevy::app::FixedFirst;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 use retreat_engine_api::{
-    AppCommandExt, CommandArgs, CommandOutcome, CommandResult, RenderSmoothing,
+    AppCommandExt, CommandArgs, CommandOutcome, CommandResult, DrawnPose, DrawnPoseSystems,
+    NetViewTick, RemoteInterpolation, RenderSmoothing,
 };
 
 use crate::entity_names::find_unique_entity_by_name;
+use crate::net::lag_compensation::PoseHistory;
 
 /// What the engine keeps for a smoothed entity.
 #[derive(Component, Clone, Copy, Debug, Default)]
@@ -30,6 +35,8 @@ pub(crate) struct SmoothingState {
     previous: Option<Transform>,
     /// Added to the drawn position; fades out.
     offset: Vec3,
+    /// The pose to draw this frame.
+    drawn: Option<Transform>,
     /// The simulation pose, while `Transform` holds the drawn one.
     simulation: Option<Transform>,
 }
@@ -39,6 +46,8 @@ pub struct RenderSmoothingPlugin;
 impl Plugin for RenderSmoothingPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(FixedFirst, remember_previous_pose)
+            .init_resource::<PoseHistory>()
+            .add_systems(Update, compute_drawn_poses.in_set(DrawnPoseSystems))
             .add_systems(
                 PostUpdate,
                 (
@@ -61,7 +70,7 @@ impl Plugin for RenderSmoothingPlugin {
 
 fn remember_previous_pose(
     mut commands: Commands,
-    mut smoothed: Query<(Entity, &Transform, Option<&mut SmoothingState>), With<RenderSmoothing>>,
+    mut smoothed: Query<(Entity, &Transform, Option<&mut SmoothingState>), With<DrawnPose>>,
 ) {
     for (entity, transform, state) in &mut smoothed {
         match state {
@@ -102,26 +111,71 @@ fn between(previous: Transform, current: Transform, fraction: f32) -> Transform 
     }
 }
 
-fn draw_smoothed_pose(
+/// What deciding an entity's drawn pose reads and writes.
+type Drawn = (
+    &'static Name,
+    &'static Transform,
+    &'static mut DrawnPose,
+    Option<&'static RenderSmoothing>,
+    Has<RemoteInterpolation>,
+    Option<&'static mut SmoothingState>,
+);
+
+/// Decides where each entity with a `DrawnPose` is drawn this frame.
+fn compute_drawn_poses(
     time: Res<Time<Real>>,
     fixed: Res<Time<Fixed>>,
-    mut smoothed: Query<(&mut Transform, &RenderSmoothing, &mut SmoothingState)>,
+    view: Option<Res<NetViewTick>>,
+    history: Res<PoseHistory>,
+    mut entities: Query<Drawn>,
 ) {
-    for (mut transform, settings, mut state) in &mut smoothed {
-        state.offset = faded(state.offset, time.delta_secs(), settings.half_life);
-        let current = *transform;
-        let previous = state.previous.unwrap_or(current);
-        // A teleport is not walked through.
-        let previous =
-            if previous.translation.distance(current.translation) > settings.snap_distance {
-                current
-            } else {
-                previous
-            };
-        let mut drawn = between(previous, current, fixed.overstep_fraction());
-        drawn.translation += state.offset;
-        state.simulation = Some(current);
-        *transform = drawn;
+    let view = view.and_then(|view| view.0);
+    // Only look the past up when something is drawn from it.
+    let past = view
+        .filter(|_| entities.iter().any(|(.., remote, _)| remote))
+        .and_then(|view| history.at(view + f64::from(fixed.overstep_fraction())));
+    for (name, transform, mut pose, smoothing, remote, state) in &mut entities {
+        let mut drawn = *transform;
+        let server = past
+            .as_ref()
+            .filter(|_| remote)
+            .and_then(|bodies| bodies.get(name.as_str()));
+        if let Some(mut state) = state {
+            if let Some(body) = server {
+                drawn.translation = body.translation;
+                drawn.rotation = body.rotation;
+                state.offset = Vec3::ZERO;
+            } else if let Some(settings) = smoothing {
+                state.offset = faded(state.offset, time.delta_secs(), settings.half_life);
+                let previous = state.previous.unwrap_or(drawn);
+                // A teleport is not walked through.
+                let previous =
+                    if previous.translation.distance(drawn.translation) > settings.snap_distance {
+                        drawn
+                    } else {
+                        previous
+                    };
+                drawn = between(previous, drawn, fixed.overstep_fraction());
+                drawn.translation += state.offset;
+            }
+            state.drawn = Some(drawn);
+        }
+        pose.set_if_neq(DrawnPose {
+            translation: drawn.translation,
+            rotation: drawn.rotation,
+        });
+    }
+}
+
+fn draw_smoothed_pose(mut entities: Query<(&mut Transform, &mut SmoothingState)>) {
+    for (mut transform, mut state) in &mut entities {
+        let Some(drawn) = state.drawn.take() else {
+            continue;
+        };
+        if drawn != *transform {
+            state.simulation = Some(*transform);
+            *transform = drawn;
+        }
     }
 }
 

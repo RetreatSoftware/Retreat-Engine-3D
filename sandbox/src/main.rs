@@ -11,6 +11,7 @@ mod stripes_material;
 mod tally;
 mod toolbar;
 mod walker;
+mod walker_combat;
 
 use bevy::prelude::*;
 use retreat_engine_api::AppNetExt;
@@ -36,6 +37,8 @@ fn add_sandbox_plugins(app: &mut App) {
         tally::TallyPlugin,
         // A demo character: analog input, ground cast, character body (`sandbox.walker_spawn`).
         walker::WalkerPlugin,
+        // A demo shot: lag compensation, health, hiding, readouts (`sandbox.walker_fire`).
+        walker_combat::WalkerCombatPlugin,
         // The first gameplay module (Retreat-Modules): `spawner.rain <count>`.
         retreat_module_spawner::SpawnerModulePlugin,
         // The orbit camera module: `orbit.start`, arrow keys held rotate the sandbox camera.

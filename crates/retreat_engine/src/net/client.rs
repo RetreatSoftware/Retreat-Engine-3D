@@ -21,11 +21,12 @@ use std::time::Duration;
 use bevy::app::{FixedFirst, FixedLast, RunFixedMainLoop, RunFixedMainLoopSystems};
 use bevy::prelude::*;
 use retreat_engine_api::{
-    NetCommandSender, NetInputQueue, NetLocalClient, NetReplaying, NetStateRegistry, PhysicsBody,
-    Replicated, RetiredEntity, run_command_line,
+    NetCommandSender, NetInputQueue, NetLocalClient, NetReplaying, NetStateRegistry, NetViewTick,
+    PhysicsBody, Replicated, RetiredEntity, run_command_line,
 };
 
 use super::body_state::{BodyState, apply_body_states, read_replicated_body_states};
+use super::lag_compensation::{CLIENT_HISTORY_TICKS, PoseHistory, ViewClock, advance_view};
 use super::module_state::{
     ModuleState, apply_module_states, module_state_lists_match, read_module_states,
 };
@@ -135,6 +136,8 @@ pub struct NetClient {
     replay_lines: Vec<String>,
     /// Server states received and not processed yet.
     pending_states: Vec<(u64, ReplicatedState)>,
+    /// Whole body states received since the last tick, for the pose history.
+    received: Vec<(u64, Vec<BodyState>)>,
     /// State chunks of ticks that are not complete yet: tick -> chunks received so far (by index).
     partial_states: BTreeMap<u64, Vec<Option<ReplicatedState>>>,
     /// Rebuilds whole states from the deltas the server sends.
@@ -209,7 +212,10 @@ impl NetClient {
             }
             let full = self.partial_full.remove(&tick).unwrap_or(full);
             match self.assembler.assemble(tick, full, complete) {
-                Some(whole) => self.pending_states.push((tick, whole)),
+                Some(whole) => {
+                    self.received.push((tick, whole.bodies.clone()));
+                    self.pending_states.push((tick, whole));
+                }
                 None => self.states_discarded += 1,
             }
         } else {
@@ -248,6 +254,9 @@ pub fn install_client(
     app.init_resource::<NetStateRegistry>();
     app.init_resource::<NetLocalClient>();
     app.init_resource::<NetReplaying>();
+    app.init_resource::<NetViewTick>();
+    app.init_resource::<PoseHistory>();
+    app.init_resource::<ViewClock>();
     app.world_mut().resource_mut::<NetInputQueue>().accepting = true;
     // A slow frame must not lose simulated time (Bevy caps a frame at 250 ms by default): a
     // client that ticks slower than the server falls behind it.
@@ -273,6 +282,7 @@ pub fn install_client(
         replaying: false,
         replay_lines: Vec::new(),
         pending_states: Vec::new(),
+        received: Vec::new(),
         partial_states: BTreeMap::new(),
         assembler: StateAssembler::default(),
         states_discarded: 0,
@@ -366,6 +376,11 @@ fn pump_transport(world: &mut World) {
         }
     }
     client.steps += 1;
+    let received = std::mem::take(&mut client.received);
+    let mut history = world.resource_mut::<PoseHistory>();
+    for (tick, bodies) in received {
+        history.record(tick, &bodies, CLIENT_HISTORY_TICKS);
+    }
     if let Some(client_id) = joined_as {
         world.insert_resource(NetLocalClient(Some(client_id)));
     }
@@ -416,6 +431,9 @@ fn client_before_tick(world: &mut World) {
 fn client_after_tick(world: &mut World) {
     if world.resource::<NetClient>().phase != ClientPhase::Running {
         return;
+    }
+    if !world.resource::<NetClient>().replaying {
+        advance_view(world);
     }
     let tick = {
         let mut client = world.resource_mut::<NetClient>();

@@ -15,9 +15,11 @@ use retreat_engine_api::{
     CharacterGround, CharacterStepping, CharacterVisual, CommandArgs, CommandOutcome,
     CommandResult, EntityColor, HELD_ONLY, InputAction, InputActionSystems, InputActions,
     InputAxis, InputKey, NetCommandSender, NetInputQueue, NetLocalClient, NetState, PhysicsBody,
-    PhysicsControlSystems, PhysicsVelocity, PhysicsVelocitySet, RenderSmoothing, RetiredEntity,
+    PhysicsControlSystems, PhysicsVelocity, PhysicsVelocitySet, RemoteInterpolation, RetiredEntity,
 };
 use serde::{Deserialize, Serialize};
+
+use crate::walker_combat::{FULL_HEALTH, WalkerHealth};
 
 const HALF_HEIGHT: f32 = 0.5;
 const RADIUS: f32 = 0.4;
@@ -47,8 +49,8 @@ impl NetState for Walker {
 
 /// This machine's view angle (not synced: it travels with every input).
 #[derive(Resource, Default)]
-struct WalkerAim {
-    yaw: f32,
+pub struct WalkerAim {
+    pub yaw: f32,
 }
 
 pub struct WalkerPlugin;
@@ -109,7 +111,7 @@ fn walker_name(owner: Option<u32>) -> String {
 }
 
 /// The live walker of `owner`.
-fn walker_of(world: &mut World, owner: Option<u32>) -> Option<Entity> {
+pub fn walker_of(world: &mut World, owner: Option<u32>) -> Option<Entity> {
     world
         .query_filtered::<(Entity, &Walker), Without<RetiredEntity>>()
         .iter(world)
@@ -125,6 +127,17 @@ fn spawn_command(world: &mut World, args: &CommandArgs) -> CommandResult {
         return Err(args.failure("<x> and <z> must be finite"));
     }
     let owner = world.resource::<NetCommandSender>().0;
+    spawn_walker(world, args, owner, x, z)
+}
+
+/// Spawns the walker of `owner` standing at (x, z).
+pub fn spawn_walker(
+    world: &mut World,
+    args: &CommandArgs,
+    owner: Option<u32>,
+    x: f32,
+    z: f32,
+) -> CommandResult {
     let name = walker_name(owner);
     if world
         .query::<&Name>()
@@ -140,6 +153,12 @@ fn spawn_command(world: &mut World, args: &CommandArgs) -> CommandResult {
         Walker {
             owner,
             ..Walker::default()
+        },
+        WalkerHealth {
+            health: FULL_HEALTH,
+            hits: 0,
+            down_ticks: 0,
+            spawn: Vec3::new(x, HALF_HEIGHT + RADIUS + 0.01, z),
         },
         CharacterStepping {
             max_step_height: STEP_HEIGHT,
@@ -254,7 +273,8 @@ fn dress_walkers(
             .entity(entity)
             .insert((EntityColor(color), CharacterVisual::default()));
         if local.0.is_some() && walker.owner != local.0 {
-            commands.entity(entity).insert(RenderSmoothing::default());
+            // Drawn as the server saw it, which is what shots are judged against.
+            commands.entity(entity).insert(RemoteInterpolation);
         }
     }
 }

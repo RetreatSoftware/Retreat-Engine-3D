@@ -11,16 +11,19 @@
 //! `assert.ray_miss <ox> <oy> <oz> <dx> <dy> <dz> <max>`,
 //! `assert.ball_cast_hit <name> <distance> <radius> <ox> <oy> <oz> <dx> <dy> <dz> <max>`.
 
+use std::collections::BTreeMap;
+
 use bevy::prelude::*;
 use bevy_rapier3d::plugin::context::RapierRigidBodySet;
 use bevy_rapier3d::rapier::math::Pose;
 use bevy_rapier3d::rapier::parry::query::{Ray, ShapeCastOptions, cast_shapes};
 use bevy_rapier3d::rapier::parry::shape::SharedShape;
 use retreat_engine_api::{
-    AppCommandExt, CastHit, CommandArgs, CommandError, CommandOutcome, CommandResult, PhysicsBody,
-    PhysicsCaster, PhysicsShape, RayCast, RetiredEntity, ShapeCast,
+    AppCommandExt, CastHit, CommandArgs, CommandError, CommandOutcome, CommandResult, LagCaster,
+    PhysicsBody, PhysicsBodyKind, PhysicsCaster, PhysicsShape, RayCast, RetiredEntity, ShapeCast,
 };
 
+use crate::net::lag_compensation::PoseHistory;
 use crate::physics::PhysicsProxy;
 
 /// How close a hit's distance must be to the expected one in the assert commands.
@@ -28,6 +31,16 @@ const ASSERT_DISTANCE_TOLERANCE: f32 = 0.05;
 
 /// Installs the [`PhysicsCaster`] and the cast commands (part of `PhysicsPlugin`).
 pub(crate) fn add_physics_queries(app: &mut App) {
+    app.init_resource::<PoseHistory>()
+        .insert_resource(LagCaster {
+            ray: cast_ray_in_past,
+            shape: cast_shape_in_past,
+        })
+        .register_command(
+            "assert.lag_ray_hit",
+            "assert.lag_ray_hit <name> <view_tick> <ox> <oy> <oz> <dx> <dy> <dz> <max>",
+            assert_lag_ray_hit_command,
+        );
     app.insert_resource(PhysicsCaster {
         ray: cast_ray_in_world,
         shape: cast_shape_in_world,
@@ -73,6 +86,8 @@ fn parry_shape(shape: PhysicsShape) -> SharedShape {
 struct Target {
     entity: Entity,
     name: String,
+    /// Never moves.
+    fixed: bool,
     shape: SharedShape,
     pose: Pose,
 }
@@ -102,6 +117,7 @@ fn targets(world: &mut World, exclude: &[Entity]) -> Vec<Target> {
             Some(Target {
                 entity,
                 name,
+                fixed: description.kind == PhysicsBodyKind::Fixed,
                 shape: parry_shape(description.shape),
                 pose: Pose::from_parts(center, rotation),
             })
@@ -109,6 +125,47 @@ fn targets(world: &mut World, exclude: &[Entity]) -> Vec<Target> {
         .collect();
     targets.sort_by(|left, right| left.name.cmp(&right.name));
     targets
+}
+
+/// The targets as they were at server tick `view_tick`: fixed bodies as they are, moving bodies
+/// from the pose history (a body without a record at that time cannot be hit). The present when
+/// there is no history or the tick is not positive.
+fn targets_at(world: &mut World, exclude: &[Entity], view_tick: f64) -> Vec<Target> {
+    let past = (view_tick > 0.0)
+        .then(|| world.get_resource::<PoseHistory>()?.at(view_tick))
+        .flatten();
+    let Some(past) = past else {
+        return targets(world, exclude);
+    };
+    // Moving bodies by name, removed ones included: the shooter saw them.
+    let mut entities: BTreeMap<String, Entity> = BTreeMap::new();
+    let mut owners =
+        world.query_filtered::<(Entity, &Name, Has<RetiredEntity>), With<PhysicsBody>>();
+    for (entity, name, retired) in owners.iter(world) {
+        if !retired || !entities.contains_key(name.as_str()) {
+            entities.insert(name.as_str().to_string(), entity);
+        }
+    }
+    let mut candidates = targets(world, exclude);
+    candidates.retain(|target| !past.contains_key(&target.name) && target.fixed);
+    for (name, body) in past {
+        let Some(entity) = entities.get(&name).copied() else {
+            continue;
+        };
+        if exclude.contains(&entity) {
+            continue;
+        }
+        let center = body.translation + body.rotation * body.description.shape_offset;
+        candidates.push(Target {
+            entity,
+            name,
+            fixed: false,
+            shape: parry_shape(body.description.shape),
+            pose: Pose::from_parts(center, body.rotation),
+        });
+    }
+    candidates.sort_by(|left, right| left.name.cmp(&right.name));
+    candidates
 }
 
 /// The unit direction of a cast, or `None` when the cast is invalid.
@@ -125,10 +182,20 @@ fn keep_closer(best: &mut Option<CastHit>, hit: CastHit) {
 }
 
 fn cast_ray_in_world(world: &mut World, cast: &RayCast) -> Option<CastHit> {
+    let candidates = targets(world, &cast.exclude);
+    closest_ray_hit(candidates, cast)
+}
+
+fn cast_ray_in_past(world: &mut World, cast: &RayCast, view_tick: f64) -> Option<CastHit> {
+    let candidates = targets_at(world, &cast.exclude, view_tick);
+    closest_ray_hit(candidates, cast)
+}
+
+fn closest_ray_hit(candidates: Vec<Target>, cast: &RayCast) -> Option<CastHit> {
     let direction = valid_direction(cast.origin, cast.direction, cast.max_distance)?;
     let ray = Ray::new(cast.origin, direction);
     let mut best = None;
-    for target in targets(world, &cast.exclude) {
+    for target in candidates {
         let hit = target
             .shape
             .cast_ray_and_get_normal(&target.pose, &ray, cast.max_distance, true);
@@ -149,6 +216,16 @@ fn cast_ray_in_world(world: &mut World, cast: &RayCast) -> Option<CastHit> {
 }
 
 fn cast_shape_in_world(world: &mut World, cast: &ShapeCast) -> Option<CastHit> {
+    let candidates = targets(world, &cast.exclude);
+    closest_shape_hit(candidates, cast)
+}
+
+fn cast_shape_in_past(world: &mut World, cast: &ShapeCast, view_tick: f64) -> Option<CastHit> {
+    let candidates = targets_at(world, &cast.exclude, view_tick);
+    closest_shape_hit(candidates, cast)
+}
+
+fn closest_shape_hit(candidates: Vec<Target>, cast: &ShapeCast) -> Option<CastHit> {
     let direction = valid_direction(cast.origin, cast.direction, cast.max_distance)?;
     if !cast.rotation.is_normalized() || !cast.shape.is_valid() {
         return None;
@@ -160,7 +237,7 @@ fn cast_shape_in_world(world: &mut World, cast: &ShapeCast) -> Option<CastHit> {
         ..ShapeCastOptions::default()
     };
     let mut best = None;
-    for target in targets(world, &cast.exclude) {
+    for target in candidates {
         // A velocity of length 1 makes the time of impact the distance travelled.
         let result = cast_shapes(
             &pose,
@@ -262,4 +339,18 @@ fn assert_ball_cast_hit_command(world: &mut World, args: &CommandArgs) -> Comman
     };
     let hit = cast_shape_in_world(world, &cast);
     check_hit(args, hit)
+}
+
+/// `assert.lag_ray_hit <name> <view_tick> <ox> ... <max>`: the lag-compensated ray meets `name`
+/// first.
+fn assert_lag_ray_hit_command(world: &mut World, args: &CommandArgs) -> CommandResult {
+    args.expect_count(9)?;
+    let name: String = args.parse(0, "name")?;
+    let view_tick: f64 = args.parse(1, "view_tick")?;
+    let cast = parse_ray(args, 2)?;
+    match cast_ray_in_past(world, &cast, view_tick) {
+        Some(hit) if hit.name == name => Ok(CommandOutcome::Continue),
+        Some(hit) => Err(args.failure(format!("the ray hit `{}`, expected `{name}`", hit.name))),
+        None => Err(args.failure(format!("the ray hit nothing, expected `{name}`"))),
+    }
 }

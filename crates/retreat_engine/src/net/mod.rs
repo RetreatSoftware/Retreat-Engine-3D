@@ -29,6 +29,7 @@ pub mod body_state;
 pub mod client;
 pub mod commands;
 pub mod harness;
+pub mod lag_compensation;
 pub mod limits;
 pub mod link;
 pub mod module_state;

@@ -17,6 +17,7 @@ mod material_commands;
 mod model_commands;
 mod net_character;
 mod net_harness;
+mod net_lag;
 mod net_module_state;
 mod net_motion;
 mod net_pacing;

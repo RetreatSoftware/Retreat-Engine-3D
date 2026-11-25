@@ -22,11 +22,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use bevy::app::{FixedFirst, FixedLast};
 use bevy::prelude::*;
 use retreat_engine_api::{
-    NetAllowedCommands, NetClientJoined, NetClientLeft, NetCommandSender, NetIdentity,
-    NetIdentityDecision, NetIdentityRequest, NetPlayerIds, NetStateRegistry, run_command_line,
+    MAX_REWIND_TICKS, NetAllowedCommands, NetClientJoined, NetClientLeft, NetCommandSender,
+    NetIdentity, NetIdentityDecision, NetIdentityRequest, NetPlayerIds, NetStateRegistry,
+    run_command_line,
 };
 
 use super::body_state::{BodyState, read_replicated_body_states};
+use super::lag_compensation::PoseHistory;
 use super::limits::{ConnectionGuard, Refusal, ServerLimits, Verdict, check_input_content};
 use super::module_state::{MAX_MODULE_STATE_BYTES, ModuleState, encoded_size, read_module_states};
 use super::state_delta::{DeltaEncoder, ReplicatedState, split_into_chunks};
@@ -174,6 +176,7 @@ pub fn install_server(
     app.init_resource::<NetIdentity>();
     app.init_resource::<NetPlayerIds>();
     app.init_resource::<NetStateRegistry>();
+    app.init_resource::<PoseHistory>();
     app.insert_resource(NetServer {
         tick: 0,
         buffered: BTreeMap::new(),
@@ -505,9 +508,14 @@ fn server_after_tick(world: &mut World) {
     if tick.is_multiple_of(TIMING_INTERVAL_TICKS) {
         send_timing_reports(world, &mut *transport.0);
     }
+    // Every tick, for lag-compensated casts.
+    let bodies = read_replicated_body_states(world);
+    world
+        .resource_mut::<PoseHistory>()
+        .record(tick, &bodies, MAX_REWIND_TICKS);
     if due {
         let state = ReplicatedState {
-            bodies: read_replicated_body_states(world),
+            bodies,
             states: sendable_module_states(world),
         };
         let (full, listed) = world.resource_mut::<NetServer>().delta.encode(&state);

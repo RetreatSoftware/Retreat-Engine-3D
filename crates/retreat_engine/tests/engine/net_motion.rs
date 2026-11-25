@@ -381,6 +381,7 @@ fn draw(world: &mut World, seconds: f32) -> Vec3 {
         .update_with_duration(std::time::Duration::from_secs_f32(seconds));
     let real = world.resource::<Time<Real>>().as_generic();
     *world.resource_mut::<Time>() = real;
+    world.run_schedule(Update);
     world.run_schedule(PostUpdate);
     let hero = entity(world, "hero");
     world

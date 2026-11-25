@@ -15,6 +15,11 @@
 //! Character motion: [`CharacterStepping`] climbs stairs and slopes, [`CharacterGround`] says what a
 //! character stands on, [`PhysicsTeleport`] puts a body somewhere else.
 //!
+//! Lag compensation: [`NetViewTick`] and [`cast_ray_at`] judge a shot against what the shooter
+//! saw.
+//!
+//! Readouts: [`UiHud`] text lines and a crosshair that a module changes while the game runs.
+//!
 //! Looks (render only): [`EntityColor`], [`CharacterVisual`], [`RenderSmoothing`].
 //!
 //! Camera: an entity with a [`GameCamera`] is a perspective camera; the engine maps it onto
@@ -52,6 +57,7 @@ mod command_line;
 mod command_registry;
 mod game_camera;
 mod input_actions;
+mod lag_compensation;
 mod net;
 mod net_state;
 mod physics_body;
@@ -59,6 +65,7 @@ mod physics_queries;
 mod save_store;
 mod simulation_rng;
 mod sound_playback;
+mod ui_hud;
 mod ui_panel;
 mod visuals;
 
@@ -78,6 +85,7 @@ pub use input_actions::{
     AppInputExt, HELD_ONLY, INPUT_KEY_NAMES, InputAction, InputActionSystems, InputActions,
     InputKey,
 };
+pub use lag_compensation::{LagCaster, MAX_REWIND_TICKS, NetViewTick, cast_ray_at, cast_shape_at};
 pub use net::{
     AcceptEveryone, AppNetExt, NetAllowedCommands, NetClientJoined, NetClientLeft,
     NetCommandSender, NetIdentity, NetIdentityCheck, NetIdentityDecision, NetIdentityRequest,
@@ -99,9 +107,16 @@ pub use save_store::{
 };
 pub use simulation_rng::SimulationRng;
 pub use sound_playback::{MAX_SOUND_VOLUME, SoundKind, SoundPlayback};
+pub use ui_hud::{
+    AppHudExt, HUD_LINE_HEIGHT, HUD_TEXT_WIDTH, HudAnchor, HudKind, HudOccupied, HudState,
+    HudWidget, UiHud, compute_hud_layout,
+};
 pub use ui_panel::{
     AppUiExt, BUTTON_HEIGHT, ButtonRect, COLUMN_BUTTON_WIDTH, MIN_BUTTON_HEIGHT, PANEL_GAP,
     PANEL_MARGIN, PanelAnchor, PanelDirection, PanelLayout, PanelRect, ROW_MAX_BUTTON_WIDTH,
     TITLE_HEIGHT, UiButtonEntry, UiPanel, UiPanels, compute_panel_layout, visible_entries,
 };
-pub use visuals::{CharacterVisual, EntityColor, RenderSmoothing};
+pub use visuals::{
+    CharacterVisual, DrawnPose, DrawnPoseSystems, EntityColor, EntityColorFlat, HideVisuals,
+    RemoteInterpolation, RenderSmoothing,
+};

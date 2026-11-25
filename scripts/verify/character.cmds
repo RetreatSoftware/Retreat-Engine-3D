@@ -48,6 +48,6 @@ physics.set_velocity floater 0 0.5 0
 wait 20
 assert.velocity floater 0 0.5 0 0.001
 state.hash
-assert.state_hash 0x342bb3ca078f8af8
+assert.state_hash 0xb02d0fea63bc4146
 snapshot character_end
 quit

@@ -47,5 +47,5 @@ assert.grounded walker_local true
 assert.velocity walker_local 0 0 0 0.05
 snapshot stairs_ramp
 state.hash
-assert.state_hash 0x4767625639b2fb62
+assert.state_hash 0x1a8988cb86f273b5
 quit

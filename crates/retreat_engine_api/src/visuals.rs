@@ -9,6 +9,37 @@ use bevy::prelude::*;
 
 use crate::ClipPlayback;
 
+/// With [`EntityColor`]: replace the look instead of tinting it, by dropping the color texture (an
+/// orange model can then be blue). Removing it does not bring the texture back.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EntityColorFlat;
+
+/// Not drawn (with everything below it) while present: a dead player. It stays in the simulation
+/// and casts still hit it, so exclude it there.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HideVisuals;
+
+/// On a client, draws **another** player's entity from the server's own past states, at
+/// [`crate::NetViewTick`] (about 100 ms behind), instead of this machine's prediction: exactly
+/// what [`crate::cast_ray_at`] judges shots against. The simulation is untouched. Without server
+/// history (a server, single player) it does nothing.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[require(DrawnPose)]
+pub struct RemoteInterpolation;
+
+/// Where the engine draws the entity this frame (after smoothing or remote interpolation; the
+/// plain `Transform` without them). Add it to read the position a camera should follow, in an
+/// `Update` system `.after(DrawnPoseSystems)`. Read only.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
+pub struct DrawnPose {
+    pub translation: Vec3,
+    pub rotation: Quat,
+}
+
+/// The `Update` set in which [`DrawnPose`] is written.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct DrawnPoseSystems;
+
 /// Colors the entity and everything below it (a model's parts too). A texture is tinted. Removing
 /// the component keeps the last color.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
@@ -49,6 +80,7 @@ impl Default for CharacterVisual {
 /// caused by a client's correction fades out instead of snapping. Give it to **other** players'
 /// entities; the simulation `Transform` is untouched. The picture is up to one tick behind.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
+#[require(DrawnPose)]
 pub struct RenderSmoothing {
     /// Time in which half of a correction's jump disappears, seconds.
     pub half_life: f32,

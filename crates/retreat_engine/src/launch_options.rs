@@ -1,11 +1,17 @@
 //! Command-line arguments every Retreat app accepts.
 
+use std::time::Duration;
+
 use std::path::PathBuf;
 
 /// The seed used when `--seed` is not given.
 pub const DEFAULT_SEED: u64 = 0;
 
 /// Shown after every launch-argument error.
+/// Frames per second of a headless app that runs on real time: twice the 64 Hz tick, so a tick
+/// waits at most half a tick for its frame.
+const HEADLESS_FRAMES_PER_SECOND: f64 = 128.0;
+
 const LAUNCH_USAGE: &str = "usage: <app> [--commands <script.cmds>] [--seed <whole number>] [--headless [--no-render]] [--software-renderer] [--real-time] [--sound] [--server <port> | --connect <https://host:port> [--cert-hash <64 hex digits>]]";
 
 /// Whether and how the app takes part in a network game.
@@ -65,6 +71,18 @@ impl Default for LaunchOptions {
 }
 
 impl LaunchOptions {
+    /// How long a headless app waits between frames. Zero for a deterministic script (a command
+    /// script without `--real-time`), which runs one tick per frame as fast as the machine can;
+    /// otherwise time is real (a server, a real-time script) and a frame per tick is enough, so the
+    /// process does not use a whole CPU core.
+    pub fn headless_frame_wait(has_script: bool, real_time: bool) -> Duration {
+        if has_script && !real_time {
+            Duration::ZERO
+        } else {
+            Duration::from_secs_f64(1.0 / HEADLESS_FRAMES_PER_SECOND)
+        }
+    }
+
     /// True when the sound device must stay silent: a command script is loaded or `--headless` is
     /// set (verify runs), unless `--sound` asks for real playback. Interactive play is audible.
     /// Only the output is muted; the logical audio state is unchanged. The one rule for this.
@@ -394,5 +412,17 @@ mod tests {
             error.contains("cert_hash only makes sense with connect"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn only_a_deterministic_script_runs_headless_frames_back_to_back() {
+        assert_eq!(
+            LaunchOptions::headless_frame_wait(true, false),
+            Duration::ZERO
+        );
+        for (script, real_time) in [(false, false), (false, true), (true, true)] {
+            let wait = LaunchOptions::headless_frame_wait(script, real_time);
+            assert!(wait > Duration::from_millis(5) && wait < Duration::from_millis(10));
+        }
     }
 }

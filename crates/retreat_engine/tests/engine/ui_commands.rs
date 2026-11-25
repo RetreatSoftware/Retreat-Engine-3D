@@ -3,10 +3,10 @@
 //! and `scripts/verify/module_menu.cmds` (they need a camera and rendering for the pictures).
 
 use bevy::prelude::*;
-use retreat_engine::{CommandScript, RetreatCommandsPlugin, UiPanelsPlugin};
+use retreat_engine::{CommandScript, RetreatCommandsPlugin, UiHudPlugin, UiPanelsPlugin};
 use retreat_engine_api::{
-    AppCommandExt, AppUiExt, CommandOutcome, PanelAnchor, PanelDirection, UiButtonEntry, UiPanel,
-    UiPanels,
+    AppCommandExt, AppHudExt, AppUiExt, CommandOutcome, HudAnchor, HudKind, HudWidget, PanelAnchor,
+    PanelDirection, UiButtonEntry, UiPanel, UiPanels,
 };
 
 const MAX_UPDATES: u32 = 200;
@@ -42,11 +42,17 @@ fn run_script(text: &str) -> (App, Option<String>) {
             seed: 0,
             command_script: Some(CommandScript::from_text("test.cmds", text)),
         })
-        .add_plugins(UiPanelsPlugin)
+        .add_plugins((UiPanelsPlugin, UiHudPlugin))
         .register_command("test.noop", "test.noop", |_world, _args| {
             Ok(CommandOutcome::Continue)
         })
-        .register_panel(panel());
+        .register_panel(panel())
+        .register_hud_widget(HudWidget {
+            id: "status",
+            anchor: HudAnchor::TopLeft,
+            kind: HudKind::Text { font_size: 20.0 },
+            visible: true,
+        });
     app.finish();
     app.cleanup();
     for _ in 0..MAX_UPDATES {
@@ -127,7 +133,24 @@ fn a_panel_entry_with_an_unregistered_command_panics_at_startup() {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)
         .add_plugins(RetreatCommandsPlugin::default())
-        .add_plugins(UiPanelsPlugin)
-        .register_panel(panel());
+        .add_plugins((UiPanelsPlugin, UiHudPlugin))
+        .register_panel(panel())
+        .register_hud_widget(HudWidget {
+            id: "status",
+            anchor: HudAnchor::TopLeft,
+            kind: HudKind::Text { font_size: 20.0 },
+            visible: true,
+        });
     app.finish();
+}
+
+#[test]
+fn a_widget_text_is_set_asserted_and_hidden_by_command() {
+    let (_, failure) =
+        run_script("ui.set_text status round 2 of 3\nassert.ui_text status round 2 of 3\nquit\n");
+    assert_eq!(failure, None);
+    let hidden = failure_of("ui.hide_widget status\nassert.ui_text status\nquit\n");
+    assert!(hidden.contains("is hidden"), "{hidden}");
+    let unknown = failure_of("ui.set_text nope x\nquit\n");
+    assert!(unknown.contains("status"), "lists the widgets: {unknown}");
 }
