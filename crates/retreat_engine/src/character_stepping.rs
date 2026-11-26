@@ -14,8 +14,8 @@ use bevy::prelude::*;
 use bevy_rapier3d::plugin::context::RapierRigidBodySet;
 use retreat_engine_api::{
     AppCommandExt, CharacterGround, CharacterStepping, CommandArgs, CommandOutcome, CommandResult,
-    PhysicsBody, PhysicsBodyKind, PhysicsShape, PhysicsVelocitySet, RayCast, RetiredEntity,
-    ShapeCast, cast_ray, cast_shape,
+    Intangible, PhysicsBody, PhysicsBodyKind, PhysicsShape, PhysicsVelocitySet, RayCast,
+    RetiredEntity, ShapeCast, cast_ray, cast_shape,
 };
 
 use crate::entity_names::find_unique_entity_by_name;
@@ -54,6 +54,8 @@ struct Walker {
     ground: CharacterGround,
     half_height: f32,
     radius: f32,
+    /// What its casts ignore.
+    exclude: Vec<Entity>,
 }
 
 /// The body as the physics world has it.
@@ -97,9 +99,22 @@ pub(crate) fn step_characters(world: &mut World) {
                 ground: *ground,
                 half_height,
                 radius,
+                exclude: vec![entity],
             })
         })
         .collect();
+    // An intangible character meets fixed bodies only, like its collider (`intangibility.rs`).
+    let moving: Vec<Entity> = world
+        .query::<(Entity, &PhysicsBody)>()
+        .iter(world)
+        .filter(|(_, body)| body.kind != PhysicsBodyKind::Fixed)
+        .map(|(entity, _)| entity)
+        .collect();
+    for walker in &mut walkers {
+        if world.get::<Intangible>(walker.entity).is_some() {
+            walker.exclude.extend(&moving);
+        }
+    }
     walkers.sort_by(|left, right| left.name.cmp(&right.name));
     let mut moved = false;
     for walker in walkers {
@@ -165,7 +180,7 @@ fn sweep(
             rotation: Quat::IDENTITY,
             direction,
             max_distance: distance,
-            exclude: vec![walker.entity],
+            exclude: walker.exclude.clone(),
         },
     )
     .map(|hit| (hit.distance, hit.normal, hit.point))
@@ -204,7 +219,7 @@ fn walkable_surface(
             origin: point + away * EDGE_REACH + Vec3::Y * EDGE_REACH,
             direction: Vec3::NEG_Y,
             max_distance: EDGE_REACH * 2.0,
-            exclude: vec![walker.entity],
+            exclude: walker.exclude.clone(),
         },
     )?;
     // A distance of 0 means the ray started inside the obstacle: a wall, not a step.

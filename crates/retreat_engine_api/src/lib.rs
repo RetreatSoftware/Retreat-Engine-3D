@@ -20,7 +20,11 @@
 //!
 //! Readouts: [`UiHud`] text lines and a crosshair that a module changes while the game runs.
 //!
-//! Looks (render only): [`EntityColor`], [`CharacterVisual`], [`RenderSmoothing`].
+//! Looks (render only): [`EntityColor`], [`CharacterVisual`], [`SphereVisual`],
+//! [`RenderSmoothing`], and one-shot [`VisualEffects`].
+//!
+//! Projectiles: [`spawn_predicted`] creates an entity on the shooter's client before the server
+//! does, [`NetPose`] moves an entity without a body, [`Intangible`] switches collisions off.
 //!
 //! Camera: an entity with a [`GameCamera`] is a perspective camera; the engine maps it onto
 //! Bevy's camera components, modules only edit the description.
@@ -57,16 +61,20 @@ mod command_line;
 mod command_registry;
 mod game_camera;
 mod input_actions;
+mod intangible;
 mod lag_compensation;
 mod net;
+mod net_pose;
 mod net_state;
 mod physics_body;
 mod physics_queries;
+mod predicted_spawn;
 mod save_store;
 mod simulation_rng;
 mod sound_playback;
 mod ui_hud;
 mod ui_panel;
+mod visual_effects;
 mod visuals;
 
 pub use analog_input::{AnalogInput, AppAxisExt, CursorCapture, InputAxis};
@@ -85,6 +93,7 @@ pub use input_actions::{
     AppInputExt, HELD_ONLY, INPUT_KEY_NAMES, InputAction, InputActionSystems, InputActions,
     InputKey,
 };
+pub use intangible::Intangible;
 pub use lag_compensation::{LagCaster, MAX_REWIND_TICKS, NetViewTick, cast_ray_at, cast_shape_at};
 pub use net::{
     AcceptEveryone, AppNetExt, NetAllowedCommands, NetClientJoined, NetClientLeft,
@@ -92,6 +101,7 @@ pub use net::{
     NetInputQueue, NetLocalClient, NetPlayerIds, NetReplaying, Replicated, SyncedKind,
     add_net_contract,
 };
+pub use net_pose::NetPose;
 pub use net_state::{
     AppNetStateExt, NetState, NetStateRegistry, NetStateType, RemoveNetEntity, RetiredEntity,
     decode_net_state, encode_net_state,
@@ -101,6 +111,9 @@ pub use physics_body::{
     PhysicsVelocityChange, PhysicsVelocitySet, RemovePhysicsBody,
 };
 pub use physics_queries::{CastHit, PhysicsCaster, RayCast, ShapeCast, cast_ray, cast_shape};
+pub use predicted_spawn::{
+    NetInputTick, PREDICTION_REORDER_TICKS, PredictedSpawn, spawn_predicted,
+};
 pub use save_store::{
     MemorySaveBackend, SAVE_FORMAT_VERSION, SaveBackend, SaveError, SaveStore, SavedData,
     decode_save, encode_save, is_valid_module_id, serde_json,
@@ -116,7 +129,8 @@ pub use ui_panel::{
     PANEL_MARGIN, PanelAnchor, PanelDirection, PanelLayout, PanelRect, ROW_MAX_BUTTON_WIDTH,
     TITLE_HEIGHT, UiButtonEntry, UiPanel, UiPanels, compute_panel_layout, visible_entries,
 };
+pub use visual_effects::{EFFECT_MEMORY_TICKS, EffectTime, VisualEffect, VisualEffects};
 pub use visuals::{
     CharacterVisual, DrawnPose, DrawnPoseSystems, EntityColor, EntityColorFlat, HideVisuals,
-    RemoteInterpolation, RenderSmoothing,
+    RemoteInterpolation, RenderSmoothing, SphereVisual,
 };

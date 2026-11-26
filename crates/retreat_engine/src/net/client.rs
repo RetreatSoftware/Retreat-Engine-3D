@@ -15,18 +15,21 @@
 //! `welcome.tick + round trip + margin_ticks`: where the server will be when the client's inputs arrive,
 //! plus a margin for jitter (negative margins make inputs late on purpose, in tests).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use bevy::app::{FixedFirst, FixedLast, RunFixedMainLoop, RunFixedMainLoopSystems};
 use bevy::prelude::*;
 use retreat_engine_api::{
-    NetCommandSender, NetInputQueue, NetLocalClient, NetReplaying, NetStateRegistry, NetViewTick,
-    PhysicsBody, Replicated, RetiredEntity, run_command_line,
+    NetCommandSender, NetInputQueue, NetInputTick, NetLocalClient, NetReplaying, NetStateRegistry,
+    NetViewTick, PREDICTION_REORDER_TICKS, PhysicsBody, PredictedSpawn, Replicated, RetiredEntity,
+    run_command_line,
 };
 
 use super::body_state::{BodyState, apply_body_states, read_replicated_body_states};
-use super::lag_compensation::{CLIENT_HISTORY_TICKS, PoseHistory, ViewClock, advance_view};
+use super::lag_compensation::{
+    CLIENT_HISTORY_TICKS, PoseHistory, ViewClock, advance_view, net_poses_in,
+};
 use super::module_state::{
     ModuleState, apply_module_states, module_state_lists_match, read_module_states,
 };
@@ -35,6 +38,7 @@ use super::tick_pacing::{ClientPacing, TimingReport};
 use super::transport::{ClientEvent, ClientTransport};
 use super::wire;
 use super::{ClientMessage, MAX_HISTORY_TICKS, ServerMessage, simulate_tick, state_lists_match};
+use crate::net_pose::sync_net_poses;
 use crate::physics::{spawn_body_from_description, sync_body_readouts};
 use crate::physics_snapshot::{PhysicsSnapshot, capture_physics, restore_physics};
 use crate::render_smoothing::{absorb_correction, poses_before_correction};
@@ -134,10 +138,10 @@ pub struct NetClient {
     /// True while a correction replays ticks.
     replaying: bool,
     replay_lines: Vec<String>,
-    /// Server states received and not processed yet.
-    pending_states: Vec<(u64, ReplicatedState)>,
-    /// Whole body states received since the last tick, for the pose history.
-    received: Vec<(u64, Vec<BodyState>)>,
+    /// Server states received and not processed yet: (tick, input tick run, state).
+    pending_states: Vec<(u64, u64, ReplicatedState)>,
+    /// Whole states received since the last tick, for the pose history.
+    received: Vec<(u64, ReplicatedState)>,
     /// State chunks of ticks that are not complete yet: tick -> chunks received so far (by index).
     partial_states: BTreeMap<u64, Vec<Option<ReplicatedState>>>,
     /// Rebuilds whole states from the deltas the server sends.
@@ -179,6 +183,7 @@ impl NetClient {
     fn add_state_chunk(
         &mut self,
         tick: u64,
+        input_tick: u64,
         full: bool,
         chunk: u16,
         chunks: u16,
@@ -213,8 +218,8 @@ impl NetClient {
             let full = self.partial_full.remove(&tick).unwrap_or(full);
             match self.assembler.assemble(tick, full, complete) {
                 Some(whole) => {
-                    self.received.push((tick, whole.bodies.clone()));
-                    self.pending_states.push((tick, whole));
+                    self.received.push((tick, whole.clone()));
+                    self.pending_states.push((tick, input_tick, whole));
                 }
                 None => self.states_discarded += 1,
             }
@@ -335,6 +340,7 @@ fn pump_transport(world: &mut World) {
             }
             Ok(ServerMessage::State {
                 tick,
+                input_tick,
                 full,
                 chunk,
                 chunks,
@@ -342,6 +348,7 @@ fn pump_transport(world: &mut World) {
                 states,
             }) => client.add_state_chunk(
                 tick,
+                input_tick,
                 full,
                 chunk,
                 chunks,
@@ -378,8 +385,9 @@ fn pump_transport(world: &mut World) {
     client.steps += 1;
     let received = std::mem::take(&mut client.received);
     let mut history = world.resource_mut::<PoseHistory>();
-    for (tick, bodies) in received {
-        history.record(tick, &bodies, CLIENT_HISTORY_TICKS);
+    for (tick, state) in received {
+        let poses = net_poses_in(&state.states);
+        history.record(tick, &state.bodies, &poses, CLIENT_HISTORY_TICKS);
     }
     if let Some(client_id) = joined_as {
         world.insert_resource(NetLocalClient(Some(client_id)));
@@ -413,6 +421,10 @@ fn client_before_tick(world: &mut World) {
         ));
     }
     let own_id = world.resource::<NetClient>().id;
+    let input_tick = world.resource::<NetClient>().tick + 1;
+    world
+        .get_resource_or_insert_with(NetInputTick::default)
+        .begin(Some(input_tick));
     for line in &lines {
         // The client predicts its own commands as if it were the sender.
         world.insert_resource(NetCommandSender(Some(own_id)));
@@ -425,6 +437,7 @@ fn client_before_tick(world: &mut World) {
                 .push(format!("`{line}`: {error}"));
         }
     }
+    world.resource_mut::<NetInputTick>().begin(None);
     world.resource_mut::<NetClient>().current_inputs = lines;
 }
 
@@ -486,12 +499,12 @@ pub fn process_client_states(world: &mut World) {
         let present = client.tick;
         std::mem::take(&mut client.pending_states)
             .into_iter()
-            .partition(|(tick, _)| *tick <= present)
+            .partition(|(tick, ..)| *tick <= present)
     };
     world.resource_mut::<NetClient>().pending_states = waiting;
-    ready.sort_by_key(|(tick, _)| *tick);
-    for (tick, state) in ready {
-        receive_state(world, tick, state);
+    ready.sort_by_key(|(tick, ..)| *tick);
+    for (tick, input_tick, state) in ready {
+        receive_state(world, tick, input_tick, state);
     }
     keep_pace(world);
 }
@@ -523,7 +536,12 @@ fn keep_pace(world: &mut World) {
     client.pacing.adjusted(tick);
 }
 
-fn receive_state(world: &mut World, server_tick: u64, mut server: ReplicatedState) {
+fn receive_state(
+    world: &mut World,
+    server_tick: u64,
+    input_tick: u64,
+    mut server: ReplicatedState,
+) {
     let registry = world.resource::<NetStateRegistry>().clone();
     // Values this build cannot read are left out, or they would force a correction every time.
     let received = server.states.len();
@@ -536,6 +554,7 @@ fn receive_state(world: &mut World, server_tick: u64, mut server: ReplicatedStat
              older side"
         );
     }
+    let awaited = awaited_spawns(world, input_tick, &server.states);
     let mut client = world.resource_mut::<NetClient>();
     client.stats.states_received += 1;
     client.stats.unusable_module_states += unusable;
@@ -543,19 +562,48 @@ fn receive_state(world: &mut World, server_tick: u64, mut server: ReplicatedStat
         client.stats.states_without_history += 1;
         return;
     };
+    // What the server has not been able to make yet is not a difference.
+    let predicted: Vec<ModuleState> = entry
+        .state
+        .states
+        .iter()
+        .filter(|state| !awaited.contains(&state.entity))
+        .cloned()
+        .collect();
     if state_lists_match(&entry.state.bodies, &server.bodies)
-        && module_state_lists_match(&registry, &entry.state.states, &server.states)
+        && module_state_lists_match(&registry, &predicted, &server.states)
     {
         client.stats.states_matching += 1;
         // Ticks before the confirmed one can never need a rollback again.
         client.history = client.history.split_off(&server_tick);
         return;
     }
-    correct(world, server_tick, &server);
+    correct(world, server_tick, &server, &awaited);
+}
+
+/// Marks the predicted spawns the server lists as confirmed, and returns the names of those it
+/// cannot list yet: it has not run inputs far enough past the one that made them.
+fn awaited_spawns(world: &mut World, input_tick: u64, server: &[ModuleState]) -> BTreeSet<String> {
+    let listed: BTreeSet<&str> = server.iter().map(|state| state.entity.as_str()).collect();
+    let mut awaited = BTreeSet::new();
+    let mut spawns = world.query::<(&Name, &mut PredictedSpawn)>();
+    for (name, mut spawn) in spawns.iter_mut(world) {
+        if listed.contains(name.as_str()) {
+            spawn.confirmed = true;
+        } else if !spawn.confirmed && input_tick < spawn.input_tick + PREDICTION_REORDER_TICKS {
+            awaited.insert(name.as_str().to_string());
+        }
+    }
+    awaited
 }
 
 /// Rewinds to `server_tick`, applies the server's states and replays the inputs since.
-fn correct(world: &mut World, server_tick: u64, server: &ReplicatedState) {
+fn correct(
+    world: &mut World,
+    server_tick: u64,
+    server: &ReplicatedState,
+    awaited: &BTreeSet<String>,
+) {
     let server_bodies = &server.bodies;
     let replay_inputs: Vec<(u64, Vec<String>)> = {
         let client = world.resource::<NetClient>();
@@ -604,7 +652,8 @@ fn correct(world: &mut World, server_tick: u64, server: &ReplicatedState) {
         despawn_body_named(world, name);
     }
     // After the bodies, so a body created above gets its module state.
-    apply_module_states(world, &server.states);
+    apply_module_states(world, &server.states, awaited);
+    sync_net_poses(world);
     // The replay's first tick must read the corrected poses and velocities.
     sync_body_readouts(world);
     // Replay: the history of every tick after `server_tick` is rebuilt.

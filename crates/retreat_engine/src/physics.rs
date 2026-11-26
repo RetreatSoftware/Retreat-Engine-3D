@@ -27,14 +27,15 @@ use bevy_rapier3d::prelude::{
 use bevy_rapier3d::rapier::dynamics::CoefficientCombineRule;
 use retreat_engine_api::{
     AppCommandExt, AppNetStateExt, CharacterGround, CharacterStepping, CommandArgs, CommandOutcome,
-    CommandResult, InputActionSystems, PhysicsBody, PhysicsBodyKind, PhysicsControlSystems,
-    PhysicsShape, PhysicsTeleport, PhysicsVelocity, PhysicsVelocityChange, PhysicsVelocitySet,
-    Replicated, RetiredEntity,
+    CommandResult, InputActionSystems, Intangible, PhysicsBody, PhysicsBodyKind,
+    PhysicsControlSystems, PhysicsShape, PhysicsTeleport, PhysicsVelocity, PhysicsVelocityChange,
+    PhysicsVelocitySet, Replicated, RetiredEntity,
 };
 
 use crate::character_stepping::{add_character_stepping_commands, step_characters};
 use crate::command_script::{CommandScriptSystems, fail_running_script};
 use crate::entity_names::{ensure_name_is_free, find_unique_entity_by_name};
+use crate::intangibility::{apply_collision_groups, set_intangible_command};
 use crate::physics_queries::add_physics_queries;
 
 /// Color of boxes spawned by `physics.spawn_box`.
@@ -97,7 +98,7 @@ impl Plugin for PhysicsPlugin {
                         .chain()
                         .after(PhysicsControlSystems)
                         .before(PhysicsSet::SyncBackend),
-                    configure_character_bodies
+                    (configure_character_bodies, apply_collision_groups)
                         .after(PhysicsSet::SyncBackend)
                         .before(PhysicsSet::StepSimulation),
                     (copy_proxy_poses_to_owners, sync_body_readouts)
@@ -110,7 +111,13 @@ impl Plugin for PhysicsPlugin {
                 "physics.spawn_box <name> <x> <y> <z> <size>",
                 spawn_box_command,
             )
+            .register_net_state::<Intangible>()
             .register_command("physics.reset", "physics.reset", reset_command)
+            .register_command(
+                "physics.set_intangible",
+                "physics.set_intangible <name> <0|1>",
+                set_intangible_command,
+            )
             .register_command(
                 "physics.spawn_character",
                 "physics.spawn_character <name> <x> <y> <z> <half_height> <radius>",

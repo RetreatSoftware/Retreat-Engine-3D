@@ -19,10 +19,12 @@ mod entity_names;
 mod gpu_pipeline_errors;
 mod headless;
 mod input_actions;
+mod intangibility;
 mod launch_options;
 mod material;
 mod model;
 pub mod net;
+mod net_pose;
 mod pending_command_work;
 mod perf;
 mod physics;
@@ -37,6 +39,7 @@ mod state_hash;
 mod storage;
 mod ui_hud;
 mod ui_panels;
+mod visual_effects;
 mod visuals;
 
 use bevy::app::ScheduleRunnerPlugin;
@@ -69,6 +72,7 @@ pub use material::{MaterialCommandsPlugin, TEXTURE_FILE_EXTENSIONS};
 pub use model::{
     MODEL_FILE_EXTENSIONS, MODEL_NODE_NAME_SEPARATOR, ModelCommandsPlugin, namespaced_node_name,
 };
+pub use net_pose::NetPosePlugin;
 pub use pending_command_work::PendingCommandWork;
 pub use perf::{
     FRAME_TIME_WINDOW, FrameTimeSummary, FrameTimes, MIN_FRAMES_FOR_ASSERT, PerfCommandsPlugin,
@@ -94,6 +98,7 @@ pub use state_hash::{
 pub use storage::StorageCommandsPlugin;
 pub use ui_hud::UiHudPlugin;
 pub use ui_panels::UiPanelsPlugin;
+pub use visual_effects::{EFFECT_NAME_PREFIX, EffectLog, VisualEffectsPlugin};
 pub use visuals::{VISUAL_NAME_SUFFIX, VisualsPlugin};
 
 /// Sets up the Bevy foundation every Retreat game runs on.
@@ -275,6 +280,8 @@ impl Plugin for RetreatEnginePlugin {
             RenderSmoothingPlugin,
             VisualsPlugin,
             UiHudPlugin,
+            NetPosePlugin,
+            VisualEffectsPlugin,
         ));
         // Scans the render world for failed pipelines, so it needs one.
         if !self.no_render {

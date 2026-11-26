@@ -11,9 +11,9 @@ use bevy::prelude::*;
 use retreat_engine_api::{
     AppCommandExt, AppHudExt, AppInputExt, AppNetExt, AppNetStateExt, CommandArgs, CommandOutcome,
     CommandResult, HELD_ONLY, HideVisuals, HudAnchor, HudKind, HudWidget, InputAction,
-    InputActionSystems, InputActions, InputKey, NetCommandSender, NetInputQueue, NetLocalClient,
-    NetReplaying, NetState, NetViewTick, PhysicsTeleport, RayCast, RetiredEntity, UiHud,
-    cast_ray_at, run_command_line,
+    InputActionSystems, InputActions, InputKey, Intangible, NetCommandSender, NetInputQueue,
+    NetLocalClient, NetReplaying, NetState, NetViewTick, PhysicsTeleport, RayCast, RetiredEntity,
+    UiHud, cast_ray_at, run_command_line,
 };
 use serde::{Deserialize, Serialize};
 
@@ -24,7 +24,7 @@ const SHOT_DAMAGE: u32 = 50;
 /// How long a walker that lost its health stays down (2 seconds).
 pub const DOWN_TICKS: u32 = 128;
 /// Height of the eyes above the walker's center.
-const EYE_HEIGHT: f32 = 0.5;
+pub const EYE_HEIGHT: f32 = 0.5;
 const SHOT_RANGE: f32 = 100.0;
 /// The owner number of a dummy walker (no client has it).
 const DUMMY_OWNER: u32 = 99;
@@ -145,36 +145,41 @@ fn fire_command(world: &mut World, args: &CommandArgs) -> CommandResult {
         .get::<Transform>(shooter)
         .map_or(Vec3::ZERO, |transform| transform.translation)
         + Vec3::Y * EYE_HEIGHT;
-    // Downed walkers cannot be hit.
-    let mut exclude: Vec<Entity> = world
-        .query::<(Entity, &WalkerHealth)>()
-        .iter(world)
-        .filter(|(_, health)| health.down_ticks > 0)
-        .map(|(entity, _)| entity)
-        .collect();
-    exclude.push(shooter);
     let aim = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch) * Vec3::NEG_Z;
     let cast = RayCast {
         origin,
         direction: aim,
         max_distance: SHOT_RANGE,
-        exclude,
+        // Downed walkers are intangible: the cast does not meet them.
+        exclude: vec![shooter],
     };
     let Some(hit) = cast_ray_at(world, &cast, view_tick) else {
         return Ok(CommandOutcome::Continue);
     };
     // The present health decides; only the aim looked into the past.
-    let Some(mut target) = world.get_mut::<WalkerHealth>(hit.entity) else {
-        return Ok(CommandOutcome::Continue);
-    };
-    target.health = target.health.saturating_sub(SHOT_DAMAGE);
-    if target.health == 0 {
-        target.down_ticks = DOWN_TICKS;
-    }
-    if let Some(mut own) = world.get_mut::<WalkerHealth>(shooter) {
+    if hurt_walker(world, hit.entity, SHOT_DAMAGE)
+        && let Some(mut own) = world.get_mut::<WalkerHealth>(shooter)
+    {
         own.hits += 1;
     }
     Ok(CommandOutcome::Continue)
+}
+
+/// Damages a standing walker; one that runs out of health goes down and becomes intangible.
+/// False when `target` is not a standing walker.
+pub fn hurt_walker(world: &mut World, target: Entity, damage: u32) -> bool {
+    let Some(mut health) = world.get_mut::<WalkerHealth>(target) else {
+        return false;
+    };
+    if health.down_ticks > 0 {
+        return false;
+    }
+    health.health = health.health.saturating_sub(damage);
+    if health.health == 0 {
+        health.down_ticks = DOWN_TICKS;
+        world.entity_mut(target).insert(Intangible);
+    }
+    true
 }
 
 fn get_up_again(
@@ -190,7 +195,8 @@ fn get_up_again(
             health.health = FULL_HEALTH;
             commands
                 .entity(entity)
-                .insert(PhysicsTeleport(health.spawn));
+                .insert(PhysicsTeleport(health.spawn))
+                .remove::<Intangible>();
         }
     }
 }

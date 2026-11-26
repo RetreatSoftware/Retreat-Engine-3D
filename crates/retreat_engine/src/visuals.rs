@@ -9,16 +9,19 @@
 //!   appear later (a model that finishes loading).
 //!
 //! - `HideVisuals` hides an entity and everything below it.
+//! - `SphereVisual` is a child `<name>/sphere`.
 //!
 //! Commands: `visual.set_color|set_color_flat <name> <r> <g> <b>`, `visual.hide|show <name>`,
+//! `visual.set_sphere <name> <radius> <r> <g> <b> <glow>`,
 //! `visual.set_character <name> <model|shape> <scale> <offset_y> <yaw>`,
 //! `visual.play <name> <clip> <speed>`, `assert.visual_ready <name>`.
 
+use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 use retreat_engine_api::{
     AnimationPlayback, AppCommandExt, CharacterVisual, ClipPlayback, CommandArgs, CommandOutcome,
     CommandResult, EntityColor, EntityColorFlat, HideVisuals, PhysicsBody, PhysicsShape,
-    RetiredEntity,
+    RetiredEntity, SphereVisual,
 };
 
 use crate::entity_names::find_unique_entity_by_name;
@@ -54,6 +57,7 @@ impl Plugin for VisualsPlugin {
             Update,
             (
                 build_character_visuals,
+                build_sphere_visuals,
                 apply_entity_colors,
                 apply_hidden_visuals,
             )
@@ -68,6 +72,11 @@ impl Plugin for VisualsPlugin {
             "visual.set_color_flat",
             "visual.set_color_flat <name> <red> <green> <blue>",
             set_color_flat_command,
+        )
+        .register_command(
+            "visual.set_sphere",
+            "visual.set_sphere <name> <radius> <red> <green> <blue> <glow>",
+            set_sphere_command,
         )
         .register_command("visual.hide", "visual.hide <name>", hide_command)
         .register_command("visual.show", "visual.show <name>", show_command)
@@ -222,6 +231,98 @@ fn spawn_shape(world: &mut World, owner: Entity, name: String, transform: Transf
         KeepsColor,
     ));
     body
+}
+
+/// On the owner of a `SphereVisual`: its mesh child and what that was made from.
+#[derive(Component)]
+struct BuiltSphere {
+    child: Entity,
+    visual: SphereVisual,
+}
+
+fn sphere_material(visual: &SphereVisual) -> StandardMaterial {
+    StandardMaterial {
+        base_color: visual.color,
+        emissive: visual.color.to_linear() * visual.glow,
+        ..default()
+    }
+}
+
+/// Draws `SphereVisual` as a child `<name>/sphere`: one shared unit mesh, scaled to the radius.
+fn build_sphere_visuals(
+    mut owners: Query<(Entity, &Name, &SphereVisual, Option<&mut BuiltSphere>)>,
+    mut removed: RemovedComponents<SphereVisual>,
+    built: Query<&BuiltSphere, Without<SphereVisual>>,
+    mut parts: Query<(&mut Transform, &MeshMaterial3d<StandardMaterial>), Without<SphereVisual>>,
+    (mut meshes, mut materials): (ResMut<Assets<Mesh>>, ResMut<Assets<StandardMaterial>>),
+    mut unit: Local<Option<Handle<Mesh>>>,
+    mut commands: Commands,
+) {
+    for owner in removed.read() {
+        if let Ok(sphere) = built.get(owner) {
+            commands.entity(sphere.child).despawn();
+            commands.entity(owner).remove::<BuiltSphere>();
+        }
+    }
+    for (owner, name, visual, sphere) in &mut owners {
+        let scale = Transform::from_scale(Vec3::splat(visual.radius.max(0.0)));
+        let Some(mut sphere) = sphere else {
+            let mesh = unit
+                .get_or_insert_with(|| meshes.add(Sphere::new(1.0)))
+                .clone();
+            let child = commands
+                .spawn((
+                    Name::new(format!("{}/sphere", name.as_str())),
+                    Mesh3d(mesh),
+                    MeshMaterial3d(materials.add(sphere_material(visual))),
+                    scale,
+                    ChildOf(owner),
+                ))
+                .id();
+            if visual.glow > 0.0 {
+                // Something that shines casts no shadow.
+                commands.entity(child).insert(NotShadowCaster);
+            }
+            commands.entity(owner).insert(BuiltSphere {
+                child,
+                visual: *visual,
+            });
+            continue;
+        };
+        if sphere.visual == *visual {
+            continue;
+        }
+        let Ok((mut transform, material)) = parts.get_mut(sphere.child) else {
+            continue;
+        };
+        *transform = scale;
+        if (sphere.visual.color, sphere.visual.glow) != (visual.color, visual.glow)
+            && let Some(mut found) = materials.get_mut(&material.0)
+        {
+            *found = sphere_material(visual);
+        }
+        sphere.visual = *visual;
+    }
+}
+
+/// `visual.set_sphere <name> <radius> <r> <g> <b> <glow>`.
+fn set_sphere_command(world: &mut World, args: &CommandArgs) -> CommandResult {
+    args.expect_count(6)?;
+    let name: String = args.parse(0, "name")?;
+    let number = |index, label| args.parse::<f32>(index, label);
+    let radius = number(1, "radius")?;
+    let color = Color::srgb(number(2, "r")?, number(3, "g")?, number(4, "b")?);
+    let glow = number(5, "glow")?;
+    if !(radius.is_finite() && radius > 0.0 && glow.is_finite() && glow >= 0.0) {
+        return Err(args.failure("the radius is positive and the glow not negative"));
+    }
+    let entity = find_unique_entity_by_name(world, args, &name)?;
+    world.entity_mut(entity).insert(SphereVisual {
+        radius,
+        color,
+        glow,
+    });
+    Ok(CommandOutcome::Continue)
 }
 
 /// A part `EntityColor` leaves alone.

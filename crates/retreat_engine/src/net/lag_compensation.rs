@@ -14,9 +14,12 @@
 use std::collections::BTreeMap;
 
 use bevy::prelude::*;
-use retreat_engine_api::{MAX_REWIND_TICKS, NetViewTick, PhysicsBody};
+use retreat_engine_api::{
+    MAX_REWIND_TICKS, NetPose, NetState, NetViewTick, PhysicsBody, RetiredEntity, decode_net_state,
+};
 
 use super::body_state::BodyState;
+use super::module_state::ModuleState;
 
 /// How far behind the newest server state a client draws other players: room for the broadcast
 /// interval and some jitter (about 100 ms).
@@ -31,9 +34,34 @@ const VIEW_SNAP_TICKS: f64 = 32.0;
 /// Where one body was.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PastBody {
-    pub description: PhysicsBody,
+    /// `None` for a bodyless [`NetPose`] entity: it can be drawn in the past but not hit.
+    pub description: Option<PhysicsBody>,
     pub translation: Vec3,
     pub rotation: Quat,
+}
+
+/// A bodyless entity's name and synced pose.
+pub type NamedPose = (String, NetPose);
+
+/// The live [`NetPose`] entities of `world` without a body (what a server records).
+pub fn read_net_poses(world: &mut World) -> Vec<NamedPose> {
+    world
+        .query_filtered::<(&Name, &NetPose), (Without<PhysicsBody>, Without<RetiredEntity>)>()
+        .iter(world)
+        .map(|(name, pose)| (name.as_str().to_string(), *pose))
+        .collect()
+}
+
+/// The poses among received module states (what a client records).
+pub fn net_poses_in(states: &[ModuleState]) -> Vec<NamedPose> {
+    states
+        .iter()
+        .filter(|state| state.id == NetPose::ID)
+        .filter_map(|state| {
+            let pose = decode_net_state::<NetPose>(&state.data).ok()?;
+            Some((state.entity.clone(), pose))
+        })
+        .collect()
 }
 
 /// Where the moving bodies were, by server tick.
@@ -44,19 +72,26 @@ pub struct PoseHistory {
 
 impl PoseHistory {
     /// Records the state after server tick `tick`, keeping `depth` ticks.
-    pub fn record(&mut self, tick: u64, bodies: &[BodyState], depth: u64) {
-        let poses = bodies
+    pub fn record(&mut self, tick: u64, bodies: &[BodyState], poses: &[NamedPose], depth: u64) {
+        let mut recorded: BTreeMap<String, PastBody> = bodies
             .iter()
             .map(|body| {
                 let past = PastBody {
-                    description: body.description.clone(),
+                    description: Some(body.description.clone()),
                     translation: body.translation,
                     rotation: body.rotation,
                 };
                 (body.name.clone(), past)
             })
             .collect();
-        self.ticks.insert(tick, poses);
+        for (name, pose) in poses {
+            recorded.entry(name.clone()).or_insert(PastBody {
+                description: None,
+                translation: pose.translation,
+                rotation: pose.rotation,
+            });
+        }
+        self.ticks.insert(tick, recorded);
         let newest = self.newest().unwrap_or(tick);
         self.ticks.retain(|old, _| newest - old <= depth);
     }
@@ -147,7 +182,7 @@ mod tests {
         let mut history = PoseHistory::default();
         assert!(history.at(3.0).is_none());
         for tick in (10..=30).step_by(2) {
-            history.record(tick, &body(tick as f32), 10);
+            history.record(tick, &body(tick as f32), &[], 10);
         }
         assert_eq!(x_at(&history, 25.0), 25.0);
         assert_eq!(x_at(&history, 25.5), 25.5);

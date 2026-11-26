@@ -12,6 +12,7 @@ mod tally;
 mod toolbar;
 mod walker;
 mod walker_combat;
+mod walker_rocket;
 
 use bevy::prelude::*;
 use retreat_engine_api::AppNetExt;
@@ -39,6 +40,7 @@ fn add_sandbox_plugins(app: &mut App) {
         walker::WalkerPlugin,
         // A demo shot: lag compensation, health, hiding, readouts (`sandbox.walker_fire`).
         walker_combat::WalkerCombatPlugin,
+        walker_rocket::WalkerRocketPlugin,
         // The first gameplay module (Retreat-Modules): `spawner.rain <count>`.
         retreat_module_spawner::SpawnerModulePlugin,
         // The orbit camera module: `orbit.start`, arrow keys held rotate the sandbox camera.

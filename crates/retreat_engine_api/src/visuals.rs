@@ -9,6 +9,17 @@ use bevy::prelude::*;
 
 use crate::ClipPlayback;
 
+/// A plain sphere drawn at the entity (a projectile without a physics body or a model). Render
+/// only. [`EntityColor`] on the same entity overrides `color`.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+#[require(Transform, Visibility)]
+pub struct SphereVisual {
+    pub radius: f32,
+    pub color: Color,
+    /// Light the sphere gives off itself: 0 is lit by the scene only, 1 and more looks glowing.
+    pub glow: f32,
+}
+
 /// With [`EntityColor`]: replace the look instead of tinting it, by dropping the color texture (an
 /// orange model can then be blue). Removing it does not bring the texture back.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]

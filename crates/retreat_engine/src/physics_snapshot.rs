@@ -29,11 +29,13 @@ use bevy_rapier3d::prelude::RigidBody;
 use bevy_rapier3d::rapier::dynamics::{CCDSolver, IntegrationParameters, IslandManager};
 use bevy_rapier3d::rapier::geometry::{DefaultBroadPhase, NarrowPhase};
 use retreat_engine_api::{
-    PhysicsBody, PhysicsTeleport, PhysicsVelocityChange, PhysicsVelocitySet, RetiredEntity,
-    SimulationRng,
+    PhysicsBody, PhysicsTeleport, PhysicsVelocityChange, PhysicsVelocitySet, PredictedSpawn,
+    RetiredEntity, SimulationRng,
 };
 
-use crate::net::module_state::{ModuleStateSnapshot, capture_module_state, restore_module_state};
+use crate::net::module_state::{
+    ModuleStateSnapshot, capture_module_state, restore_module_state, set_aside,
+};
 use crate::physics::sync_body_readouts;
 
 /// Everything needed to rewind the physics world to the moment of capture.
@@ -247,6 +249,15 @@ pub fn restore_physics(world: &mut World, snapshot: &PhysicsSnapshot) -> Result<
         }
     }
     restore_module_state(world, &snapshot.module_state);
+    // Predicted spawns that were set aside when the snapshot was taken are set aside again.
+    for entity in &snapshot.retired {
+        if world
+            .get_entity(*entity)
+            .is_ok_and(|found| found.contains::<PredictedSpawn>())
+        {
+            set_aside(world, *entity);
+        }
+    }
     snapshot.requests.restore(world);
     sync_body_readouts(world);
     Ok(())

@@ -8,7 +8,7 @@
 use super::{ClientMessage, ServerMessage};
 
 /// The version of the wire format this build speaks. Bump it whenever a message type changes.
-pub const WIRE_VERSION: u8 = 9;
+pub const WIRE_VERSION: u8 = 10;
 
 /// Why bytes could not be turned into a message.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,6 +122,7 @@ mod tests {
     #[test]
     fn a_state_message_round_trips_exactly() {
         let message = ServerMessage::State {
+            input_tick: 97,
             chunk: 1,
             chunks: 3,
             full: true,
@@ -168,6 +169,7 @@ mod tests {
     #[test]
     fn a_body_costs_a_small_fixed_number_of_bytes() {
         let one = encode_server_message(&ServerMessage::State {
+            input_tick: 5,
             chunk: 0,
             full: true,
             chunks: 1,
@@ -176,6 +178,7 @@ mod tests {
             states: Vec::new(),
         });
         let two = encode_server_message(&ServerMessage::State {
+            input_tick: 5,
             chunk: 0,
             full: true,
             chunks: 1,
@@ -211,6 +214,7 @@ mod tests {
     #[test]
     fn every_truncation_and_some_garbage_is_refused_without_panicking() {
         let bytes = encode_server_message(&ServerMessage::State {
+            input_tick: 5,
             chunk: 0,
             full: true,
             chunks: 1,
@@ -241,6 +245,7 @@ mod tests {
             .map(|index| body(&format!("a_longer_body_name_{index:03}")))
             .collect();
         let bytes = encode_server_message(&ServerMessage::State {
+            input_tick: 5,
             chunk: 0,
             full: true,
             chunks: 1,

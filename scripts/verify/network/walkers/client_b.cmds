@@ -13,7 +13,11 @@ input.key_up Space
 input.clear_axis walk_x
 wait_until 20000 assert.entity_exists walker_0
 wait_until 20000 assert.entity_exists walker_1
+# Client A fires a rocket: it explodes once here too.
+wait_until 20000 assert.effects_played 1
 wait 500
+assert.effects_played 1
+assert.walker_rockets 0
 net.bodies
 net.states
 net.stats

@@ -2,7 +2,10 @@
 wait_until 20000 assert.net_clients 2
 wait_until 20000 assert.entity_exists walker_0
 wait_until 20000 assert.entity_exists walker_1
+wait_until 20000 assert.effects_played 1
 wait 500
+assert.effects_played 1
+assert.walker_rockets 0
 net.bodies
 net.states
 net.stats

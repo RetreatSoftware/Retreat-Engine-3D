@@ -23,12 +23,12 @@ use bevy::app::{FixedFirst, FixedLast};
 use bevy::prelude::*;
 use retreat_engine_api::{
     MAX_REWIND_TICKS, NetAllowedCommands, NetClientJoined, NetClientLeft, NetCommandSender,
-    NetIdentity, NetIdentityDecision, NetIdentityRequest, NetPlayerIds, NetStateRegistry,
-    run_command_line,
+    NetIdentity, NetIdentityDecision, NetIdentityRequest, NetInputTick, NetPlayerIds,
+    NetStateRegistry, run_command_line,
 };
 
 use super::body_state::{BodyState, read_replicated_body_states};
-use super::lag_compensation::PoseHistory;
+use super::lag_compensation::{PoseHistory, read_net_poses};
 use super::limits::{ConnectionGuard, Refusal, ServerLimits, Verdict, check_input_content};
 use super::module_state::{MAX_MODULE_STATE_BYTES, ModuleState, encoded_size, read_module_states};
 use super::state_delta::{DeltaEncoder, ReplicatedState, split_into_chunks};
@@ -113,15 +113,20 @@ struct ConnectionState {
     timing: InputWindow,
     /// The tick of the last late input scheduled for it (see `schedule_input`).
     spread_end: u64,
+    /// The highest input tick run so far (sent back with every state).
+    ran_input: u64,
 }
+
+/// One input waiting to run: (client id, the client's tick of it, command lines).
+type BufferedInput = (u32, u64, Vec<String>);
 
 /// The authoritative simulation's networking state.
 #[derive(Resource)]
 pub struct NetServer {
     /// The last tick simulated (0 before the first).
     pub tick: u64,
-    /// Inputs waiting for their tick: tick -> (client id, lines), in arrival order.
-    buffered: BTreeMap<u64, Vec<(u32, Vec<String>)>>,
+    /// Inputs waiting for their tick: tick -> (client id, input tick, lines), in arrival order.
+    buffered: BTreeMap<u64, Vec<BufferedInput>>,
     state_interval: u64,
     /// Connections that said hello and were let in.
     known: BTreeSet<ConnectionId>,
@@ -223,6 +228,7 @@ fn server_before_tick(world: &mut World) {
                                 mutes_counted: 0,
                                 timing: InputWindow::default(),
                                 spread_end: 0,
+                                ran_input: 0,
                             },
                         );
                     }
@@ -236,15 +242,22 @@ fn server_before_tick(world: &mut World) {
         }
         drop_connections_that_never_joined(world, &mut server, &mut *transport.0, next);
         let mut due = server.buffered.remove(&next).unwrap_or_default();
-        due.sort_by_key(|(client_id, _)| *client_id);
-        for (client_id, lines) in due {
+        due.sort_by_key(|(client_id, ..)| *client_id);
+        for (client_id, input_tick, lines) in due {
             // A client that was disconnected after sending runs nothing.
             if !server.known.contains(&client_id) {
                 continue;
             }
+            if let Some(state) = server.connections.get_mut(&client_id) {
+                state.ran_input = state.ran_input.max(input_tick);
+            }
+            world
+                .get_resource_or_insert_with(NetInputTick::default)
+                .begin(Some(input_tick));
             for line in lines {
                 run_allowed_line(world, &mut server, client_id, &line);
             }
+            world.resource_mut::<NetInputTick>().begin(None);
         }
     });
     world.insert_non_send(transport);
@@ -439,7 +452,7 @@ fn handle_packet(
                 .buffered
                 .entry(target)
                 .or_default()
-                .push((from, lines));
+                .push((from, tick, lines));
         }
         Err(_) => {
             server.undecodable_packets += 1;
@@ -510,9 +523,10 @@ fn server_after_tick(world: &mut World) {
     }
     // Every tick, for lag-compensated casts.
     let bodies = read_replicated_body_states(world);
+    let poses = read_net_poses(world);
     world
         .resource_mut::<PoseHistory>()
-        .record(tick, &bodies, MAX_REWIND_TICKS);
+        .record(tick, &bodies, &poses, MAX_REWIND_TICKS);
     if due {
         let state = ReplicatedState {
             bodies,
@@ -523,18 +537,24 @@ fn server_after_tick(world: &mut World) {
         let pieces = split_into_chunks(listed);
         let chunks = pieces.len() as u16;
         for (index, piece) in pieces.into_iter().enumerate() {
-            let bytes = wire::encode_server_message(&ServerMessage::State {
-                tick,
-                full,
-                chunk: index as u16,
-                chunks,
-                bodies: piece.bodies,
-                states: piece.states,
-            });
-            world.resource_mut::<NetServer>().stats.bytes_sent +=
-                (bytes.len() * known.len()) as u64;
+            // Encoded per client: each hears how far its own inputs were run.
             for id in &known {
-                transport.0.send(*id, bytes.clone());
+                let mut server = world.resource_mut::<NetServer>();
+                let input_tick = server
+                    .connections
+                    .get(id)
+                    .map_or(0, |state| state.ran_input);
+                let bytes = wire::encode_server_message(&ServerMessage::State {
+                    tick,
+                    input_tick,
+                    full,
+                    chunk: index as u16,
+                    chunks,
+                    bodies: piece.bodies.clone(),
+                    states: piece.states.clone(),
+                });
+                server.stats.bytes_sent += bytes.len() as u64;
+                transport.0.send(*id, bytes);
             }
         }
         let mut server = world.resource_mut::<NetServer>();

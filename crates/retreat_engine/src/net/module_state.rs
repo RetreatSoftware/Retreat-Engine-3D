@@ -14,7 +14,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use bevy::prelude::*;
-use retreat_engine_api::{NetStateRegistry, PhysicsBody, RetiredEntity};
+use retreat_engine_api::{NetStateRegistry, PhysicsBody, PredictedSpawn, RetiredEntity};
 use serde::{Deserialize, Serialize};
 
 use crate::command_script::fail_running_script;
@@ -172,6 +172,21 @@ pub fn capture_module_state(world: &mut World) -> ModuleStateSnapshot {
     snapshot
 }
 
+/// Retires a predicted spawn made after the restored tick.
+pub(crate) fn set_aside(world: &mut World, entity: Entity) {
+    if world.get::<RetiredEntity>(entity).is_some() {
+        return;
+    }
+    let since = world
+        .get_resource::<Time<Fixed>>()
+        .map_or_else(Default::default, |time| time.elapsed());
+    let mut found = world.entity_mut(entity);
+    found.insert(RetiredEntity { since });
+    if found.contains::<Visibility>() {
+        found.insert(Visibility::Hidden);
+    }
+}
+
 /// Puts the captured values back. The caller has checked
 /// [`ModuleStateSnapshot::despawned_entities`].
 pub fn restore_module_state(world: &mut World, snapshot: &ModuleStateSnapshot) {
@@ -186,7 +201,13 @@ pub fn restore_module_state(world: &mut World, snapshot: &ModuleStateSnapshot) {
             }
             let captured = snapshot.values.get(&entity);
             if captured.is_none() && !snapshot.existing.contains(&entity) {
-                world.despawn(entity);
+                // A predicted spawn is set aside, not destroyed: the replay's spawn takes the
+                // same entity again (`spawn_predicted`), so it never restarts on screen.
+                if world.get::<PredictedSpawn>(entity).is_some() {
+                    set_aside(world, entity);
+                } else {
+                    world.despawn(entity);
+                }
             } else if !captured.is_some_and(|(_, values)| values.contains_key(kind.id)) {
                 (kind.remove)(world, entity);
             }
@@ -207,7 +228,8 @@ pub fn restore_module_state(world: &mut World, snapshot: &ModuleStateSnapshot) {
 
 /// Makes the world's module state equal to `server` (a whole list of usable values, sorted; see
 /// the module docs). Called after the body states were applied.
-pub fn apply_module_states(world: &mut World, server: &[ModuleState]) {
+/// `keep` names predicted spawns the server cannot list yet: they are left alone.
+pub fn apply_module_states(world: &mut World, server: &[ModuleState], keep: &BTreeSet<String>) {
     let Some(registry) = world.get_resource::<NetStateRegistry>().cloned() else {
         return;
     };
@@ -249,7 +271,9 @@ pub fn apply_module_states(world: &mut World, server: &[ModuleState]) {
                 continue;
             };
             let name = name.as_str().to_string();
-            if wanted.contains(&(name.as_str(), kind.id)) {
+            if wanted.contains(&(name.as_str(), kind.id))
+                || (keep.contains(&name) && !server_names.contains(name.as_str()))
+            {
                 continue;
             }
             if !server_names.contains(name.as_str()) && world.get::<PhysicsBody>(entity).is_none() {

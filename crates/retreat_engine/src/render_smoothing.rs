@@ -23,7 +23,7 @@ use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 use retreat_engine_api::{
     AppCommandExt, CommandArgs, CommandOutcome, CommandResult, DrawnPose, DrawnPoseSystems,
-    NetViewTick, RemoteInterpolation, RenderSmoothing,
+    HideVisuals, NetPose, NetViewTick, RemoteInterpolation, RenderSmoothing,
 };
 
 use crate::entity_names::find_unique_entity_by_name;
@@ -119,6 +119,10 @@ type Drawn = (
     Option<&'static RenderSmoothing>,
     Has<RemoteInterpolation>,
     Option<&'static mut SmoothingState>,
+    Entity,
+    Has<NetPose>,
+    Has<HideVisuals>,
+    Option<&'static Visibility>,
 );
 
 /// Decides where each entity with a `DrawnPose` is drawn this frame.
@@ -128,18 +132,43 @@ fn compute_drawn_poses(
     view: Option<Res<NetViewTick>>,
     history: Res<PoseHistory>,
     mut entities: Query<Drawn>,
+    mut commands: Commands,
 ) {
     let view = view.and_then(|view| view.0);
     // Only look the past up when something is drawn from it.
     let past = view
-        .filter(|_| entities.iter().any(|(.., remote, _)| remote))
+        .filter(|_| entities.iter().any(|entity| entity.4))
         .and_then(|view| history.at(view + f64::from(fixed.overstep_fraction())));
-    for (name, transform, mut pose, smoothing, remote, state) in &mut entities {
+    for (
+        name,
+        transform,
+        mut pose,
+        smoothing,
+        remote,
+        state,
+        entity,
+        bodyless,
+        hidden,
+        visibility,
+    ) in &mut entities
+    {
         let mut drawn = *transform;
         let server = past
             .as_ref()
             .filter(|_| remote)
             .and_then(|bodies| bodies.get(name.as_str()));
+        // A bodyless entity drawn in the past exists on screen exactly while it existed then:
+        // not before the view reaches its birth, and until the view passes its removal.
+        if remote && bodyless && past.is_some() {
+            let wanted = if server.is_some() && !hidden {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            };
+            if visibility != Some(&wanted) {
+                commands.entity(entity).insert(wanted);
+            }
+        }
         if let Some(mut state) = state {
             if let Some(body) = server {
                 drawn.translation = body.translation;

@@ -21,6 +21,8 @@ use std::collections::BTreeSet;
 
 use bevy::prelude::*;
 
+use crate::AppNetStateExt;
+
 /// Who ran the command that is running now (see the module docs).
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NetCommandSender(pub Option<u32>);
@@ -223,8 +225,12 @@ pub fn add_net_contract(app: &mut App) {
         .init_resource::<NetIdentity>()
         .init_resource::<NetPlayerIds>()
         .init_resource::<crate::NetStateRegistry>()
+        .init_resource::<crate::NetInputTick>()
+        .init_resource::<crate::VisualEffects>()
         .add_message::<NetClientJoined>()
-        .add_message::<NetClientLeft>();
+        .add_message::<NetClientLeft>()
+        .register_net_state::<crate::NetPose>()
+        .register_net_state::<crate::Intangible>();
 }
 
 #[cfg(test)]

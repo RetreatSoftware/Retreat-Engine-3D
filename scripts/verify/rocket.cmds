@@ -1,0 +1,28 @@
+# A rocket: a bodyless predicted entity with a synced pose, drawn as a glowing sphere; its
+# explosion plays once, downs the walker it meets, and the downed walker is walked and shot
+# through (intangible).
+sandbox.walker_spawn -2.5 2.5
+sandbox.walker_dummy 2.5 2.5
+wait 20
+sandbox.walker_rocket -1.5708 0
+wait 8
+assert.walker_rockets 1
+snapshot rocket_flying
+wait 24
+assert.effects_played 1
+assert.effect_visible rocket/local/local/0/boom
+assert.walker_health walker_99 0
+snapshot rocket_boom
+wait 30
+assert.walker_rockets 0
+assert.effects_played 1
+# Nothing solid left where the dummy lies: a cast through it meets nothing.
+assert.ray_miss 2.5 0.9 8 0 0 -1 8
+# Looks without a simulation behind them.
+effect.play check 0 1 2.5 0.8 0.3 0.7 1 200
+wait 100
+assert.effect_visible check
+snapshot rocket_effect
+state.hash
+assert.state_hash 0x951a7d49e06726e3
+quit

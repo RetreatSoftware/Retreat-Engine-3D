@@ -19,8 +19,9 @@ use bevy_rapier3d::rapier::math::Pose;
 use bevy_rapier3d::rapier::parry::query::{Ray, ShapeCastOptions, cast_shapes};
 use bevy_rapier3d::rapier::parry::shape::SharedShape;
 use retreat_engine_api::{
-    AppCommandExt, CastHit, CommandArgs, CommandError, CommandOutcome, CommandResult, LagCaster,
-    PhysicsBody, PhysicsBodyKind, PhysicsCaster, PhysicsShape, RayCast, RetiredEntity, ShapeCast,
+    AppCommandExt, CastHit, CommandArgs, CommandError, CommandOutcome, CommandResult, Intangible,
+    LagCaster, PhysicsBody, PhysicsBodyKind, PhysicsCaster, PhysicsShape, RayCast, RetiredEntity,
+    ShapeCast,
 };
 
 use crate::net::lag_compensation::PoseHistory;
@@ -94,8 +95,10 @@ struct Target {
 
 /// Every live body not in `exclude`, sorted by name.
 fn targets(world: &mut World, exclude: &[Entity]) -> Vec<Target> {
-    let mut owners = world
-        .query_filtered::<(Entity, &Name, &PhysicsBody, &PhysicsProxy), Without<RetiredEntity>>();
+    let mut owners = world.query_filtered::<
+        (Entity, &Name, &PhysicsBody, &PhysicsProxy),
+        (Without<RetiredEntity>, Without<Intangible>),
+    >();
     let owners: Vec<(Entity, String, PhysicsBody, Entity)> = owners
         .iter(world)
         .filter(|(entity, ..)| !exclude.contains(entity))
@@ -149,18 +152,22 @@ fn targets_at(world: &mut World, exclude: &[Entity], view_tick: f64) -> Vec<Targ
     let mut candidates = targets(world, exclude);
     candidates.retain(|target| !past.contains_key(&target.name) && target.fixed);
     for (name, body) in past {
+        let Some(description) = body.description else {
+            continue;
+        };
         let Some(entity) = entities.get(&name).copied() else {
             continue;
         };
-        if exclude.contains(&entity) {
+        // Whether it can be hit at all is judged now, like health.
+        if exclude.contains(&entity) || world.get::<Intangible>(entity).is_some() {
             continue;
         }
-        let center = body.translation + body.rotation * body.description.shape_offset;
+        let center = body.translation + body.rotation * description.shape_offset;
         candidates.push(Target {
             entity,
             name,
             fixed: false,
-            shape: parry_shape(body.description.shape),
+            shape: parry_shape(description.shape),
             pose: Pose::from_parts(center, body.rotation),
         });
     }

@@ -54,6 +54,8 @@ bevy_rapier3d = { version = "0.37.0", default-features = false, features = ["dim
 # Full debug info made every test binary carry a ~1 GB .pdb and `target/` reach 140 GB.
 # Do not set it back to `true`. `split-debuginfo` is not needed for this.
 [profile.dev]
+# Incremental caches took about a third of target/ (see CLAUDE.md, build size).
+incremental = false
 opt-level = 1
 debug = "line-tables-only"
 

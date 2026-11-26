@@ -91,6 +91,9 @@ pub enum ServerMessage {
     /// uses a tick only when all of its chunks arrived.
     State {
         tick: u64,
+        /// The highest tick of this client's inputs the server has run (0 before the first): a
+        /// predicted spawn that is still missing after it was refused (`spawn_predicted`).
+        input_tick: u64,
         full: bool,
         chunk: u16,
         chunks: u16,
