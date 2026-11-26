@@ -4,8 +4,9 @@
 //! - The **server** records every replicated body after each tick, [`MAX_REWIND_TICKS`] deep.
 //! - A **client** records the states it receives from the server (the same numbers), so its
 //!   prediction of a shot and its drawing of other players use what the server will use. It also
-//!   keeps the view tick ([`ViewClock`]): a little behind the newest state, advancing with its own
-//!   clock.
+//!   keeps the view tick ([`ViewClock`]): a little behind the newest state, advancing at the
+//!   server's pace (a client that slows its clock to drain input lead moves the view further per
+//!   tick, so other players do not slow down on screen).
 //! - Between two recorded ticks a pose is interpolated linearly; outside the history the nearest
 //!   record is used. History is not part of rewinds: it only ever holds the server's past.
 //!
@@ -126,15 +127,24 @@ impl PoseHistory {
 #[derive(Resource, Debug, Default)]
 pub struct ViewClock {
     view: Option<f64>,
+    /// Server ticks the view moves per client tick.
+    step: f64,
 }
 
 impl ViewClock {
-    /// One live tick of the client, with the newest server tick it has a state of.
-    pub fn advance(&mut self, newest: u64) -> f64 {
+    /// Server ticks the view moves per client tick (what a frame between two ticks adds a part of).
+    pub fn step(&self) -> f64 {
+        self.step
+    }
+
+    /// One live tick of the client, with the newest server tick it has a state of. `step` is how
+    /// many server ticks pass meanwhile (above 1 while the client's clock runs slow).
+    pub fn advance(&mut self, newest: u64, step: f64) -> f64 {
+        self.step = step;
         let wanted = (newest as f64 - VIEW_DELAY_TICKS).max(1.0);
         let next = match self.view {
-            Some(view) if (view + 1.0 - wanted).abs() <= VIEW_SNAP_TICKS => {
-                let advanced = view + 1.0;
+            Some(view) if (view + step - wanted).abs() <= VIEW_SNAP_TICKS => {
+                let advanced = view + step;
                 advanced + (wanted - advanced) * VIEW_CORRECTION
             }
             _ => wanted,
@@ -147,11 +157,11 @@ impl ViewClock {
 }
 
 /// Advances a client's view tick (`FixedLast`, live ticks).
-pub(crate) fn advance_view(world: &mut World) {
+pub(crate) fn advance_view(world: &mut World, step: f64) {
     let Some(newest) = world.resource::<PoseHistory>().newest() else {
         return;
     };
-    let view = world.resource_mut::<ViewClock>().advance(newest);
+    let view = world.resource_mut::<ViewClock>().advance(newest, step);
     world.insert_resource(NetViewTick(Some(view)));
 }
 
@@ -193,17 +203,31 @@ mod tests {
     #[test]
     fn the_view_advances_with_the_clock_and_stays_behind_the_newest_state() {
         let mut clock = ViewClock::default();
-        assert_eq!(clock.advance(100), 94.0);
+        assert_eq!(clock.advance(100, 1.0), 94.0);
         // States arrive every other tick.
         let mut view = 94.0;
         for step in 1..200u64 {
             let newest = 100 + step / 2 * 2;
-            let next = clock.advance(newest);
+            let next = clock.advance(newest, 1.0);
             assert!(next > view, "moves forward");
             assert!(next <= newest as f64);
             view = next;
         }
         assert!((299.0 - VIEW_DELAY_TICKS - view).abs() < 2.0, "{view}");
-        assert_eq!(clock.advance(1000), 994.0, "a long gap jumps");
+        assert_eq!(clock.advance(1000, 1.0), 994.0, "a long gap jumps");
+    }
+
+    #[test]
+    fn a_slow_client_clock_still_moves_the_view_at_the_servers_pace() {
+        let mut clock = ViewClock::default();
+        clock.advance(100, 2.0);
+        // Half speed: the server runs two ticks per client tick.
+        let mut view = 94.0;
+        for step in 1..100u64 {
+            let next = clock.advance(100 + step * 2, 2.0);
+            assert!((next - view - 2.0).abs() < 1e-9, "{}", next - view);
+            view = next;
+        }
+        assert_eq!(clock.step(), 2.0);
     }
 }

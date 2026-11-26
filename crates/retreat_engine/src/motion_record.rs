@@ -3,8 +3,8 @@
 //! rate against tick rate, network arrival, a camera updated late); this is how an agent sees it.
 //!
 //!
-//! Time is `Time<Virtual>`: real frame time in a game, a fixed step per frame under a deterministic
-//! script.
+//! Time is `Time<Real>`: what the viewer sees (a network client's virtual clock slows a little while
+//! it drains input lead); a fixed step per frame under a deterministic script.
 //!
 //! - `motion.record <name> <label> <frames>`: records the next `frames` frames of `<name>` (and of
 //!   the first camera) into `target/motion/<label>.csv` (native) and logs a summary. It does not
@@ -29,7 +29,7 @@ const TRIM_DISTANCE: f32 = 0.4;
 /// One rendered frame.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct MotionSample {
-    /// `Time<Virtual>` of the frame, seconds.
+    /// `Time<Real>` of the frame, seconds.
     pub time: f64,
     /// Where the entity was drawn.
     pub position: Vec3,
@@ -153,7 +153,7 @@ impl Plugin for MotionRecordPlugin {
 }
 
 fn record_frames(
-    time: Res<Time<Virtual>>,
+    time: Res<Time<Real>>,
     fixed: Res<Time<Fixed>>,
     view: Option<Res<NetViewTick>>,
     mut recordings: ResMut<MotionRecordings>,

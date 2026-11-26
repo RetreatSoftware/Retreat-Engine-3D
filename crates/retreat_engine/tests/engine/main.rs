@@ -19,6 +19,7 @@ mod net_character;
 mod net_frames;
 mod net_harness;
 mod net_lag;
+mod net_latency;
 mod net_module_state;
 mod net_motion;
 mod net_pacing;

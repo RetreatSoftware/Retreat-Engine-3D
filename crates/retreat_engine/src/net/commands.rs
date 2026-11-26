@@ -16,6 +16,9 @@
 //!   fewer than `n` bytes so far. Works on a server and on a client.
 //! - `assert.net_corrections_at_most <n>`: client only; fails if prediction was corrected more than `n` times.
 //! - `assert.net_late_inputs_at_most <n>`: server only; fails if more than `n` inputs arrived after their tick.
+//! - `assert.net_input_wait_at_most <ticks>`: client only; fails unless the server's last report says
+//!   this client's inputs wait at most that many ticks there (the delay others see; see
+//!   `tick_pacing.rs`).
 //! - `assert.net_refusals_at_most <n>`: server only; fails if the refusal counters (rate limits, bad
 //!   inputs, mutes, kicks, ...; see `ServerStats::refusals`) add up to more than `n`.
 //!
@@ -73,6 +76,11 @@ impl Plugin for NetCommandsPlugin {
                 "assert.net_refusals_at_most",
                 "assert.net_refusals_at_most <count>",
                 assert_refusals_command,
+            )
+            .register_command(
+                "assert.net_input_wait_at_most",
+                "assert.net_input_wait_at_most <ticks>",
+                assert_input_wait_command,
             );
     }
 }
@@ -285,6 +293,19 @@ fn stats_command(world: &mut World, args: &CommandArgs) -> CommandResult {
         counters.late_inputs.unwrap_or(0),
         counters.refusals.unwrap_or(0),
     );
+    // How long this client's inputs wait in the server, and how fast its clock runs to correct it.
+    if let Some(client) = world.get_resource::<NetClient>() {
+        info!(
+            "net-pacing input_wait_ticks={} clock_speed={:.3} catch_up_ticks={} resyncs={}",
+            client
+                .stats
+                .input_wait_ticks
+                .map_or_else(|| "none".to_string(), |ticks| ticks.to_string()),
+            client.pacing.time_scale,
+            client.stats.catch_up_ticks,
+            client.stats.resyncs,
+        );
+    }
     // The server's refusals by cause, so a nonzero total can be traced without a debugger.
     if let Some(server) = world.get_resource::<NetServer>() {
         info!("net-stats-detail {:?}", server.stats);
@@ -341,6 +362,22 @@ fn assert_late_inputs_command(world: &mut World, args: &CommandArgs) -> CommandR
         role,
         "server",
     )
+}
+
+/// `assert.net_input_wait_at_most <ticks>`.
+fn assert_input_wait_command(world: &mut World, args: &CommandArgs) -> CommandResult {
+    args.expect_count(1)?;
+    let limit: i64 = args.parse(0, "ticks")?;
+    let Some(client) = world.get_resource::<NetClient>() else {
+        return Err(args.failure("this app is not a network client"));
+    };
+    match client.stats.input_wait_ticks {
+        Some(wait) if wait <= limit => Ok(CommandOutcome::Continue),
+        Some(wait) => Err(args.failure(format!(
+            "inputs wait {wait} ticks in the server, at most {limit} allowed"
+        ))),
+        None => Err(args.failure("the server has not reported on this client's inputs yet")),
+    }
 }
 
 /// `assert.net_refusals_at_most <count>`.

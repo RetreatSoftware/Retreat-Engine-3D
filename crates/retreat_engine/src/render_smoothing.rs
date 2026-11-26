@@ -27,7 +27,7 @@ use retreat_engine_api::{
 };
 
 use crate::entity_names::find_unique_entity_by_name;
-use crate::net::lag_compensation::PoseHistory;
+use crate::net::lag_compensation::{PoseHistory, ViewClock};
 
 /// What the engine keeps for a smoothed entity.
 #[derive(Component, Clone, Copy, Debug, Default)]
@@ -131,6 +131,7 @@ fn compute_drawn_poses(
     fixed: Res<Time<Fixed>>,
     view: Option<Res<NetViewTick>>,
     history: Res<PoseHistory>,
+    clock: Option<Res<ViewClock>>,
     mut entities: Query<Drawn>,
     mut commands: Commands,
 ) {
@@ -138,7 +139,11 @@ fn compute_drawn_poses(
     // Only look the past up when something is drawn from it.
     let past = view
         .filter(|_| entities.iter().any(|entity| entity.4))
-        .and_then(|view| history.at(view + f64::from(fixed.overstep_fraction())));
+        .and_then(|view| {
+            // The view moves `step` server ticks per client tick; a frame is part of one.
+            let step = clock.map_or(1.0, |clock| clock.step());
+            history.at(view + step * f64::from(fixed.overstep_fraction()))
+        });
     for (
         name,
         transform,

@@ -27,6 +27,9 @@ net.stats
 assert.net_bytes_below sent 400000
 assert.net_bytes_below received 400000
 assert.net_corrections_at_most 400
+# The lead is drained: inputs do not pile up in the server (a generous bound for slow CI machines; the
+# real bound is in tests/engine/net_latency.rs).
+assert.net_input_wait_at_most 40
 # Stay connected while the others print.
 wait 600
 quit

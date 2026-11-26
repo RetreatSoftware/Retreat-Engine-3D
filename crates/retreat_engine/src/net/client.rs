@@ -97,6 +97,9 @@ pub struct ClientStats {
     pub catch_up_ticks: u64,
     /// Times the tick number jumped because the client was hopelessly behind.
     pub resyncs: u64,
+    /// The server's last report: how many ticks this client's earliest input waited there before
+    /// it ran (negative: it arrived late). `None` before the first report.
+    pub input_wait_ticks: Option<i64>,
     /// Module state values from the server that this client cannot use (type not registered,
     /// another version or damaged): the server and client builds differ.
     pub unusable_module_states: u64,
@@ -158,6 +161,9 @@ pub struct NetClient {
     connected: bool,
     /// Keeps the lead over the server right (see `tick_pacing.rs`).
     pub pacing: ClientPacing,
+    /// The newest timing report not applied yet. Reports are applied once per frame, the newest
+    /// only: a slow frame delivers several, and the older ones describe a lead already gone.
+    latest_report: Option<TimingReport>,
 }
 
 impl NetClient {
@@ -298,6 +304,7 @@ pub fn install_client(
         partial_full: BTreeMap::new(),
         connected: false,
         pacing: ClientPacing::default(),
+        latest_report: None,
     })
     .insert_non_send(ClientTransportBox(Box::new(transport)))
     .add_systems(FixedFirst, client_before_tick)
@@ -360,7 +367,8 @@ fn pump_transport(world: &mut World) {
             ),
             Ok(ServerMessage::Timing { slack, oldest_tick }) => {
                 if client.phase == ClientPhase::Running {
-                    client.pacing.on_report(TimingReport { slack, oldest_tick });
+                    client.stats.input_wait_ticks = Some(slack);
+                    client.latest_report = Some(TimingReport { slack, oldest_tick });
                 }
             }
             Err(_) => client.undecodable_packets += 1,
@@ -453,7 +461,9 @@ fn client_after_tick(world: &mut World) {
     // (a view moved by them made the other players leap).
     let client = world.resource::<NetClient>();
     if !client.replaying && !client.catching_up {
-        advance_view(world);
+        // While the clock is slowed, more server time passes per tick (see `tick_pacing.rs`).
+        let step = 1.0 / f64::from(client.pacing.time_scale);
+        advance_view(world, step);
     }
     let tick = {
         let mut client = world.resource_mut::<NetClient>();
@@ -519,6 +529,10 @@ pub fn process_client_states(world: &mut World) {
 /// Does what the server's timing reports asked for: runs the missing ticks (live ones: they send
 /// inputs), jumps a hopeless gap, or slows the clock.
 fn keep_pace(world: &mut World) {
+    let mut client = world.resource_mut::<NetClient>();
+    if let Some(report) = client.latest_report.take() {
+        client.pacing.on_report(report);
+    }
     let pacing = world.resource::<NetClient>().pacing;
     if let Some(mut clock) = world.get_resource_mut::<Time<Virtual>>()
         && clock.relative_speed() != pacing.time_scale

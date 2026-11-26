@@ -3,7 +3,7 @@
 
 use retreat_engine::net::harness::{ClientFrames, NetHarness};
 use retreat_engine::net::link::LinkConditions;
-use retreat_engine::net::tick_pacing::{MAX_SLACK_TICKS, SLOW_TIME_SCALE};
+use retreat_engine::net::tick_pacing::MAX_SLOWDOWN;
 
 use crate::net_character::{harness, link, mover, run_on_client};
 
@@ -93,8 +93,9 @@ fn a_clock_that_runs_fast_is_slowed_before_the_server_refuses_it() {
     );
     harness.run_idle(2000);
     let lead = harness.client(0).tick as i64 - harness.server().tick as i64;
-    assert!(lead < MAX_SLACK_TICKS + 30, "the lead is {lead}");
-    assert!(harness.client(0).pacing.time_scale >= SLOW_TIME_SCALE);
+    // The round trip, the target and a few ticks of jitter: the extra 5% never piles up.
+    assert!(lead < 20, "the lead is {lead}");
+    assert!(harness.client(0).pacing.time_scale >= 1.0 - MAX_SLOWDOWN);
     assert_eq!(harness.server().stats.refusals(), 0);
     assert_walks_its_full_distance(&mut harness);
 }

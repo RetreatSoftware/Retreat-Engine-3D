@@ -68,6 +68,8 @@ pub struct NetHarness {
     pub global_tick: u64,
     /// Frame time `run_frames` has not yet turned into server ticks.
     owed_server_time: Duration,
+    /// Per client, in `run_frames`: whether it is frozen, and the time it has not drawn yet.
+    frozen: Vec<(bool, Duration)>,
 }
 
 impl NetHarness {
@@ -132,6 +134,7 @@ impl NetHarness {
             clocks: (0..client_count).map(|_| ClientClock::default()).collect(),
             global_tick: 0,
             owed_server_time: Duration::ZERO,
+            frozen: vec![(false, Duration::ZERO); client_count as usize],
         }
     }
 
@@ -177,9 +180,6 @@ impl NetHarness {
         frames: u64,
         mut after_frame: impl FnMut(&mut Self, u64),
     ) {
-        for app in &mut self.client_apps {
-            app.insert_resource(TimeUpdateStrategy::ManualDuration(frame));
-        }
         let tick = self.server_app.world().resource::<Time<Fixed>>().timestep();
         for index in 0..frames {
             self.owed_server_time += frame;
@@ -189,11 +189,21 @@ impl NetHarness {
                 self.network.set_tick(self.global_tick);
                 simulate_tick(self.server_app.world_mut());
             }
-            for app in &mut self.client_apps {
-                app.update();
+            for (app, (frozen, owed)) in self.client_apps.iter_mut().zip(&mut self.frozen) {
+                *owed += frame;
+                if !*frozen {
+                    app.insert_resource(TimeUpdateStrategy::ManualDuration(std::mem::take(owed)));
+                    app.update();
+                }
             }
             after_frame(self, index);
         }
+    }
+
+    /// In `run_frames`: a frozen client draws no frames (a dragged or suspended window); when it
+    /// is thawed, its next frame sees all the time that passed.
+    pub fn set_client_frozen(&mut self, index: usize, frozen: bool) {
+        self.frozen[index].0 = frozen;
     }
 
     /// Changes how fast client `index` runs from now on.
