@@ -70,7 +70,8 @@ function start(name, args, command = exe, fixedArgs = ["--headless", "--no-rende
   child.stdout.on("data", collect);
   child.stderr.on("data", collect);
   process_.done = new Promise((done) => {
-    child.on("exit", (code) => {
+    // `close`, not `exit`: only then has all of its output arrived, which the failure report needs.
+    child.on("close", (code) => {
       process_.exited = code;
       done(code);
     });
@@ -95,7 +96,7 @@ function waitFor(what, check) {
 }
 
 function errorLines(output) {
-  return output.split("\n").filter((line) => /ERROR|error|panicked/.test(line) && !line.startsWith("ALSA")).slice(-5).join("\n");
+  return output.split("\n").filter((line) => /ERROR|error|panicked|run_in_browser:|EXCEPTION/i.test(line) && !line.startsWith("ALSA")).slice(-5).join("\n");
 }
 
 // The module state values a process printed with `net.states`, as sorted lines.
@@ -252,8 +253,8 @@ if (failure) {
     const lines = p.output
       .replace(/\x1b\[[0-9;]*m/g, "")
       .split("\n")
-      .filter((line) => !line.startsWith("ALSA") && /ERROR|panicked|FAIL|\.cmds:\d+|net-stats role=/.test(line));
-    return `${p.name} (exit ${p.exited}):\n${lines.slice(-4).map((line) => line.slice(-300)).join("\n")}`;
+      .filter((line) => !line.startsWith("ALSA") && /ERROR|panicked|FAIL|run_in_browser:|EXCEPTION|\.cmds:\d+|net-stats(-detail| role=)/.test(line));
+    return `${p.name} (exit ${p.exited}):\n${lines.slice(-5).map((line) => line.slice(-300)).join("\n")}`;
   });
   annotate([failure.slice(0, 900), ...reasons, ...tails].join("\n"));
   process.exit(1);
