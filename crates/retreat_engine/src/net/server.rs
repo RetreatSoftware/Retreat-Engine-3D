@@ -85,6 +85,35 @@ pub struct ServerStats {
 }
 
 impl ServerStats {
+    /// Every refusal counter that is not zero, as `name=count, ...`, so a failed check names the
+    /// cause (`none` when all are zero).
+    pub fn refusal_breakdown(&self) -> String {
+        let counters = [
+            ("datagrams_muted", self.datagrams_muted),
+            ("datagrams_too_large", self.datagrams_too_large),
+            ("datagrams_rate_limited", self.datagrams_rate_limited),
+            ("inputs_rate_limited", self.inputs_rate_limited),
+            ("inputs_bad_shape", self.inputs_bad_shape),
+            ("inputs_bad_tick", self.inputs_bad_tick),
+            ("tokens_too_long", self.tokens_too_long),
+            ("connections_muted", self.connections_muted),
+            ("connections_kicked", self.connections_kicked),
+            ("connections_refused_full", self.connections_refused_full),
+            ("join_timeouts", self.join_timeouts),
+            ("identity_denied", self.identity_denied),
+        ];
+        let named: Vec<String> = counters
+            .iter()
+            .filter(|(_, count)| *count > 0)
+            .map(|(name, count)| format!("{name}={count}"))
+            .collect();
+        if named.is_empty() {
+            "none".to_string()
+        } else {
+            named.join(", ")
+        }
+    }
+
     /// Every refusal counter added up: what `assert.net_refusals_at_most` checks. Byte counters
     /// are not refusals.
     pub fn refusals(&self) -> u64 {

@@ -20,7 +20,8 @@
 //!   this client's inputs wait at most that many ticks there (the delay others see; see
 //!   `tick_pacing.rs`).
 //! - `assert.net_refusals_at_most <n>`: server only; fails if the refusal counters (rate limits, bad
-//!   inputs, mutes, kicks, ...; see `ServerStats::refusals`) add up to more than `n`.
+//!   inputs, mutes, kicks, ...; see `ServerStats::refusals`) add up to more than `n`, naming each
+//!   counter that rose.
 //!
 //! Counters only grow, so a script puts the assert after the play it measures. On a real network
 //! corrections and late inputs depend on timing: assert a generous bound there, an exact `0` only
@@ -385,12 +386,20 @@ fn assert_refusals_command(world: &mut World, args: &CommandArgs) -> CommandResu
     args.expect_count(1)?;
     let limit: u64 = args.parse(0, "count")?;
     let (role, counters) = counters_or_failure(world, args)?;
-    check_at_most(
+    let result = check_at_most(
         args,
         "the refusal count",
         counters.refusals,
         limit,
         role,
         "server",
-    )
+    );
+    match (result, world.get_resource::<NetServer>()) {
+        (Err(_), Some(server)) => Err(args.failure(format!(
+            "the refusal count is {}, at most {limit} allowed: {}",
+            server.stats.refusals(),
+            server.stats.refusal_breakdown()
+        ))),
+        (result, _) => result,
+    }
 }

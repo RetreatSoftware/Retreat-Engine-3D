@@ -19,6 +19,8 @@ net.send sandbox.walker_rocket 3.14159 -0.4
 wait_until 20000 assert.effects_played 1
 wait 500
 assert.effects_played 1
+# Its sound too: once, whatever was predicted, replayed or corrected.
+assert.audio_events 1
 assert.walker_rockets 0
 net.bodies
 net.states

@@ -7,9 +7,8 @@
 //! (`<projectile name>/boom`). An effect predicted by mistake cannot be taken back.
 //!
 //! An effect is a glowing sphere that grows from nothing to `radius` over `ticks` ticks and
-//! vanishes. It is render only: not synced, not hashed, hits nothing. Sounds are the module's: play
-//! them where it plays the effect and guard them the same way ([`VisualEffects::play`] returns
-//! nothing; use `NetReplaying` to skip replays).
+//! vanishes. It is render only: not synced, not hashed, hits nothing. Its sound is a
+//! [`crate::SoundEvent`] played from the same place, which follows the same once-per-id rule.
 
 use bevy::prelude::*;
 

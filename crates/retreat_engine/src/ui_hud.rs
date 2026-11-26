@@ -259,6 +259,20 @@ fn color_numbers(
         .collect()
 }
 
+/// Whether two colors look the same, whichever color space each was made in (`Color::WHITE` is
+/// linear, a command's numbers are sRGB).
+fn same_color(left: Color, right: Color) -> bool {
+    let (left, right) = (left.to_srgba(), right.to_srgba());
+    [
+        left.red - right.red,
+        left.green - right.green,
+        left.blue - right.blue,
+        left.alpha - right.alpha,
+    ]
+    .iter()
+    .all(|difference| difference.abs() < 1.0e-3)
+}
+
 fn state_of(
     world: &World,
     args: &CommandArgs,
@@ -308,7 +322,7 @@ fn clear_panel_command(world: &mut World, args: &CommandArgs) -> CommandResult {
 fn assert_color_command(world: &mut World, args: &CommandArgs) -> CommandResult {
     let n = color_numbers(args, 3)?;
     let state = state_of(world, args)?;
-    if state.style.color == Color::srgb(n[0], n[1], n[2]) {
+    if same_color(state.style.color, Color::srgb(n[0], n[1], n[2])) {
         return Ok(CommandOutcome::Continue);
     }
     Err(args.failure(format!(
@@ -320,7 +334,12 @@ fn assert_color_command(world: &mut World, args: &CommandArgs) -> CommandResult 
 fn assert_panel_command(world: &mut World, args: &CommandArgs) -> CommandResult {
     let n = color_numbers(args, 4)?;
     let state = state_of(world, args)?;
-    if state.style.panel == Some(Color::srgba(n[0], n[1], n[2], n[3])) {
+    let expected = Color::srgba(n[0], n[1], n[2], n[3]);
+    if state
+        .style
+        .panel
+        .is_some_and(|panel| same_color(panel, expected))
+    {
         return Ok(CommandOutcome::Continue);
     }
     Err(args.failure(format!(

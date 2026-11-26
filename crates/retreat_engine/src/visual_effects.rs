@@ -1,22 +1,21 @@
 //! Shows the contract's one-shot effects (`visual_effects.rs`): each id once, as a sphere that
 //! grows over its lifetime. Render only.
 //!
-//! Requests are taken after every tick (replayed ones included) and remembered by id; ages advance on
-//! live ticks only, so a replay neither restarts nor ages an effect.
+//! Requests are taken after every tick (replayed ones included) and remembered by id
+//! (`once_queue.rs`); ages advance on live ticks only, so a replay neither restarts nor ages an effect.
 //!
 //! Commands: `effect.play <id> <x> <y> <z> <radius> <r> <g> <b> <ticks>`,
 //! `assert.effects_played <count>`, `assert.effect_visible <id>`.
 
-use std::collections::BTreeMap;
-
 use bevy::app::FixedLast;
 use bevy::prelude::*;
 use retreat_engine_api::{
-    AppCommandExt, CommandArgs, CommandOutcome, CommandResult, EFFECT_MEMORY_TICKS, EffectTime,
-    NetReplaying, NetViewTick, SphereVisual, VisualEffect, VisualEffects,
+    AppCommandExt, CommandArgs, CommandOutcome, CommandResult, EffectTime, NetReplaying,
+    NetViewTick, SphereVisual, VisualEffect, VisualEffects,
 };
 
 use crate::net::client::NetClient;
+use crate::once_queue::OnceQueue;
 
 /// Start of the name of an effect's entity.
 pub const EFFECT_NAME_PREFIX: &str = "effect/";
@@ -24,11 +23,7 @@ pub const EFFECT_NAME_PREFIX: &str = "effect/";
 /// What this machine knows about effects.
 #[derive(Resource, Default)]
 pub struct EffectLog {
-    /// Ids seen, with the live tick they came at.
-    seen: BTreeMap<String, u64>,
-    /// Effects waiting for the view time to reach their tick.
-    waiting: Vec<(u64, VisualEffect)>,
-    live_ticks: u64,
+    queue: OnceQueue<VisualEffect>,
     /// Effects shown so far.
     pub played: u64,
 }
@@ -79,26 +74,13 @@ fn take_requests(
     }
     let tick = client.map_or(0, |client| client.tick + 1);
     for effect in std::mem::take(&mut requests.requests) {
-        let now = log.live_ticks;
-        if log.seen.contains_key(&effect.id) {
-            continue;
-        }
-        log.seen.insert(effect.id.clone(), now);
-        let due = match effect.time {
-            EffectTime::Present => 0,
-            EffectTime::RemoteView => tick,
-        };
-        log.waiting.push((due, effect));
+        let (id, time) = (effect.id.clone(), effect.time);
+        log.queue.add(&id, time, tick, effect);
     }
 }
 
 fn start_due_effects(view: Res<NetViewTick>, mut log: ResMut<EffectLog>, mut commands: Commands) {
-    let view = view.0.unwrap_or(f64::MAX);
-    let (due, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut log.waiting)
-        .into_iter()
-        .partition(|(tick, _)| *tick as f64 <= view);
-    log.waiting = waiting;
-    for (_, effect) in due {
+    for effect in log.queue.take_due(view.0) {
         log.played += 1;
         commands.spawn((
             Name::new(format!("{EFFECT_NAME_PREFIX}{}", effect.id)),
@@ -129,10 +111,7 @@ fn age_effects(
     if replaying.0 {
         return;
     }
-    log.live_ticks += 1;
-    let now = log.live_ticks;
-    log.seen
-        .retain(|_, seen| now - *seen <= EFFECT_MEMORY_TICKS);
+    log.queue.live_tick();
     for (entity, mut effect, mut sphere) in &mut active {
         effect.age += 1;
         if effect.age >= effect.effect.ticks {

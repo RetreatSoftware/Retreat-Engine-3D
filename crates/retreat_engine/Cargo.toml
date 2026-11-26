@@ -31,6 +31,11 @@ wasm-bindgen-futures = "0.4.80"
 js-sys = "0.3.107"
 web-sys = { version = "0.3.107", features = ["Window", "Document", "Element", "Location", "Response", "UrlSearchParams", "Storage", "console"] }
 
+# The audio library Bevy plays through (already linked): a test pins down how its spatial output
+# pans, which `sound_events.rs` relies on.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+rodio = { version = "0.22", default-features = false }
+
 # Tests that run in headless Chrome (src/platform/wasm_tests.rs, scripts/web/test_wasm.sh).
 # The version matches the wasm-bindgen crate (see Cargo.lock): wasm-bindgen-cli 0.2.130 runs them.
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]

@@ -61,7 +61,9 @@ const webScriptDir = `scripts/verify/network${scenarioFolder ? `/${scenarioFolde
 // drift apart get refused by the server (see CLAUDE.md, Networking). `--software-renderer` is still
 // passed, but unused without a renderer; it stays so that a changed flag set cannot reintroduce a GPU.
 function start(name, args, command = exe, fixedArgs = ["--headless", "--no-render", "--real-time", ...extra]) {
-  const child = spawn(command, [...fixedArgs, ...args], { cwd: root });
+  // The executable is started directly, so it is told where the sandbox's `assets` folder is.
+  const env = { ...process.env, BEVY_ASSET_ROOT: join(root, "sandbox") };
+  const child = spawn(command, [...fixedArgs, ...args], { cwd: root, env });
   child.on("error", (error) => die(`cannot start ${name} (${command}): ${error.message}`));
   const process_ = { name, child, output: "", exited: null };
   const collect = (chunk) => {

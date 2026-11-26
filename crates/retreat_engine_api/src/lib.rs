@@ -71,6 +71,7 @@ mod physics_queries;
 mod predicted_spawn;
 mod save_store;
 mod simulation_rng;
+mod sound_events;
 mod sound_playback;
 mod ui_hud;
 mod ui_panel;
@@ -119,6 +120,10 @@ pub use save_store::{
     decode_save, encode_save, is_valid_module_id, serde_json,
 };
 pub use simulation_rng::SimulationRng;
+pub use sound_events::{
+    DEFAULT_SOUND_REACH, SOUND_FULL_VOLUME_DISTANCE, SoundEvent, SoundEvents, SoundListener,
+    SoundMix, SoundPosition, spatial_mix,
+};
 pub use sound_playback::{MAX_SOUND_VOLUME, SoundKind, SoundPlayback};
 pub use ui_hud::{
     AppHudExt, HUD_LINE_HEIGHT, HUD_PANEL_PADDING, HUD_TEXT_WIDTH, HudAnchor, HudBlock, HudKind,

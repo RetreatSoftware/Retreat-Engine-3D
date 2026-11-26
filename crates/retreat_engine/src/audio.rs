@@ -8,6 +8,9 @@
 //! sound is playing never depends on a sound card, on loading speed or on the platform. A
 //! looping sound plays until stopped. Starting music stops the previous music.
 //!
+//! A sound with a `SoundPosition` plays spatially: its volume follows the distance to the camera
+//! and its emitter follows the direction, every frame (`sound_events.rs`).
+//!
 //! Commands: `audio.play <name> <path> <volume> <once|loop>` (effect; holds a script until the
 //! file has loaded), `audio.music <name> <path> <volume>` (looping music), `audio.stop <name>`,
 //! `audio.stop_all`, `audio.volume <name> <volume>`, `audio.status`,
@@ -22,12 +25,12 @@ use std::time::Duration;
 use bevy::asset::LoadState;
 use bevy::audio::{
     AudioLoader, AudioPlayer, AudioSink, AudioSinkPlayback, AudioSource, Decodable, GlobalVolume,
-    PlaybackMode, PlaybackSettings, Source, Volume,
+    PlaybackMode, PlaybackSettings, Source, SpatialAudioSink, Volume,
 };
 use bevy::prelude::*;
 use retreat_engine_api::{
-    AppCommandExt, CommandArgs, CommandError, CommandOutcome, CommandResult, SoundKind,
-    SoundPlayback,
+    AppCommandExt, CommandArgs, CommandError, CommandOutcome, CommandResult, GameCamera, SoundKind,
+    SoundPlayback, SoundPosition,
 };
 
 use crate::PendingCommandWork;
@@ -35,6 +38,7 @@ use crate::asset_paths::{load_asset, resolve_asset_location};
 use crate::command_script::fail_running_script;
 use crate::entity_names::{ensure_name_is_free, find_unique_entity_by_name};
 use crate::platform::{AUDIO_NEEDS_USER_GESTURE, HAS_FILE_SYSTEM};
+use crate::sound_events::{current_listener, emitter_position, mix_for};
 
 /// File endings `SoundPlayback::path` may have.
 pub const SOUND_FILE_EXTENSIONS: [&str; 2] = ["wav", "ogg"];
@@ -86,7 +90,7 @@ impl Plugin for AudioCommandsPlugin {
             (
                 start_sound_playback,
                 measure_loaded_sounds,
-                apply_volume_changes,
+                apply_volumes_and_positions,
             )
                 .chain(),
         )
@@ -140,13 +144,16 @@ type NewSound = (Added<SoundPlayback>, Without<SoundState>);
 /// music, and begins loading and playing. A bad request fails the running script.
 fn start_sound_playback(
     mut commands: Commands,
-    new_sounds: Query<(Entity, &Name, &SoundPlayback), NewSound>,
+    new_sounds: Query<(Entity, &Name, &SoundPlayback, Option<&SoundPosition>), NewSound>,
+    cameras: Query<(Entity, &Name, &GameCamera)>,
     playing: Query<(Entity, &SoundPlayback), With<SoundState>>,
     asset_server: Res<AssetServer>,
     fixed_time: Res<Time<Fixed>>,
 ) {
-    for (entity, name, sound) in &new_sounds {
-        let checked = sound.validate().and_then(|()| {
+    let listener = current_listener(&cameras);
+    for (entity, name, sound, position) in &new_sounds {
+        let placed = position.map_or(Ok(()), SoundPosition::validate);
+        let checked = sound.validate().and(placed).and_then(|()| {
             resolve_asset_location(
                 &sound.path,
                 "sound",
@@ -174,9 +181,21 @@ fn start_sound_playback(
         let is_outside = location.is_outside_asset_folder();
         let handle: Handle<AudioSource> =
             load_asset(&asset_server, location.into_asset_path(), is_outside);
+        let mut settings = playback_settings(sound);
+        if let Some(position) = position {
+            let mix = mix_for(listener.as_ref(), position);
+            settings.spatial = true;
+            settings.volume = Volume::Linear(sound.volume * mix.gain);
+            commands
+                .entity(entity)
+                .insert(Transform::from_translation(emitter_position(
+                    listener.as_ref(),
+                    position,
+                )));
+        }
         commands.entity(entity).insert((
             AudioPlayer::new(handle.clone()),
-            playback_settings(sound),
+            settings,
             SoundState {
                 handle,
                 started_at: fixed_time.elapsed(),
@@ -237,18 +256,44 @@ fn measure_loaded_sounds(
     }
 }
 
-/// Applies a changed `volume` to a sound that is already playing.
-fn apply_volume_changes(
-    mut sounds: Query<(&SoundPlayback, &mut AudioSink), Changed<SoundPlayback>>,
+/// A playing sound, placed or not.
+type PlayingSound = (
+    Ref<'static, SoundPlayback>,
+    Option<&'static SoundPosition>,
+    Option<&'static mut AudioSink>,
+    Option<&'static mut SpatialAudioSink>,
+    Option<&'static mut Transform>,
+);
+
+/// Applies a changed `volume` to a sound that is already playing, and follows the camera and the
+/// source of a positional sound.
+fn apply_volumes_and_positions(
+    mut sounds: Query<PlayingSound, Without<GameCamera>>,
+    cameras: Query<(Entity, &Name, &GameCamera)>,
     global_volume: Option<Res<GlobalVolume>>,
 ) {
-    for (sound, mut sink) in &mut sounds {
-        // Bevy applies the global volume (0 when muted) only when a sink is created, so a
-        // changed volume must multiply it in again or `audio.volume` would break the mute.
-        let global = global_volume
-            .as_ref()
-            .map_or(Volume::Linear(1.0), |global| global.volume);
-        sink.set_volume(Volume::Linear(sound.volume) * global);
+    // Bevy applies the global volume (0 when muted) only when a sink is created, so a changed
+    // volume must multiply it in again or `audio.volume` would break the mute.
+    let global = global_volume
+        .as_ref()
+        .map_or(Volume::Linear(1.0), |global| global.volume);
+    let listener = current_listener(&cameras);
+    for (sound, position, sink, spatial_sink, transform) in &mut sounds {
+        let Some(position) = position else {
+            if sound.is_changed()
+                && let Some(mut sink) = sink
+            {
+                sink.set_volume(Volume::Linear(sound.volume) * global);
+            }
+            continue;
+        };
+        let mix = mix_for(listener.as_ref(), position);
+        if let Some(mut sink) = spatial_sink {
+            sink.set_volume(Volume::Linear(sound.volume * mix.gain) * global);
+        }
+        if let Some(mut transform) = transform {
+            transform.translation = emitter_position(listener.as_ref(), position);
+        }
     }
 }
 

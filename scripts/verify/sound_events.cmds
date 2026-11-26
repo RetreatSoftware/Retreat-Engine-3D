@@ -1,0 +1,32 @@
+# One-shot sounds: each id once, placed in the world (quieter with distance, from its side), heard by
+# the sandbox camera. Output is muted under a script; what is playing and how it is mixed is logical.
+# Run: cargo run -p retreat_sandbox -- --headless --commands scripts/verify/sound_events.cmds
+# Expected picture:
+#   sound_events.png: the usual scene seen level from the front: sound draws nothing.
+camera.set_position sandbox_camera 0 2 10
+camera.look_at sandbox_camera 0 2 0
+# 8 units to the right: gain ((50 - 8) / 46) squared, fully right.
+audio.event boom_right sounds/tone.wav 0.2 8 2 10 50
+wait 2
+assert.audio_playing sound/boom_right
+assert.audio_mix sound/boom_right 0.834 1
+# The same id again (as a replayed tick would ask) plays nothing more.
+audio.event boom_right sounds/tone.wav 0.2 8 2 10 50
+audio.event boom_left sounds/tone.wav 0.2 -3 2 10 50
+audio.event boom_far sounds/tone.wav 0.2 0 2 -60 50
+wait 2
+assert.audio_events 3
+assert.audio_mix sound/boom_left 1 -1
+assert.audio_mix sound/boom_far 0 0
+# The listener moves: the mix of a playing sound follows.
+camera.set_position sandbox_camera 0 2 30
+camera.look_at sandbox_camera 0 2 0
+wait 2
+assert.audio_mix sound/boom_right 0.383 0.371
+snapshot sound_events
+wait 200
+assert.audio_not_playing sound/boom_right
+assert.audio_events 3
+state.hash
+assert.state_hash 0x8e09235baaf959dc
+quit

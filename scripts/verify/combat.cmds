@@ -5,6 +5,8 @@ sandbox.walker_dummy 1.5 2.5
 wait 20
 assert.ui_text walker_health health 100
 assert.ui_text walker_hits hits 0
+# Plain white (made as `Color::WHITE`) matches the command's sRGB numbers.
+assert.ui_text_color walker_hits 1 1 1
 # Without a network there is no past: view tick 0 shoots at the present. East is yaw -pi/2.
 assert.lag_ray_hit walker_99 0 -1.9 1.4 2.5 1 0 0 20
 sandbox.walker_fire -1.5708 0 0

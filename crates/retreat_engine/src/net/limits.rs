@@ -5,6 +5,12 @@
 //! datagram by datagram, whether to accept it. Every refusal is a [`Refusal`] the server counts in its
 //! `ServerStats`; none panics.
 //!
+//! **Rates allow bursts.** Datagrams and inputs are each limited by a bucket: it holds a burst
+//! (`max_*_burst`) and refills at `max_*_per_window` per rate window. An honest client that stalls
+//! and then catches up, or whose datagrams a network held back, sends many seconds' worth at once and
+//! must not be refused (a fixed per-window count muted and disconnected such clients: found by
+//! `tests/engine/net_slow_clients.rs`). A flood still gets no more than the burst plus the rate.
+//!
 //! **Repeat offenders.** A refusal counts as a *violation*. When a connection makes
 //! `violations_before_mute` violations inside one rate window it is *muted*: every datagram is dropped
 //! (without being decoded) for `mute_ticks`. After `mutes_before_disconnect` mutes it is disconnected.
@@ -16,10 +22,15 @@
 pub struct ServerLimits {
     /// Length of one rate window, in fixed ticks (64 = one second).
     pub rate_window_ticks: u64,
-    /// Most datagrams of any kind one connection may send per window (a client sends about one per tick).
+    /// Datagrams of any kind one connection may keep sending per window (a client sends about one per
+    /// tick).
     pub max_datagrams_per_window: u32,
-    /// Most `Input` messages one connection may send per window.
+    /// Datagrams it may send at once after it was quiet.
+    pub max_datagram_burst: u32,
+    /// `Input` messages one connection may keep sending per window.
     pub max_inputs_per_window: u32,
+    /// `Input` messages it may send at once after it was quiet.
+    pub max_input_burst: u32,
     /// Largest datagram accepted, in bytes (what a transport can carry anyway).
     pub max_datagram_bytes: usize,
     /// Most command lines in one `Input`.
@@ -52,10 +63,13 @@ impl Default for ServerLimits {
     fn default() -> Self {
         Self {
             rate_window_ticks: 64,
+            // Four times what a client sends in steady play.
             max_datagrams_per_window: 384,
-            // One input per tick, plus bursts: a client that stalls (a second per frame at most)
-            // and then catches up sends several windows' worth at once.
+            max_datagram_burst: 1536,
             max_inputs_per_window: 256,
+            // Sixteen seconds of play: more than a client sends catching up (it skips gaps over
+            // `RESYNC_BEHIND_TICKS`) or than a stalled link releases at once.
+            max_input_burst: 1024,
             max_datagram_bytes: 1200,
             max_lines_per_input: 16,
             max_line_bytes: 256,
@@ -78,9 +92,9 @@ pub enum Refusal {
     Muted,
     /// The datagram is larger than `max_datagram_bytes`.
     DatagramTooLarge,
-    /// Too many datagrams this window.
+    /// More datagrams than the rate and burst allow.
     DatagramRate,
-    /// Too many inputs this window.
+    /// More inputs than the rate and burst allow.
     InputRate,
     /// The datagram could not be decoded.
     Undecodable,
@@ -104,12 +118,38 @@ pub enum Verdict {
     Disconnect(Refusal),
 }
 
+/// A rate limit that allows bursts: what was used and has not been refilled yet.
+#[derive(Clone, Copy, Debug, Default)]
+struct Bucket {
+    /// In fractions of one item: `rate_window_ticks` units each, so a tick refills whole units.
+    used: u64,
+    refilled_at: u64,
+}
+
+impl Bucket {
+    /// Takes one item at `tick`; false when `burst` are in use (refilled at `per_window`).
+    fn take(&mut self, tick: u64, window: u64, per_window: u32, burst: u32) -> bool {
+        let window = window.max(1);
+        let elapsed = tick.saturating_sub(self.refilled_at);
+        self.refilled_at = self.refilled_at.max(tick);
+        self.used = self
+            .used
+            .saturating_sub(elapsed.saturating_mul(u64::from(per_window)));
+        let wanted = self.used + window;
+        let fits = wanted <= u64::from(burst).saturating_mul(window);
+        if fits {
+            self.used = wanted;
+        }
+        fits
+    }
+}
+
 /// One connection's counters.
 #[derive(Clone, Debug, Default)]
 pub struct ConnectionGuard {
     window_start: u64,
-    datagrams: u32,
-    inputs: u32,
+    datagrams: Bucket,
+    inputs: Bucket,
     violations: u32,
     muted_until: u64,
     mutes: u32,
@@ -118,8 +158,14 @@ pub struct ConnectionGuard {
 impl ConnectionGuard {
     /// A new guard for a connection that appeared at `tick`.
     pub fn new(tick: u64) -> Self {
+        let empty = Bucket {
+            used: 0,
+            refilled_at: tick,
+        };
         Self {
             window_start: tick,
+            datagrams: empty,
+            inputs: empty,
             ..Self::default()
         }
     }
@@ -137,8 +183,6 @@ impl ConnectionGuard {
     fn roll_window(&mut self, limits: &ServerLimits, tick: u64) {
         if tick >= self.window_start + limits.rate_window_ticks.max(1) {
             self.window_start = tick;
-            self.datagrams = 0;
-            self.inputs = 0;
             self.violations = 0;
         }
     }
@@ -152,17 +196,27 @@ impl ConnectionGuard {
         if len > limits.max_datagram_bytes {
             return self.violation(limits, tick, Refusal::DatagramTooLarge);
         }
-        self.datagrams = self.datagrams.saturating_add(1);
-        if self.datagrams > limits.max_datagrams_per_window {
+        let fits = self.datagrams.take(
+            tick,
+            limits.rate_window_ticks,
+            limits.max_datagrams_per_window,
+            limits.max_datagram_burst,
+        );
+        if !fits {
             return self.violation(limits, tick, Refusal::DatagramRate);
         }
         Verdict::Accept
     }
 
-    /// Counts one decoded `Input` message against the per-window input limit.
+    /// Counts one decoded `Input` message against the input rate limit.
     pub fn admit_input(&mut self, limits: &ServerLimits, tick: u64) -> Verdict {
-        self.inputs = self.inputs.saturating_add(1);
-        if self.inputs > limits.max_inputs_per_window {
+        let fits = self.inputs.take(
+            tick,
+            limits.rate_window_ticks,
+            limits.max_inputs_per_window,
+            limits.max_input_burst,
+        );
+        if !fits {
             return self.violation(limits, tick, Refusal::InputRate);
         }
         Verdict::Accept
@@ -213,7 +267,9 @@ mod tests {
         ServerLimits {
             rate_window_ticks: 10,
             max_datagrams_per_window: 5,
+            max_datagram_burst: 5,
             max_inputs_per_window: 3,
+            max_input_burst: 3,
             violations_before_mute: 4,
             mute_ticks: 20,
             mutes_before_disconnect: 2,
@@ -226,7 +282,9 @@ mod tests {
         // One datagram and one input per tick fits ten per ten-tick window.
         let limits = ServerLimits {
             max_datagrams_per_window: 10,
+            max_datagram_burst: 10,
             max_inputs_per_window: 10,
+            max_input_burst: 10,
             ..limits()
         };
         let mut guard = ConnectionGuard::new(0);
@@ -251,7 +309,7 @@ mod tests {
     }
 
     #[test]
-    fn datagrams_over_the_window_limit_are_refused_and_the_next_window_starts_clean() {
+    fn datagrams_over_the_burst_are_refused_until_the_bucket_refills() {
         let limits = limits();
         let mut guard = ConnectionGuard::new(0);
         for _ in 0..5 {
@@ -275,6 +333,32 @@ mod tests {
             guard.admit_input(&limits, 1),
             Verdict::Refuse(Refusal::InputRate)
         );
+    }
+
+    #[test]
+    fn a_quiet_connection_may_send_a_burst_but_a_flood_gets_only_the_rate() {
+        let limits = ServerLimits::default();
+        let mut guard = ConnectionGuard::new(0);
+        // A stall's worth at once.
+        for _ in 0..limits.max_input_burst {
+            assert_eq!(guard.admit_input(&limits, 1000), Verdict::Accept);
+        }
+        assert_eq!(
+            guard.admit_input(&limits, 1000),
+            Verdict::Refuse(Refusal::InputRate)
+        );
+        // Flooding on: each tick refills the rate and no more.
+        let per_tick = u64::from(limits.max_inputs_per_window) / limits.rate_window_ticks;
+        for tick in 1001..1010 {
+            let mut guard_now = guard.clone();
+            for _ in 0..per_tick {
+                assert_eq!(guard_now.admit_input(&limits, tick), Verdict::Accept);
+            }
+            assert_ne!(guard_now.admit_input(&limits, tick), Verdict::Accept);
+            for _ in 0..per_tick {
+                guard.admit_input(&limits, tick);
+            }
+        }
     }
 
     #[test]

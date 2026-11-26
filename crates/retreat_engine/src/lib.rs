@@ -26,6 +26,7 @@ mod model;
 mod motion_record;
 pub mod net;
 mod net_pose;
+mod once_queue;
 mod pending_command_work;
 mod perf;
 mod physics;
@@ -36,6 +37,7 @@ mod render_smoothing;
 mod retired_bodies;
 mod shader_material;
 mod snapshot;
+mod sound_events;
 mod state_hash;
 mod storage;
 mod ui_hud;
@@ -96,6 +98,7 @@ pub use shader_material::{
     AppShaderMaterialExt, ShaderMaterialCommandsPlugin, ShaderMaterialRegistry,
 };
 pub use snapshot::{SNAPSHOT_DIRECTORY, SnapshotSource, snapshot_file_path};
+pub use sound_events::{SOUND_EVENT_NAME_PREFIX, SoundEventLog, SoundEventsPlugin};
 pub use state_hash::{
     LastStateHash, StateHashPlugin, compute_state_hash, format_state_hash, parse_state_hash,
 };
@@ -291,6 +294,7 @@ impl Plugin for RetreatEnginePlugin {
             MotionRecordPlugin,
             NetPosePlugin,
             VisualEffectsPlugin,
+            SoundEventsPlugin,
         ));
         // Scans the render world for failed pipelines, so it needs one.
         if !self.no_render {

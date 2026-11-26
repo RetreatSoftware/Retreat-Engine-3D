@@ -25,7 +25,9 @@ fn small_limits() -> ServerLimits {
     ServerLimits {
         rate_window_ticks: 8,
         max_datagrams_per_window: 64,
+        max_datagram_burst: 64,
         max_inputs_per_window: 16,
+        max_input_burst: 16,
         violations_before_mute: 4,
         mute_ticks: 10,
         mutes_before_disconnect: 2,

@@ -11,6 +11,9 @@ snapshot rocket_flying
 wait 24
 assert.effects_played 1
 assert.effect_visible rocket/local/local/0/boom
+# The explosion is heard once, from where it happened.
+assert.audio_events 1
+assert.audio_playing sound/rocket/local/local/0/boom
 assert.walker_health walker_99 0
 snapshot rocket_boom
 wait 30

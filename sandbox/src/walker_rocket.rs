@@ -1,6 +1,6 @@
 //! A demo of what a projectile module uses (it is not the arena's launcher): a predicted spawn
 //! ([`spawn_predicted`]) moved by its synced [`NetPose`], drawn as a [`SphereVisual`] (the own
-//! rocket at the predicted present, others in the server's past), and an explosion shown once.
+//! rocket at the predicted present, others in the server's past), and an explosion shown and heard once.
 //!
 //! - `sandbox.walker_rocket <yaw> <pitch>`: the sender's walker launches a rocket (right mouse
 //!   button).
@@ -9,11 +9,12 @@
 use bevy::prelude::*;
 use retreat_engine_api::{
     AppCommandExt, AppInputExt, AppNetExt, AppNetStateExt, CommandArgs, CommandOutcome,
-    CommandResult, EffectTime, HELD_ONLY, HideVisuals, InputAction, InputActionSystems,
-    InputActions, InputKey, NetCommandSender, NetInputQueue, NetLocalClient, NetPose, NetReplaying,
-    NetState, PhysicsControlSystems, PhysicsShape, RemoteInterpolation, RemoveNetEntity,
-    RenderSmoothing, RetiredEntity, ShapeCast, SphereVisual, VisualEffect, VisualEffects,
-    cast_shape, run_command_line, spawn_predicted,
+    CommandResult, DEFAULT_SOUND_REACH, EffectTime, HELD_ONLY, HideVisuals, InputAction,
+    InputActionSystems, InputActions, InputKey, NetCommandSender, NetInputQueue, NetLocalClient,
+    NetPose, NetReplaying, NetState, PhysicsControlSystems, PhysicsShape, RemoteInterpolation,
+    RemoveNetEntity, RenderSmoothing, RetiredEntity, ShapeCast, SoundEvent, SoundEvents,
+    SoundPosition, SphereVisual, VisualEffect, VisualEffects, cast_shape, run_command_line,
+    spawn_predicted,
 };
 use serde::{Deserialize, Serialize};
 
@@ -208,6 +209,16 @@ fn explode(world: &mut World, name: &str, rocket: &Rocket, center: Vec3) {
         color: ROCKET_COLOR,
         glow: 2.0,
         ticks: 24,
+        time,
+    });
+    world.resource_mut::<SoundEvents>().play(SoundEvent {
+        id: format!("{name}/boom"),
+        path: "sounds/tone.wav".to_string(),
+        volume: 0.2,
+        at: Some(SoundPosition {
+            position: center,
+            reach: DEFAULT_SOUND_REACH,
+        }),
         time,
     });
 }
