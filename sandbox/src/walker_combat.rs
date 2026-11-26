@@ -6,11 +6,13 @@
 //!   button). Two hits put a walker down for [`DOWN_TICKS`] ticks.
 //! - `sandbox.walker_dummy <x> <z>`: a walker nobody controls, to shoot at.
 //! - `assert.walker_health <name> <health>`.
+//!
+//! The readouts sit on translucent panels (HUD styles).
 
 use bevy::prelude::*;
 use retreat_engine_api::{
     AppCommandExt, AppHudExt, AppInputExt, AppNetExt, AppNetStateExt, CommandArgs, CommandOutcome,
-    CommandResult, HELD_ONLY, HideVisuals, HudAnchor, HudKind, HudWidget, InputAction,
+    CommandResult, HELD_ONLY, HideVisuals, HudAnchor, HudKind, HudStyle, HudWidget, InputAction,
     InputActionSystems, InputActions, InputKey, Intangible, NetCommandSender, NetInputQueue,
     NetLocalClient, NetReplaying, NetState, NetViewTick, PhysicsTeleport, RayCast, RetiredEntity,
     UiHud, cast_ray_at, run_command_line,
@@ -32,6 +34,8 @@ const DUMMY_OWNER: u32 = 99;
 const HEALTH_WIDGET: &str = "walker_health";
 const HITS_WIDGET: &str = "walker_hits";
 const CROSSHAIR_WIDGET: &str = "walker_crosshair";
+/// Shares the hit counter's panel (neighbors with one panel color are one box).
+const HELP_WIDGET: &str = "walker_help";
 
 /// A walker's health: synced state.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -76,6 +80,7 @@ impl Plugin for WalkerCombatPlugin {
                 default_keys: &[InputKey::MouseLeft],
             })
             .register_hud_widget(widget(HITS_WIDGET, HudAnchor::TopLeft, 20.0))
+            .register_hud_widget(widget(HELP_WIDGET, HudAnchor::TopLeft, 16.0))
             .register_hud_widget(widget(HEALTH_WIDGET, HudAnchor::BottomLeft, 32.0))
             .register_hud_widget(HudWidget {
                 id: CROSSHAIR_WIDGET,
@@ -83,6 +88,7 @@ impl Plugin for WalkerCombatPlugin {
                 kind: HudKind::Crosshair { size: 24.0 },
                 visible: false,
             })
+            .add_systems(Startup, style_readouts)
             .add_systems(
                 FixedUpdate,
                 (send_fire.after(InputActionSystems), get_up_again),
@@ -98,6 +104,25 @@ fn widget(id: &'static str, anchor: HudAnchor, font_size: f32) -> HudWidget {
         kind: HudKind::Text { font_size },
         visible: false,
     }
+}
+
+fn style_readouts(mut hud: ResMut<UiHud>) {
+    let panel = Some(Color::srgba(0.0, 0.0, 0.0, 0.6));
+    let styles = [
+        (HITS_WIDGET, Color::WHITE),
+        (HELP_WIDGET, Color::srgb(0.75, 0.75, 0.75)),
+        (HEALTH_WIDGET, Color::srgb(0.5, 1.0, 0.5)),
+    ];
+    for (id, color) in styles {
+        hud.set_style(id, HudStyle { color, panel })
+            .expect("registered above");
+    }
+    let crosshair = HudStyle {
+        color: Color::srgb(1.0, 0.85, 0.3),
+        panel: None,
+    };
+    hud.set_style(CROSSHAIR_WIDGET, crosshair)
+        .expect("registered above");
 }
 
 /// Turns a new press of the fire button into one shot command with the view tick.
@@ -228,9 +253,14 @@ fn show_readouts(
     let Some((_, health)) = walkers.iter().find(|(walker, _)| walker.owner == local.0) else {
         return;
     };
+    // Only on a change, so a script's `ui.set_text` stays until the walker's numbers move.
+    if !health.is_changed() {
+        return;
+    }
     let texts = [
         (HEALTH_WIDGET, format!("health {}", health.health)),
         (HITS_WIDGET, format!("hits {}", health.hits)),
+        (HELP_WIDGET, "left mouse shoots".to_string()),
     ];
     for (id, text) in texts {
         if !hud.has_text(id, &text) {
@@ -238,7 +268,7 @@ fn show_readouts(
         }
     }
     if health.is_added() {
-        for id in [HEALTH_WIDGET, HITS_WIDGET, CROSSHAIR_WIDGET] {
+        for id in [HEALTH_WIDGET, HELP_WIDGET, HITS_WIDGET, CROSSHAIR_WIDGET] {
             hud.set_visible(id, true).expect("registered above");
         }
     }

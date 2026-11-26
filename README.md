@@ -52,6 +52,17 @@ Open `http://localhost:8090/` to play, or `http://localhost:8090/?commands=scrip
 to watch a script. In the browser console, `__retreat.command("sandbox.drop_box")` runs a command and
 `__retreat.status()` reports the script.
 
+## Play over the local network
+
+```bash
+scripts/web/build.sh
+cargo run -p retreat_sandbox -- --headless --no-render --server 5000 --serve-web target/web
+```
+
+The server prints the address to open on other devices (`https://<this computer>:8443/`). The browser
+warns about the server's own certificate: choose Advanced, then Proceed. On Windows, allow the app
+through the firewall on private networks.
+
 ## Part of the Retreat ecosystem
 
 - [Retreat-CoreSDK](https://github.com/RetreatSoftware/Retreat-CoreSDK) — shared SDK

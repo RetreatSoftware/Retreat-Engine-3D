@@ -68,7 +68,7 @@ pub use command_script::{
 };
 pub use headless::HEADLESS_RESOLUTION;
 pub use input_actions::InputActionsPlugin;
-pub use launch_options::{DEFAULT_SEED, LaunchOptions, NetLaunch};
+pub use launch_options::{DEFAULT_SEED, LaunchOptions, NetLaunch, ServerOffer, WebServeLaunch};
 pub use material::{MaterialCommandsPlugin, TEXTURE_FILE_EXTENSIONS};
 pub use model::{
     MODEL_FILE_EXTENSIONS, MODEL_NODE_NAME_SEPARATOR, ModelCommandsPlugin, namespaced_node_name,

@@ -12,8 +12,12 @@
 //! the hash accepts exactly that certificate (the W3C `serverCertificateHashes` mechanism, which
 //! browsers support too), so no certificate authority is needed. A production server would use a real
 //! certificate and clients would pass no hash.
+//!
+//! With `--serve-web` the same server also hands the browser build to LAN players
+//! (`native_web_server.rs`), using the same certificate.
 
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -23,12 +27,15 @@ use wtransport::{ClientConfig, Connection, Endpoint, Identity, ServerConfig};
 
 use bevy::prelude::App;
 
-use crate::NetLaunch;
+use super::native_web_server::{
+    WebFileServer, detect_lan_address, server_offer_json, startup_lines,
+};
 use crate::net::client::{ClientConfig as NetClientConfig, install_client};
 use crate::net::server::{ServerConfig as NetServerConfig, install_server};
 use crate::net::transport::{
     ClientEvent, ClientTransport, ConnectionId, ServerEvent, ServerTransport,
 };
+use crate::{LaunchOptions, NetLaunch, WebServeLaunch};
 use retreat_engine_api::NetAllowedCommands;
 
 /// Ticks between state broadcasts of a server started with `--server`.
@@ -40,16 +47,25 @@ const CLIENT_MARGIN_TICKS: i64 = 6;
 /// plugins (the server's allow-list is the game's `NetAllowedCommands` resource). A server prints one
 /// line, `retreat-net: listening on UDP port <port> certificate-hash <hex>`, so a script that starts
 /// clients can read the port and the certificate hash from its output.
-pub(crate) fn install_net(app: &mut App, net: &NetLaunch) -> Result<(), String> {
-    match net {
+pub(crate) fn install_net(app: &mut App, options: &LaunchOptions) -> Result<(), String> {
+    match &options.net {
         NetLaunch::Off => Ok(()),
         NetLaunch::Server { port } => {
-            let transport = WebTransportServer::start(*port)?;
+            let lan = options
+                .web
+                .as_ref()
+                .and_then(|web| web.lan_address.or_else(detect_lan_address));
+            let identity = self_signed_identity(lan)?;
+            let web_identity = identity.clone_identity();
+            let transport = WebTransportServer::start_with_identity(*port, identity)?;
             println!(
                 "retreat-net: listening on UDP port {} certificate-hash {}",
                 transport.port,
                 transport.certificate_hash_hex()
             );
+            if let Some(web) = &options.web {
+                serve_web(web, lan, &web_identity, &transport)?;
+            }
             let allowed = app
                 .world()
                 .get_resource::<NetAllowedCommands>()
@@ -80,6 +96,39 @@ pub(crate) fn install_net(app: &mut App, net: &NetLaunch) -> Result<(), String> 
             Ok(())
         }
     }
+}
+
+/// The server's certificate: for this computer's names and, when it serves the local network, its
+/// address there.
+fn self_signed_identity(lan: Option<IpAddr>) -> Result<Identity, String> {
+    let mut names = vec![
+        "localhost".to_string(),
+        "127.0.0.1".to_string(),
+        "::1".to_string(),
+    ];
+    names.extend(lan.map(|address| address.to_string()));
+    Identity::self_signed(names)
+        .map_err(|error| format!("cannot make a self-signed certificate: {error}"))
+}
+
+/// Starts the HTTPS page server and prints what to open.
+fn serve_web(
+    web: &WebServeLaunch,
+    lan: Option<IpAddr>,
+    identity: &Identity,
+    transport: &WebTransportServer,
+) -> Result<(), String> {
+    let server = WebFileServer::start(
+        &web.directory,
+        web.port,
+        identity.certificate_chain().as_slice()[0].der().to_vec(),
+        identity.private_key().secret_der().to_vec(),
+        server_offer_json(transport.port, transport.certificate_hash_hex()),
+    )?;
+    for line in startup_lines(lan, server.port, transport.port) {
+        println!("{line}");
+    }
+    Ok(())
 }
 
 fn runtime() -> Result<tokio::runtime::Runtime, String> {
@@ -124,9 +173,11 @@ pub struct WebTransportServer {
 impl WebTransportServer {
     /// Starts listening on `port` (0 picks a free port; see `self.port`).
     pub fn start(port: u16) -> Result<Self, String> {
+        Self::start_with_identity(port, self_signed_identity(None)?)
+    }
+
+    fn start_with_identity(port: u16, identity: Identity) -> Result<Self, String> {
         let runtime = runtime()?;
-        let identity = Identity::self_signed(["localhost", "127.0.0.1", "::1"])
-            .map_err(|error| format!("cannot make a self-signed certificate: {error}"))?;
         let certificate_hash = identity.certificate_chain().as_slice()[0]
             .hash()
             .fmt(Sha256DigestFmt::DottedHex)

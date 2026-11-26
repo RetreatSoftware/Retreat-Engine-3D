@@ -1,8 +1,10 @@
 //! Command-line arguments every Retreat app accepts.
 
-use std::time::Duration;
+use retreat_engine_api::serde_json;
 
+use std::net::IpAddr;
 use std::path::PathBuf;
+use std::time::Duration;
 
 /// The seed used when `--seed` is not given.
 pub const DEFAULT_SEED: u64 = 0;
@@ -12,7 +14,7 @@ pub const DEFAULT_SEED: u64 = 0;
 /// waits at most half a tick for its frame.
 const HEADLESS_FRAMES_PER_SECOND: f64 = 128.0;
 
-const LAUNCH_USAGE: &str = "usage: <app> [--commands <script.cmds>] [--seed <whole number>] [--headless [--no-render]] [--software-renderer] [--real-time] [--sound] [--server <port> | --connect <https://host:port> [--cert-hash <64 hex digits>]]";
+const LAUNCH_USAGE: &str = "usage: <app> [--commands <script.cmds>] [--seed <whole number>] [--headless [--no-render]] [--software-renderer] [--real-time] [--sound] [--server <port> [--serve-web <web build directory> [--web-port <port>] [--lan-address <ip>]] | --connect <https://host:port> [--cert-hash <64 hex digits>]]";
 
 /// Whether and how the app takes part in a network game.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -28,6 +30,51 @@ pub enum NetLaunch {
         url: String,
         cert_hash: Option<String>,
     },
+}
+
+/// The TCP port of the page served by `--serve-web` unless `--web-port` says otherwise.
+pub const DEFAULT_WEB_PORT: u16 = 8443;
+
+/// `--serve-web`: the server also hands the browser build to players on the local network.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebServeLaunch {
+    /// The web build's output directory (it has `index.html`).
+    pub directory: PathBuf,
+    /// `--web-port` (0 picks a free one).
+    pub port: u16,
+    /// `--lan-address`: this computer's address on the local network, when the detected one is wrong.
+    pub lan_address: Option<IpAddr>,
+}
+
+/// What the page's server says about itself (`retreat-server.json`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerOffer {
+    pub web_transport_port: u16,
+    pub certificate_hash: String,
+}
+
+impl ServerOffer {
+    /// Reads the file's text: `null` (a page not served by a game server) is `None`.
+    pub fn from_json(text: &str) -> Result<Option<Self>, String> {
+        let value: serde_json::Value = serde_json::from_str(text)
+            .map_err(|error| format!("retreat-server.json is not JSON: {error}"))?;
+        if value.is_null() {
+            return Ok(None);
+        }
+        let port = value["web_transport_port"]
+            .as_u64()
+            .and_then(|port| u16::try_from(port).ok());
+        let hash = value["certificate_hash"].as_str();
+        match (port, hash) {
+            (Some(web_transport_port), Some(hash)) => Ok(Some(Self {
+                web_transport_port,
+                certificate_hash: hash.to_string(),
+            })),
+            _ => Err(format!(
+                "retreat-server.json needs `web_transport_port` and `certificate_hash`, got {value}"
+            )),
+        }
+    }
 }
 
 /// What the app was asked to do at launch.
@@ -53,6 +100,8 @@ pub struct LaunchOptions {
     pub sound: bool,
     /// `--server`, `--connect`, `--cert-hash`.
     pub net: NetLaunch,
+    /// `--serve-web`, `--web-port`, `--lan-address` (a server only).
+    pub web: Option<WebServeLaunch>,
 }
 
 impl Default for LaunchOptions {
@@ -66,6 +115,7 @@ impl Default for LaunchOptions {
             real_time: false,
             sound: false,
             net: NetLaunch::Off,
+            web: None,
         }
     }
 }
@@ -100,6 +150,9 @@ impl LaunchOptions {
     pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Self, String> {
         let mut options = Self::default();
         let mut cert_hash: Option<String> = None;
+        let mut web_directory: Option<PathBuf> = None;
+        let mut web_port: Option<u16> = None;
+        let mut lan_address: Option<IpAddr> = None;
         let mut args = args.into_iter();
         while let Some(flag) = args.next() {
             match flag.as_str() {
@@ -133,6 +186,23 @@ impl LaunchOptions {
                     };
                 }
                 "--cert-hash" => cert_hash = Some(next_value(&mut args, "--cert-hash")?),
+                "--serve-web" => {
+                    web_directory = Some(PathBuf::from(next_value(&mut args, "--serve-web")?));
+                }
+                "--web-port" => {
+                    let value = next_value(&mut args, "--web-port")?;
+                    web_port = Some(value.parse().map_err(|error| {
+                        format!("--web-port `{value}` is not a TCP port from 0 to 65535: {error}; {LAUNCH_USAGE}")
+                    })?);
+                }
+                "--lan-address" => {
+                    let value = next_value(&mut args, "--lan-address")?;
+                    lan_address = Some(value.parse().map_err(|error| {
+                        format!(
+                            "--lan-address `{value}` is not an IP address: {error}; {LAUNCH_USAGE}"
+                        )
+                    })?);
+                }
                 unknown => {
                     return Err(format!(
                         "unknown launch argument `{unknown}`; {LAUNCH_USAGE}"
@@ -159,7 +229,39 @@ impl LaunchOptions {
             }
             _ => {}
         }
+        match web_directory {
+            Some(directory) => {
+                if !matches!(options.net, NetLaunch::Server { .. }) {
+                    return Err(format!(
+                        "--serve-web only makes sense with --server; {LAUNCH_USAGE}"
+                    ));
+                }
+                options.web = Some(WebServeLaunch {
+                    directory,
+                    port: web_port.unwrap_or(DEFAULT_WEB_PORT),
+                    lan_address,
+                });
+            }
+            None if web_port.is_some() || lan_address.is_some() => {
+                return Err(format!(
+                    "--web-port and --lan-address only make sense with --serve-web; {LAUNCH_USAGE}"
+                ));
+            }
+            None => {}
+        }
         Ok(options)
+    }
+
+    /// A page served by a game server joins that server by itself: unless the URL already said
+    /// `connect`, connect to the offered port on the host the page came from (as the browser writes
+    /// it, so an IPv6 address has its brackets).
+    pub fn join_offered_server(&mut self, page_host: &str, offer: ServerOffer) {
+        if self.net == NetLaunch::Off {
+            self.net = NetLaunch::Client {
+                url: format!("https://{page_host}:{}", offer.web_transport_port),
+                cert_hash: Some(offer.certificate_hash),
+            };
+        }
     }
 }
 
@@ -412,6 +514,68 @@ mod tests {
             error.contains("cert_hash only makes sense with connect"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn reads_the_web_serving_options() {
+        let server = parse(&["--server", "5000", "--serve-web", "target/web"]).unwrap();
+        assert_eq!(
+            server.web,
+            Some(WebServeLaunch {
+                directory: PathBuf::from("target/web"),
+                port: DEFAULT_WEB_PORT,
+                lan_address: None,
+            })
+        );
+        let chosen = parse(&[
+            "--serve-web",
+            "web",
+            "--web-port",
+            "0",
+            "--lan-address",
+            "192.168.1.9",
+            "--server",
+            "0",
+        ])
+        .unwrap()
+        .web
+        .unwrap();
+        assert_eq!(chosen.port, 0);
+        assert_eq!(chosen.lan_address, Some("192.168.1.9".parse().unwrap()));
+        let error = parse(&["--serve-web", "web"]).unwrap_err();
+        assert!(error.contains("only makes sense with --server"), "{error}");
+        let error = parse(&["--server", "0", "--web-port", "1"]).unwrap_err();
+        assert!(
+            error.contains("only make sense with --serve-web"),
+            "{error}"
+        );
+        let error = parse(&["--lan-address", "here"]).unwrap_err();
+        assert!(error.contains("not an IP address"), "{error}");
+    }
+
+    #[test]
+    fn a_served_page_joins_its_server_unless_the_url_chose_one() {
+        let offer =
+            ServerOffer::from_json(r#"{"web_transport_port":5000,"certificate_hash":"ab"}"#)
+                .unwrap()
+                .unwrap();
+        let mut options = url(&[]).unwrap();
+        options.join_offered_server("192.168.1.9", offer.clone());
+        assert_eq!(
+            options.net,
+            NetLaunch::Client {
+                url: "https://192.168.1.9:5000".to_string(),
+                cert_hash: Some("ab".to_string()),
+            }
+        );
+        let mut chosen = url(&[("connect", "https://other:1")]).unwrap();
+        let before = chosen.clone();
+        chosen.join_offered_server("192.168.1.9", offer);
+        assert_eq!(chosen, before);
+        assert_eq!(ServerOffer::from_json("null\n"), Ok(None));
+        assert!(ServerOffer::from_json("<html>").is_err());
+        let error = ServerOffer::from_json(r#"{"web_transport_port":70000}"#).unwrap_err();
+        assert!(error.contains("certificate_hash"), "{error}");
     }
 
     #[test]

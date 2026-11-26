@@ -5,6 +5,8 @@ use bevy::prelude::*;
 
 #[path = "native_transport.rs"]
 pub mod native_transport;
+#[path = "native_web_server.rs"]
+mod native_web_server;
 
 use crate::snapshot::snapshot_file_path;
 use crate::{CommandScript, LaunchOptions, RetreatEnginePlugin};
@@ -38,7 +40,7 @@ pub fn launch(window_title: &str, add_game_plugins: fn(&mut App)) -> AppExit {
     let mut app = App::new();
     app.add_plugins(engine);
     add_game_plugins(&mut app);
-    if let Err(message) = native_transport::install_net(&mut app, &options.net) {
+    if let Err(message) = native_transport::install_net(&mut app, &options) {
         eprintln!("{window_title}: {message}");
         return AppExit::error();
     }

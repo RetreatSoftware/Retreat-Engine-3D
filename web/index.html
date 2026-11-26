@@ -1,19 +1,37 @@
 <!doctype html>
-<!-- Retreat Engine Sandbox, browser build. Built into target/web/ by scripts/web/build.sh.
-     Launch options come from the URL: ?commands=scripts/verify/<name>.cmds&seed=<n>.
+<!-- The page of every Retreat game's browser build. A template: scripts/web/build_web.mjs fills in
+     {{TITLE}} and {{WASM_NAME}} and writes it as <output>/index.html.
+     Launch options come from the URL: ?commands=scripts/verify/<name>.cmds&seed=<n>. A page served
+     by a game server (--serve-web) joins that server by itself.
      Agents drive it through window.__retreat (see crates/retreat_engine/src/platform/wasm.rs). -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Retreat Engine Sandbox</title>
+    <title>{{TITLE}}</title>
     <style>
       html, body { margin: 0; height: 100%; background: #1e1f22; overflow: hidden; }
       #retreat-canvas { display: block; width: 100%; height: 100%; outline: none; }
+      /* What the player is told over the game: loading, or why it stopped. */
+      #retreat-notice {
+        position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); max-width: 90%;
+        padding: 10px 16px; border-radius: 6px; background: rgba(0, 0, 0, 0.8); color: #fff;
+        font: 16px system-ui, sans-serif; text-align: center;
+      }
+      #retreat-notice[hidden] { display: none; }
     </style>
   </head>
   <body>
     <canvas id="retreat-canvas"></canvas>
+    <div id="retreat-notice">Loading…</div>
+    <script>
+      // Shows `text` over the game; an empty text hides the notice.
+      window.__retreatNotice = (text) => {
+        const notice = document.getElementById("retreat-notice");
+        notice.textContent = text;
+        notice.hidden = text === "";
+      };
+    </script>
     <!-- Networking: the browser half of the WebTransport client (the Rust half is
          crates/retreat_engine/src/platform/wasm_transport.rs). `connect` starts a session, `send` sends
          one datagram, `poll` returns what happened since the last call as byte arrays whose first byte
@@ -31,10 +49,14 @@
           return bytes;
         };
         const hexToBytes = (hex) => Uint8Array.from(hex.match(/../g).map((pair) => parseInt(pair, 16)));
+        const lost = (reason) => {
+          events.push(withKind(2, encoder.encode(reason)));
+          window.__retreatNotice(`No connection to the game server (${reason}). Reload the page to try again.`);
+        };
         window.__retreatNet = {
           connect(url, certificateHashHex) {
             if (typeof WebTransport === "undefined") {
-              events.push(withKind(2, encoder.encode("this browser has no WebTransport")));
+              lost(window.isSecureContext ? "this browser has no WebTransport" : "open the page with https://");
               return;
             }
             const options = certificateHashHex
@@ -42,8 +64,8 @@
               : {};
             const session = new WebTransport(url, options);
             session.closed.then(
-              () => events.push(withKind(2, encoder.encode("the session closed"))),
-              (error) => events.push(withKind(2, encoder.encode(String(error)))),
+              () => lost("the session closed"),
+              (error) => lost(String(error)),
             );
             session.ready.then(async () => {
               writer = session.datagrams.writable.getWriter();
@@ -95,7 +117,7 @@
         retreatStatus,
         retreatSnapshotPng,
         retreatSnapshotNames,
-      } from "./retreat_sandbox.js";
+      } from "./{{WASM_NAME}}.js";
 
       // The agent-facing bridge. Every call goes through the engine's command registry.
       //   await __retreat.command("physics.spawn_box a 0 3 0 1")  -> "ok" (rejects with the error)
@@ -126,9 +148,15 @@
         snapshotNames: () => retreatSnapshotNames(),
         audioState: () => window.__retreatAudioStates(), // e.g. ["suspended"] until a click or key press
       };
-      init().then(() => {
-        loaded = true;
-      });
+      init().then(
+        () => {
+          loaded = true;
+          // A connection that already failed keeps its message.
+          const notice = document.getElementById("retreat-notice");
+          if (notice.textContent === "Loading…") window.__retreatNotice("");
+        },
+        (error) => window.__retreatNotice(`The game could not start: ${error}`),
+      );
     </script>
   </body>
 </html>

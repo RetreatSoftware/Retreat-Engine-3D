@@ -121,8 +121,8 @@ pub use save_store::{
 pub use simulation_rng::SimulationRng;
 pub use sound_playback::{MAX_SOUND_VOLUME, SoundKind, SoundPlayback};
 pub use ui_hud::{
-    AppHudExt, HUD_LINE_HEIGHT, HUD_TEXT_WIDTH, HudAnchor, HudKind, HudOccupied, HudState,
-    HudWidget, UiHud, compute_hud_layout,
+    AppHudExt, HUD_LINE_HEIGHT, HUD_PANEL_PADDING, HUD_TEXT_WIDTH, HudAnchor, HudBlock, HudKind,
+    HudOccupied, HudState, HudStyle, HudWidget, UiHud, compute_hud_layout,
 };
 pub use ui_panel::{
     AppUiExt, BUTTON_HEIGHT, ButtonRect, COLUMN_BUTTON_WIDTH, MIN_BUTTON_HEIGHT, PANEL_GAP,

@@ -13,6 +13,9 @@
 // also compares the module state and requires both characters to have walked.
 // With --browser, client B is the browser build (headless Chrome through scripts/web/run_in_browser.mjs,
 // WebTransport from the page): run scripts/web/build.sh first.
+// With --served-page (implies --browser) the server also serves the web build (--serve-web) and client B
+// opens that HTTPS page at the LAN address the server prints, clicks through the certificate warning and
+// joins by the page's own server offer (no `connect` in its URL), as a player on another device does.
 // Exit code 0 = every process exited cleanly and the three worlds agree (positions within 0.05).
 
 import { spawn } from "node:child_process";
@@ -41,7 +44,8 @@ if (!existsSync(exe)) {
   die(`${exe} does not exist; run \`cargo build -p retreat_sandbox\` first`);
 }
 const extra = process.argv.includes("--software-renderer") ? ["--software-renderer"] : [];
-const browserClient = process.argv.includes("--browser");
+const servedPage = process.argv.includes("--served-page");
+const browserClient = servedPage || process.argv.includes("--browser");
 const scenario = process.argv.includes("--scenario") ? process.argv[process.argv.indexOf("--scenario") + 1] : "boxes";
 if (!["boxes", "players", "preset_players", "walkers"].includes(scenario)) die(`unknown scenario ${scenario}; use boxes, players, preset_players or walkers`);
 const isPreset = scenario === "preset_players";
@@ -106,12 +110,16 @@ function bodies(output) {
 const processes = [];
 let failure = null;
 try {
-  const server = start("server", ["--server", "0", "--commands", join(scriptDir, "server.cmds")]);
+  const webArgs = servedPage ? ["--serve-web", join("target", "web"), "--web-port", "0"] : [];
+  const server = start("server", ["--server", "0", ...webArgs, "--commands", join(scriptDir, "server.cmds")]);
   processes.push(server);
   const listening = await waitFor("the server to listen", () => {
     const match = server.output.match(/retreat-net: listening on UDP port (\d+) certificate-hash ([0-9a-f]{64})/);
     if (server.exited !== null) throw new Error(`the server exited early:\n${server.output}`);
-    return match ? { port: match[1], hash: match[2] } : undefined;
+    // The LAN address when the machine has one, else this machine's own name (printed after it).
+    const page = server.output.match(/retreat-web: players on this network open (\S+)/) ?? server.output.match(/retreat-web: on this computer: (\S+)/);
+    if (!match || (servedPage && !server.output.includes("on this computer:"))) return undefined;
+    return { port: match[1], hash: match[2], page: page?.[1] };
   });
   console.log(`network check: server listening on port ${listening.port}`);
   // Client b is the browser with --browser. In the preset it also renders natively (PNGs), while client a
@@ -123,7 +131,7 @@ try {
       processes.push(
         start(
           "browser client b",
-          [`${webScriptDir}/${scriptName}.cmds`, "--query", query],
+          [`${webScriptDir}/${scriptName}.cmds`, ...(servedPage ? ["--url", listening.page, "--query", "real_time=1"] : ["--query", query])],
           process.execPath,
           [join(root, "scripts", "web", "run_in_browser.mjs")],
         ),

@@ -4,6 +4,12 @@
 //
 //   node scripts/web/run_in_browser.mjs scripts/verify/physics_boxes.cmds [--seed 0]
 //
+//   node scripts/web/run_in_browser.mjs <script.cmds> --url https://192.168.1.20:8443/ [--query real_time=1]
+//
+// `--url` opens a page that a game server serves (--serve-web) instead of serving target/web here, and
+// passes the certificate warning the way a player does (Advanced, Proceed). The script must be in the
+// served directory.
+//
 // Before: scripts/web/build.sh (fills target/web). Needs Node 22+ (built-in fetch and WebSocket)
 // and Chrome, Chromium or Edge (found automatically, or set RETREAT_BROWSER=<path to binary>).
 // No npm packages.
@@ -38,24 +44,27 @@ const MIME_TYPES = {
 
 function usage(message) {
   console.error(`run_in_browser: ${message}`);
-  console.error("usage: node scripts/web/run_in_browser.mjs <script.cmds> [--seed <n>] [--timeout <seconds>] [--query <extra URL query>] [--click-for-pointer-lock]");
+  console.error("usage: node scripts/web/run_in_browser.mjs <script.cmds> [--seed <n>] [--timeout <seconds>] [--query <extra URL query>] [--click-for-pointer-lock] [--url <https page of a game server>]");
   process.exit(2);
 }
 
 function parseArguments(argv) {
-  const options = { script: null, seed: "0", timeoutSeconds: DEFAULT_TIMEOUT_SECONDS, query: "", clickForPointerLock: false };
+  const options = { script: null, seed: "0", timeoutSeconds: DEFAULT_TIMEOUT_SECONDS, query: "", clickForPointerLock: false, url: null };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--seed") options.seed = argv[++index] ?? usage("--seed needs a value");
     else if (argument === "--timeout") options.timeoutSeconds = Number(argv[++index]);
     else if (argument === "--query") options.query = argv[++index] ?? usage("--query needs a value");
     else if (argument === "--click-for-pointer-lock") options.clickForPointerLock = true;
+    else if (argument === "--url") options.url = argv[++index] ?? usage("--url needs a value");
     else if (argument.startsWith("--")) usage(`unknown option ${argument}`);
     else options.script = argument.replaceAll("\\", "/");
   }
   if (!options.script) usage("missing the script path");
-  if (!existsSync(join(WEB_DIR, "index.html"))) usage("target/web is empty; run scripts/web/build.sh first");
-  if (!existsSync(join(WEB_DIR, options.script))) usage(`${options.script} is not in target/web (build.sh copies scripts/verify)`);
+  if (!options.url) {
+    if (!existsSync(join(WEB_DIR, "index.html"))) usage("target/web is empty; run scripts/web/build.sh first");
+    if (!existsSync(join(WEB_DIR, options.script))) usage(`${options.script} is not in target/web (build.sh copies scripts/verify)`);
+  }
   return options;
 }
 
@@ -149,14 +158,40 @@ async function connectDevtools(url) {
   };
 }
 
+/**
+ * Clicks through the browser's certificate warning ("Advanced", then "Proceed"), like a player, and
+ * checks that the page behind it may use WebTransport. No browser flag ignores certificate errors.
+ */
+async function passCertificateWarning(evaluate) {
+  const pause = () => new Promise((wait) => setTimeout(wait, 200));
+  let clicked = false;
+  for (let attempt = 0; attempt < 100 && !clicked; attempt += 1) {
+    await pause();
+    clicked = await evaluate(
+      "(() => { const link = document.getElementById('proceed-link'); if (!link) return false; document.getElementById('details-button')?.click(); link.click(); return true; })()",
+    ).catch(() => false);
+  }
+  if (!clicked) throw new Error("the browser showed no certificate warning to click through");
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    await pause();
+    const page = await evaluate(
+      "document.getElementById('retreat-canvas') ? { secure: window.isSecureContext, webTransport: typeof WebTransport } : null",
+    ).catch(() => null);
+    if (!page) continue;
+    console.log(`run_in_browser: passed the certificate warning; secure context ${page.secure}, WebTransport ${page.webTransport}`);
+    return;
+  }
+  throw new Error("the page did not load after the certificate warning");
+}
+
 async function main() {
   const options = parseArguments(process.argv.slice(2));
-  const server = await startStaticServer();
-  const port = server.address().port;
+  const server = options.url ? null : await startStaticServer();
+  const origin = options.url ? options.url.replace(/\/+$/, "") : `http://127.0.0.1:${server.address().port}`;
   const { browser, devtoolsUrl } = await launchBrowser(findBrowser());
   const devtools = await connectDevtools(devtoolsUrl);
 
-  const pageUrl = `http://127.0.0.1:${port}/?commands=${encodeURIComponent(options.script)}&seed=${options.seed}${options.query ? `&${options.query}` : ""}`;
+  const pageUrl = `${origin}/?commands=${encodeURIComponent(options.script)}&seed=${options.seed}${options.query ? `&${options.query}` : ""}`;
   const { targetId } = await devtools.call("Target.createTarget", { url: "about:blank" });
   const { sessionId } = await devtools.call("Target.attachToTarget", { targetId, flatten: true });
   devtools.onEvent((message) => {
@@ -185,6 +220,8 @@ async function main() {
     if (exceptionDetails) throw new Error(exceptionDetails.exception?.description ?? exceptionDetails.text);
     return result.value;
   };
+
+  if (options.url) await passCertificateWarning(evaluate);
 
   const deadline = Date.now() + options.timeoutSeconds * 1000;
   let status = { script: "loading" };
@@ -240,7 +277,7 @@ async function main() {
 
   devtools.close();
   browser.kill();
-  server.close();
+  server?.close();
 
   if (pointerLockFailure) {
     console.error(`run_in_browser: FAIL ${options.script}: ${pointerLockFailure}`);

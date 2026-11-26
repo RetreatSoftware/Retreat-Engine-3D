@@ -29,7 +29,7 @@ pub mod wasm_transport;
 
 use crate::bridge_status::script_status_json;
 use crate::command_script::ScriptProgress;
-use crate::{CommandScript, LaunchOptions, PendingCommandWork, RetreatEnginePlugin};
+use crate::{CommandScript, LaunchOptions, PendingCommandWork, RetreatEnginePlugin, ServerOffer};
 
 /// Browsers keep audio silent until the first click or key press on the page; `web/index.html`
 /// resumes the page's audio contexts then.
@@ -101,7 +101,11 @@ pub fn launch(window_title: &str, add_game_plugins: fn(&mut App)) -> AppExit {
 
 async fn load_engine_plugin(title: &str) -> Result<(RetreatEnginePlugin, LaunchOptions), String> {
     let window = web_sys::window().ok_or("there is no browser window")?;
-    let options = page_launch_options()?;
+    let mut options = page_launch_options()?;
+    if let Some(offer) = fetch_server_offer(&window).await? {
+        let host = window.location().hostname().map_err(describe_js_error)?;
+        options.join_offered_server(&host, offer);
+    }
     let script = match &options.commands_file {
         Some(path) => {
             let path = path.to_string_lossy().to_string();
@@ -112,6 +116,22 @@ async fn load_engine_plugin(title: &str) -> Result<(RetreatEnginePlugin, LaunchO
     };
     let engine = RetreatEnginePlugin::from_launch_options(title, &options, script);
     Ok((engine, options))
+}
+
+/// The game server that serves this page, if one does (`retreat-server.json`; see
+/// `platform/native_web_server.rs`). A page without the file, or with `null`, has none.
+async fn fetch_server_offer(window: &web_sys::Window) -> Result<Option<ServerOffer>, String> {
+    let response = JsFuture::from(window.fetch_with_str("retreat-server.json"))
+        .await
+        .map_err(describe_js_error)?;
+    let response: web_sys::Response = response.unchecked_into();
+    if !response.ok() {
+        return Ok(None);
+    }
+    let text = JsFuture::from(response.text().map_err(describe_js_error)?)
+        .await
+        .map_err(describe_js_error)?;
+    ServerOffer::from_json(&text.as_string().unwrap_or_default())
 }
 
 /// The launch options the page URL asks for (`?commands=...&seed=...`).

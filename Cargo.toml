@@ -27,6 +27,9 @@ serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 # Native WebTransport (decided: WebTransport; this library implements it natively, the browser uses its own API).
 wtransport = "0.7"
+# HTTPS for the page the server hands to LAN browsers (`--serve-web`). Already linked through
+# wtransport with the same provider (`ring`), so it adds no crate.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
 retreat_engine_api = { path = "crates/retreat_engine_api" }
 retreat_engine = { path = "crates/retreat_engine" }
