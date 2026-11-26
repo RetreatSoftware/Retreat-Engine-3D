@@ -1,0 +1,32 @@
+# Pickups without physics bodies: a box and a model placed by their synced pose, colored, turning
+# and bobbing on the fixed clock, hidden and shown, and removed.
+# Run: cargo run -p retreat_sandbox -- --headless --commands scripts/verify/pickups.cmds
+# Expected pictures:
+#   pickups_shown.png:  a cyan box left of the blue cube (at the top of its bob), a gold box in front,
+#                       and a small fox on the right.
+#   pickups_moved.png:  the same, a quarter bob later: the boxes lower and turned.
+#   pickups_taken.png:  the cyan box is gone, the others remain.
+sandbox.pickup_spawn loot_box -2 0.8 1
+visual.spawn_prop loot_gold 0 0.6 2.5
+visual.set_box loot_gold 0.5 0.5 0.5 0.9 0.7 0.1 0
+visual.set_motion loot_gold 2 0.2 2
+visual.spawn_prop loot_fox 2.2 0.4 1
+visual.set_character loot_fox models/Fox.glb 0.012 0 0
+visual.set_motion loot_fox 1 0.2 2
+wait_until 600 assert.visual_ready loot_fox
+# The pickup's own box is at its bob's height; the pickup entity stays where it is.
+wait 2
+snapshot pickups_shown
+assert.position loot_box -2 0.8 1
+wait 64
+snapshot pickups_moved
+assert.position loot_box -2 0.8 1
+sandbox.pickup_set loot_box taken
+wait 2
+snapshot pickups_taken
+sandbox.pickup_set loot_box available
+net.remove loot_gold
+wait 2
+assert.position loot_box -2 0.8 1
+state.hash
+quit

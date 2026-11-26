@@ -9,22 +9,27 @@
 //!   appear later (a model that finishes loading).
 //!
 //! - `HideVisuals` hides an entity and everything below it.
-//! - `SphereVisual` is a child `<name>/sphere`.
+//! - `SphereVisual` is a child `<name>/sphere`, `BoxVisual` a child `<name>/box`.
+//! - Every visual child keeps its place relative to its owner in `VisualBase`; one system writes its
+//!   `Transform` from that and the owner's `VisualMotion`.
 //!
 //! Commands: `visual.set_color|set_color_flat <name> <r> <g> <b>`, `visual.hide|show <name>`,
 //! `visual.set_sphere <name> <radius> <r> <g> <b> <glow>`,
+//! `visual.set_box <name> <width> <height> <depth> <r> <g> <b> <glow>`,
+//! `visual.set_motion <name> <turn> <bob_height> <bob_seconds>`, `visual.spawn_prop <name> <x> <y> <z>`
+//! (a synced entity without a body, for scripts),
 //! `visual.set_character <name> <model|shape> <scale> <offset_y> <yaw>`,
 //! `visual.play <name> <clip> <speed>`, `assert.visual_ready <name>`.
 
 use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 use retreat_engine_api::{
-    AnimationPlayback, AppCommandExt, CharacterVisual, ClipPlayback, CommandArgs, CommandOutcome,
-    CommandResult, EntityColor, EntityColorFlat, HideVisuals, PhysicsBody, PhysicsShape,
-    RetiredEntity, SphereVisual,
+    AnimationPlayback, AppCommandExt, BoxVisual, CharacterVisual, ClipPlayback, CommandArgs,
+    CommandOutcome, CommandResult, EntityColor, EntityColorFlat, HideVisuals, NetPose, PhysicsBody,
+    PhysicsShape, RetiredEntity, SphereVisual, VisualMotion,
 };
 
-use crate::entity_names::find_unique_entity_by_name;
+use crate::entity_names::{ensure_name_is_free, find_unique_entity_by_name};
 use crate::model::{is_model_loading, spawn_model};
 use crate::platform::HAS_FILE_SYSTEM;
 
@@ -32,6 +37,10 @@ use crate::platform::HAS_FILE_SYSTEM;
 const SHAPE_COLOR: Color = Color::srgb(0.75, 0.75, 0.78);
 /// Suffix of a visual's name.
 pub const VISUAL_NAME_SUFFIX: &str = "/visual";
+
+/// On a visual child: where it sits relative to its owner before any `VisualMotion`.
+#[derive(Component, Clone, Copy)]
+struct VisualBase(Transform);
 
 /// On the owner: what its visual child was built from.
 #[derive(Component)]
@@ -58,6 +67,8 @@ impl Plugin for VisualsPlugin {
             (
                 build_character_visuals,
                 build_sphere_visuals,
+                build_box_visuals,
+                move_visuals,
                 apply_entity_colors,
                 apply_hidden_visuals,
             )
@@ -77,6 +88,21 @@ impl Plugin for VisualsPlugin {
             "visual.set_sphere",
             "visual.set_sphere <name> <radius> <red> <green> <blue> <glow>",
             set_sphere_command,
+        )
+        .register_command(
+            "visual.set_box",
+            "visual.set_box <name> <width> <height> <depth> <red> <green> <blue> <glow>",
+            set_box_command,
+        )
+        .register_command(
+            "visual.set_motion",
+            "visual.set_motion <name> <turn> <bob_height> <bob_seconds>",
+            set_motion_command,
+        )
+        .register_command(
+            "visual.spawn_prop",
+            "visual.spawn_prop <name> <x> <y> <z>",
+            spawn_prop_command,
         )
         .register_command("visual.hide", "visual.hide <name>", hide_command)
         .register_command("visual.show", "visual.show <name>", show_command)
@@ -141,9 +167,8 @@ fn build_character_visuals(world: &mut World) {
         if world.get_entity(child).is_err() {
             continue;
         }
-        let transform = visual_transform(&visual);
-        if let Some(mut current) = world.get_mut::<Transform>(child) {
-            current.set_if_neq(transform);
+        if let Some(mut base) = world.get_mut::<VisualBase>(child) {
+            base.0 = visual_transform(&visual);
         }
         let changed = world
             .get::<BuiltVisual>(owner)
@@ -178,7 +203,9 @@ fn build_child(world: &mut World, owner: Entity, name: &str, visual: &CharacterV
         None => spawn_shape(world, owner, child_name, transform),
     };
     world.entity_mut(owner).insert_if_new(Visibility::default());
-    world.entity_mut(child).insert(ChildOf(owner));
+    world
+        .entity_mut(child)
+        .insert((ChildOf(owner), VisualBase(transform)));
     child
 }
 
@@ -240,10 +267,10 @@ struct BuiltSphere {
     visual: SphereVisual,
 }
 
-fn sphere_material(visual: &SphereVisual) -> StandardMaterial {
+fn glowing_material(color: Color, glow: f32) -> StandardMaterial {
     StandardMaterial {
-        base_color: visual.color,
-        emissive: visual.color.to_linear() * visual.glow,
+        base_color: color,
+        emissive: color.to_linear() * glow,
         ..default()
     }
 }
@@ -253,7 +280,7 @@ fn build_sphere_visuals(
     mut owners: Query<(Entity, &Name, &SphereVisual, Option<&mut BuiltSphere>)>,
     mut removed: RemovedComponents<SphereVisual>,
     built: Query<&BuiltSphere, Without<SphereVisual>>,
-    mut parts: Query<(&mut Transform, &MeshMaterial3d<StandardMaterial>), Without<SphereVisual>>,
+    mut parts: Query<(&mut VisualBase, &MeshMaterial3d<StandardMaterial>), Without<SphereVisual>>,
     (mut meshes, mut materials): (ResMut<Assets<Mesh>>, ResMut<Assets<StandardMaterial>>),
     mut unit: Local<Option<Handle<Mesh>>>,
     mut commands: Commands,
@@ -274,8 +301,9 @@ fn build_sphere_visuals(
                 .spawn((
                     Name::new(format!("{}/sphere", name.as_str())),
                     Mesh3d(mesh),
-                    MeshMaterial3d(materials.add(sphere_material(visual))),
+                    MeshMaterial3d(materials.add(glowing_material(visual.color, visual.glow))),
                     scale,
+                    VisualBase(scale),
                     ChildOf(owner),
                 ))
                 .id();
@@ -292,17 +320,149 @@ fn build_sphere_visuals(
         if sphere.visual == *visual {
             continue;
         }
-        let Ok((mut transform, material)) = parts.get_mut(sphere.child) else {
+        let Ok((mut base, material)) = parts.get_mut(sphere.child) else {
             continue;
         };
-        *transform = scale;
+        base.0 = scale;
         if (sphere.visual.color, sphere.visual.glow) != (visual.color, visual.glow)
             && let Some(mut found) = materials.get_mut(&material.0)
         {
-            *found = sphere_material(visual);
+            *found = glowing_material(visual.color, visual.glow);
         }
         sphere.visual = *visual;
     }
+}
+
+/// On the owner of a `BoxVisual`: its mesh child and what that was made from.
+#[derive(Component)]
+struct BuiltBox {
+    child: Entity,
+    visual: BoxVisual,
+}
+
+/// Draws `BoxVisual` as a child `<name>/box`: one shared unit mesh, scaled to the size.
+fn build_box_visuals(
+    mut owners: Query<(Entity, &Name, &BoxVisual, Option<&mut BuiltBox>)>,
+    mut removed: RemovedComponents<BoxVisual>,
+    built: Query<&BuiltBox, Without<BoxVisual>>,
+    mut parts: Query<(&mut VisualBase, &MeshMaterial3d<StandardMaterial>), Without<BoxVisual>>,
+    (mut meshes, mut materials): (ResMut<Assets<Mesh>>, ResMut<Assets<StandardMaterial>>),
+    mut unit: Local<Option<Handle<Mesh>>>,
+    mut commands: Commands,
+) {
+    for owner in removed.read() {
+        if let Ok(old) = built.get(owner) {
+            commands.entity(old.child).despawn();
+            commands.entity(owner).remove::<BuiltBox>();
+        }
+    }
+    for (owner, name, visual, old) in &mut owners {
+        let scale = Transform::from_scale(visual.size.max(Vec3::ZERO));
+        let Some(mut old) = old else {
+            let mesh = unit
+                .get_or_insert_with(|| meshes.add(Cuboid::from_length(1.0)))
+                .clone();
+            let child = commands
+                .spawn((
+                    Name::new(format!("{}/box", name.as_str())),
+                    Mesh3d(mesh),
+                    MeshMaterial3d(materials.add(glowing_material(visual.color, visual.glow))),
+                    scale,
+                    VisualBase(scale),
+                    ChildOf(owner),
+                ))
+                .id();
+            if visual.glow > 0.0 {
+                commands.entity(child).insert(NotShadowCaster);
+            }
+            commands.entity(owner).insert(BuiltBox {
+                child,
+                visual: *visual,
+            });
+            continue;
+        };
+        if old.visual == *visual {
+            continue;
+        }
+        let Ok((mut base, material)) = parts.get_mut(old.child) else {
+            continue;
+        };
+        base.0 = scale;
+        if (old.visual.color, old.visual.glow) != (visual.color, visual.glow)
+            && let Some(mut found) = materials.get_mut(&material.0)
+        {
+            *found = glowing_material(visual.color, visual.glow);
+        }
+        old.visual = *visual;
+    }
+}
+
+/// Places every visual child: its base, turned and lifted by its owner's `VisualMotion`.
+fn move_visuals(
+    time: Res<Time<Fixed>>,
+    owners: Query<&VisualMotion>,
+    mut children: Query<(&VisualBase, &ChildOf, &mut Transform)>,
+) {
+    // As animation poses: the fixed clock, plus the part of a tick drawn (zero under scripts).
+    let seconds = time.elapsed().as_secs_f64() + time.overstep().as_secs_f64();
+    for (base, parent, mut transform) in &mut children {
+        let wanted = owners
+            .get(parent.parent())
+            .map_or(base.0, |motion| motion.applied(base.0, seconds));
+        transform.set_if_neq(wanted);
+    }
+}
+
+fn set_box_command(world: &mut World, args: &CommandArgs) -> CommandResult {
+    args.expect_count(8)?;
+    let name: String = args.parse(0, "name")?;
+    let number = |index, label| args.parse::<f32>(index, label);
+    let size = Vec3::new(
+        number(1, "width")?,
+        number(2, "height")?,
+        number(3, "depth")?,
+    );
+    let color = Color::srgb(number(4, "r")?, number(5, "g")?, number(6, "b")?);
+    let glow = number(7, "glow")?;
+    if !(size.is_finite() && size.min_element() > 0.0 && glow.is_finite() && glow >= 0.0) {
+        return Err(args.failure("the size is positive and the glow not negative"));
+    }
+    let entity = find_unique_entity_by_name(world, args, &name)?;
+    world
+        .entity_mut(entity)
+        .insert(BoxVisual { size, color, glow });
+    Ok(CommandOutcome::Continue)
+}
+
+fn set_motion_command(world: &mut World, args: &CommandArgs) -> CommandResult {
+    args.expect_count(4)?;
+    let name: String = args.parse(0, "name")?;
+    let motion = VisualMotion {
+        turn: args.parse(1, "turn")?,
+        bob_height: args.parse(2, "bob_height")?,
+        bob_seconds: args.parse(3, "bob_seconds")?,
+    };
+    motion.validate().map_err(|message| args.failure(message))?;
+    let entity = find_unique_entity_by_name(world, args, &name)?;
+    world.entity_mut(entity).insert(motion);
+    Ok(CommandOutcome::Continue)
+}
+
+fn spawn_prop_command(world: &mut World, args: &CommandArgs) -> CommandResult {
+    args.expect_count(4)?;
+    let name: String = args.parse(0, "name")?;
+    let number = |index, label| args.parse::<f32>(index, label);
+    let place = Vec3::new(number(1, "x")?, number(2, "y")?, number(3, "z")?);
+    if !place.is_finite() {
+        return Err(args.failure("the position is finite"));
+    }
+    ensure_name_is_free(world, args, &name)?;
+    world.spawn((
+        Name::new(name),
+        NetPose::at(place),
+        Transform::from_translation(place),
+    ));
+    Ok(CommandOutcome::Continue)
 }
 
 /// `visual.set_sphere <name> <radius> <r> <g> <b> <glow>`.

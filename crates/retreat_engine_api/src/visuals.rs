@@ -4,6 +4,11 @@
 //! nothing in the simulation, are not synced and are not rewound. A module derives them from synced
 //! state on each machine, for example in a system on `Added<Player>` (a client creates replicated
 //! entities from the server's state with no visuals but a plain shape).
+//!
+//! **Things without a physics body** (a pickup, a prop): give the synced entity a
+//! [`crate::NetPose`] (its place, replicated, also to late joiners), then dress it on each machine with
+//! [`BoxVisual`], [`SphereVisual`] or a model ([`CharacterVisual`] with `model: Some(..)`),
+//! [`EntityColor`], [`VisualMotion`] to turn or bob, and [`HideVisuals`] while it is taken.
 
 use bevy::prelude::*;
 
@@ -18,6 +23,64 @@ pub struct SphereVisual {
     pub color: Color,
     /// Light the sphere gives off itself: 0 is lit by the scene only, 1 and more looks glowing.
     pub glow: f32,
+}
+
+/// A plain box drawn at the entity (a pickup). Render only. [`EntityColor`] on the same entity
+/// overrides `color`.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+#[require(Transform, Visibility)]
+pub struct BoxVisual {
+    /// Width, height and depth.
+    pub size: Vec3,
+    pub color: Color,
+    /// As [`SphereVisual::glow`].
+    pub glow: f32,
+}
+
+/// Turns and bobs what is drawn for an entity ([`BoxVisual`], [`SphereVisual`], [`CharacterVisual`]),
+/// around the entity's up axis. The entity itself does not move: casts, distances and the camera see
+/// it where it is. Time is the fixed clock, so a script's picture is the same every run; machines need
+/// not be in phase.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
+pub struct VisualMotion {
+    /// Radians per second about the up axis.
+    pub turn: f32,
+    /// How far above and below its place it moves.
+    pub bob_height: f32,
+    /// Seconds for one bob up and down; 0 does not bob.
+    pub bob_seconds: f32,
+}
+
+impl VisualMotion {
+    /// `Ok` when the numbers make sense, otherwise a message saying what is wrong.
+    pub fn validate(&self) -> Result<(), String> {
+        let numbers = [self.turn, self.bob_height, self.bob_seconds];
+        if numbers.iter().all(|number| number.is_finite()) && self.bob_seconds >= 0.0 {
+            Ok(())
+        } else {
+            Err(format!(
+                "visual motion needs finite numbers and bob seconds of 0 or more, got {self:?}"
+            ))
+        }
+    }
+
+    /// Where `base` (relative to the entity) is `seconds` into the motion. Pure.
+    pub fn applied(&self, base: Transform, seconds: f64) -> Transform {
+        let full = std::f64::consts::TAU;
+        let angle = (f64::from(self.turn) * seconds).rem_euclid(full) as f32;
+        let lift = if self.bob_seconds > 0.0 {
+            let phase = (seconds / f64::from(self.bob_seconds)).fract();
+            self.bob_height * (full * phase).sin() as f32
+        } else {
+            0.0
+        };
+        let turn = Quat::from_rotation_y(angle);
+        Transform {
+            translation: turn * base.translation + Vec3::Y * lift,
+            rotation: turn * base.rotation,
+            scale: base.scale,
+        }
+    }
 }
 
 /// With [`EntityColor`]: replace the look instead of tinting it, by dropping the color texture (an
@@ -104,6 +167,49 @@ impl Default for RenderSmoothing {
         Self {
             half_life: 0.08,
             snap_distance: 2.0,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn motion_turns_around_the_entity_and_bobs_above_and_below() {
+        let motion = VisualMotion {
+            turn: std::f32::consts::FRAC_PI_2,
+            bob_height: 0.5,
+            bob_seconds: 4.0,
+        };
+        let base = Transform::from_xyz(1.0, 0.2, 0.0);
+        let start = motion.applied(base, 0.0);
+        assert!(start.translation.distance(base.translation) < 1.0e-6);
+        // A quarter turn and the top of the bob.
+        let quarter = motion.applied(base, 1.0);
+        assert!(quarter.translation.distance(Vec3::new(0.0, 0.7, -1.0)) < 1.0e-5);
+        let low = motion.applied(base, 3.0);
+        assert!((low.translation.y + 0.3).abs() < 1.0e-5);
+        assert_eq!(VisualMotion::default().applied(base, 123.4), base);
+        // The bob keeps its height after a long session (the angle drifts with `turn`'s rounding).
+        let late = motion.applied(base, 4.0 * 1_000_000.0 + 1.0);
+        assert!((late.translation.y - 0.7).abs() < 1.0e-4);
+    }
+
+    #[test]
+    fn motion_numbers_are_validated() {
+        assert_eq!(VisualMotion::default().validate(), Ok(()));
+        for bad in [
+            (f32::NAN, 0.0, 1.0),
+            (0.0, f32::INFINITY, 1.0),
+            (0.0, 0.0, -1.0),
+        ] {
+            let motion = VisualMotion {
+                turn: bad.0,
+                bob_height: bad.1,
+                bob_seconds: bad.2,
+            };
+            assert!(motion.validate().is_err(), "{motion:?}");
         }
     }
 }

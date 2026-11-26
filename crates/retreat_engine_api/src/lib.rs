@@ -136,6 +136,6 @@ pub use ui_panel::{
 };
 pub use visual_effects::{EFFECT_MEMORY_TICKS, EffectTime, VisualEffect, VisualEffects};
 pub use visuals::{
-    CharacterVisual, DrawnPose, DrawnPoseSystems, EntityColor, EntityColorFlat, HideVisuals,
-    RemoteInterpolation, RenderSmoothing, SphereVisual,
+    BoxVisual, CharacterVisual, DrawnPose, DrawnPoseSystems, EntityColor, EntityColorFlat,
+    HideVisuals, RemoteInterpolation, RenderSmoothing, SphereVisual, VisualMotion,
 };

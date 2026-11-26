@@ -4,7 +4,9 @@ wait_until 3000 assert.net_joined
 net.send sandbox.walker_spawn -4 -2.8
 wait 40
 input.set_axis walk_x 1
-wait 30
+# A long walk: a browser that stalls sends its inputs late and the server runs several on one tick,
+# so a short hold sometimes moved less than the 1 unit the check needs.
+wait 80
 input.look -40 0
 wait 10
 input.key_down Space

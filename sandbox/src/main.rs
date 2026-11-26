@@ -6,6 +6,7 @@
 //! hides the platform difference.
 
 mod drop_box;
+mod pickup;
 mod scene;
 mod stripes_material;
 mod tally;
@@ -29,6 +30,9 @@ fn add_sandbox_plugins(app: &mut App) {
     // What a client may ask a server of this app to do (`--server`): spawn and push boxes.
     app.allow_client_command("physics.spawn_box")
         .allow_client_command("physics.push");
+    // A demo pickup without a body (`sandbox.pickup_spawn`); its own call because Bevy's plugin
+    // tuples hold at most 15 entries.
+    app.add_plugins(pickup::PickupPlugin);
     app.add_plugins((
         scene::SandboxScenePlugin,
         stripes_material::StripesMaterialPlugin,
