@@ -94,6 +94,10 @@ function waitFor(what, check) {
   });
 }
 
+function errorLines(output) {
+  return output.split("\n").filter((line) => /ERROR|error|panicked/.test(line) && !line.startsWith("ALSA")).slice(-5).join("\n");
+}
+
 // The module state values a process printed with `net.states`, as sorted lines.
 function moduleStates(output) {
   return [...output.matchAll(/net-state (\S+ \S+ v\d+ [0-9a-f]*)/g)].map((match) => match[1]).sort();
@@ -153,17 +157,20 @@ try {
   }
   // The timer is cleared when the processes finish, otherwise it keeps node alive for TIMEOUT_MS after a pass.
   let giveUp;
-  const codes = await Promise.race([
+  const oneFailed = new Promise((_, reject) => {
+    for (const p of processes) {
+      p.done.then((code) => {
+        if (code !== 0) reject(new Error(`${p.name} exited with code ${code}:\n${errorLines(p.output)}`));
+      });
+    }
+  });
+  await Promise.race([
+    oneFailed,
     Promise.all(processes.map((p) => p.done)),
     new Promise((_, reject) => {
       giveUp = setTimeout(() => reject(new Error("the processes did not finish in time")), TIMEOUT_MS);
     }),
   ]).finally(() => clearTimeout(giveUp));
-  processes.forEach((p, index) => {
-    if (codes[index] !== 0) {
-      failure = `${p.name} exited with code ${codes[index]}:\n${p.output.split("\n").filter((l) => /ERROR|error|panicked/.test(l)).join("\n")}`;
-    }
-  });
   if (!failure) {
     const views = processes.map((p) => ({ name: p.name, bodies: bodies(p.output) }));
     const reference = views[0].bodies;
@@ -239,7 +246,16 @@ if (failure) {
     (p) => `----- ${p.name} (exit ${p.exited}) -----\n${p.output.split("\n").slice(-40).join("\n")}`,
   );
   console.error(`${tails.join("\n")}\nnetwork check: FAIL: ${failure}`);
-  annotate([failure, ...tails].join("\n"));
+  // GitHub cuts an annotation at about 4000 characters: why each process failed and its counters come
+  // first, the long tails after.
+  const reasons = processes.map((p) => {
+    const lines = p.output
+      .replace(/\x1b\[[0-9;]*m/g, "")
+      .split("\n")
+      .filter((line) => !line.startsWith("ALSA") && /ERROR|panicked|FAIL|\.cmds:\d+|net-stats role=/.test(line));
+    return `${p.name} (exit ${p.exited}):\n${lines.slice(-4).map((line) => line.slice(-300)).join("\n")}`;
+  });
+  annotate([failure.slice(0, 900), ...reasons, ...tails].join("\n"));
   process.exit(1);
 }
 console.log("network check: PASS");
