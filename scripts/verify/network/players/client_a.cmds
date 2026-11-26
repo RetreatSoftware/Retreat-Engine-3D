@@ -1,11 +1,13 @@
-# Client A of the players scenario: joins, holds ArrowRight for one second (the players module turns the
+# Client A of the players scenario: joins, holds ArrowRight briefly (the players module turns the
 # held key into movement lines that the engine predicts and sends), then waits for the world to settle.
 # Join takes real time that a tick count cannot predict (a slow browser needs seconds): wait for it.
 wait_until 3000 assert.net_joined
+# A short hold: the players module accelerates faster than friction slows, so a long one (64 ticks)
+# can slide a cube off the ground, depending on timing (see CLAUDE.md, players tuning).
 input.key_down ArrowRight
-wait 64
+wait 16
 input.key_up ArrowRight
-wait 500
+wait 548
 net.bodies
 net.stats
 # Traffic budget (measured: about 3 KB sent, 13-23 KB received) with headroom. Corrections depend

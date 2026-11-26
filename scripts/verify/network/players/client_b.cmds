@@ -1,10 +1,12 @@
-# Client B of the players scenario: joins a little later and holds ArrowUp for one second.
+# Client B of the players scenario: joins a little later and holds ArrowUp briefly.
 # Join takes real time that a tick count cannot predict (a slow browser needs seconds): wait for it.
 wait_until 3000 assert.net_joined
+# A short hold: the players module accelerates faster than friction slows, so a long one (64 ticks)
+# can slide a cube off the ground, depending on timing (see CLAUDE.md, players tuning).
 input.key_down ArrowUp
-wait 64
+wait 16
 input.key_up ArrowUp
-wait 440
+wait 488
 net.bodies
 net.stats
 # Traffic budget (measured: about 3 KB sent, 13-23 KB received) with headroom. Corrections depend
