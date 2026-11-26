@@ -492,3 +492,68 @@ fn a_directly_despawned_state_entity_refuses_the_restore_and_changes_nothing() {
         encode_net_state(&Health { points: 9 })
     );
 }
+
+/// Spawns a body with state late in the tick, after the engine made this tick's physics bodies: a
+/// module system whose place in the schedule is not fixed can do that.
+fn spawn_late(world: &mut World) {
+    if world.remove_resource::<SpawnLate>().is_none() {
+        return;
+    }
+    world.spawn((
+        Name::new("late"),
+        PhysicsBody::character(0.5, 0.4),
+        Transform::from_xyz(3.0, 0.9, 3.0),
+        Health { points: 7 },
+    ));
+}
+
+#[derive(Resource)]
+struct SpawnLate;
+
+fn late_spawn_app() -> App {
+    let mut app = module_app();
+    app.add_systems(FixedPostUpdate, spawn_late);
+    app
+}
+
+/// Every entity named `name`, with whether it has a body and its health.
+fn named(world: &mut World, name: &str) -> Vec<(bool, Option<i32>)> {
+    world
+        .query::<(&Name, Has<PhysicsBody>, Option<&Health>)>()
+        .iter(world)
+        .filter(|(found, ..)| found.as_str() == name)
+        .map(|(_, body, health)| (body, health.map(|health| health.points)))
+        .collect()
+}
+
+#[test]
+fn a_body_spawned_late_in_a_server_tick_is_one_entity_on_the_clients() {
+    for wait in 0..4 {
+        let conditions = link(4, 0, 0.0);
+        let mut harness = harness_with(4, conditions, late_spawn_app);
+        harness.run_idle(wait);
+        harness.server_app.world_mut().insert_resource(SpawnLate);
+        harness.run_idle(80);
+        for app in &mut harness.client_apps {
+            assert_eq!(named(app.world_mut(), "late"), [(true, Some(7))]);
+        }
+    }
+}
+
+#[test]
+fn an_entity_known_only_by_its_state_gets_its_body_without_a_double() {
+    let mut harness = harness_with(4, link(4, 0, 0.0), module_app);
+    // The clients hear of the state first and of the body later.
+    let server = harness.server_app.world_mut();
+    let entity = server.spawn((Name::new("late"), Health { points: 7 })).id();
+    harness.run_idle(80);
+    harness.server_app.world_mut().entity_mut(entity).insert((
+        PhysicsBody::character(0.5, 0.4),
+        Transform::from_xyz(3.0, 0.9, 3.0),
+    ));
+    harness.run_idle(80);
+    for app in &mut harness.client_apps {
+        assert_eq!(named(app.world_mut(), "late"), [(true, Some(7))]);
+    }
+    assert_eq!(harness.client(0).stats.refused_rollbacks, 0);
+}

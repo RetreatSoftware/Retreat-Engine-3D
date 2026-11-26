@@ -23,6 +23,7 @@ mod intangibility;
 mod launch_options;
 mod material;
 mod model;
+mod motion_record;
 pub mod net;
 mod net_pose;
 mod pending_command_work;
@@ -50,7 +51,7 @@ use bevy::prelude::*;
 use bevy::render::RenderPlugin;
 use bevy::render::settings::WgpuSettings;
 use bevy::window::ExitCondition;
-use bevy::winit::WinitPlugin;
+use bevy::winit::{WinitPlugin, WinitSettings};
 use retreat_engine_api::{CommandRegistry, SimulationRng};
 
 pub use animation::AnimationCommandsPlugin;
@@ -71,6 +72,9 @@ pub use launch_options::{DEFAULT_SEED, LaunchOptions, NetLaunch};
 pub use material::{MaterialCommandsPlugin, TEXTURE_FILE_EXTENSIONS};
 pub use model::{
     MODEL_FILE_EXTENSIONS, MODEL_NODE_NAME_SEPARATOR, ModelCommandsPlugin, namespaced_node_name,
+};
+pub use motion_record::{
+    MotionRecordPlugin, MotionRecordings, MotionSample, MotionStats, motion_stats,
 };
 pub use net_pose::NetPosePlugin;
 pub use pending_command_work::PendingCommandWork;
@@ -253,6 +257,10 @@ impl Plugin for RetreatEnginePlugin {
                     .set(self.audio_plugin()),
             );
             app.insert_resource(SnapshotSource::PrimaryWindow);
+            // A window that is not focused keeps drawing at full rate (Bevy's default caps it at
+            // 60 per second with uneven gaps): with two clients on one machine, the one being
+            // watched is usually not the one being played. Vsync still limits the rate.
+            app.insert_resource(WinitSettings::continuous());
         }
         if self.real_time {
             app.insert_resource(RealTimeScript);
@@ -280,6 +288,7 @@ impl Plugin for RetreatEnginePlugin {
             RenderSmoothingPlugin,
             VisualsPlugin,
             UiHudPlugin,
+            MotionRecordPlugin,
             NetPosePlugin,
             VisualEffectsPlugin,
         ));

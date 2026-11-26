@@ -1,0 +1,13 @@
+# Motion on screen, frame by frame: a walking character is drawn at an even pace.
+sandbox.walker_spawn -3 2.5
+wait 30
+input.set_axis walk_x 1
+wait 10
+motion.record walker_local walk 40
+wait_until 200 assert.motion_recorded walk
+input.clear_axis walk_x
+wait 30
+# The recording starts and ends in motion, so the judged middle part is a straight walk.
+assert.motion_even walk 1
+snapshot motion_walked
+quit

@@ -10,6 +10,7 @@
 //! `sync_game_cameras`.
 
 use bevy::prelude::*;
+use bevy::transform::TransformSystems;
 use retreat_engine_api::{
     AppCommandExt, CameraProjection, CommandArgs, CommandError, CommandOutcome, CommandResult,
     GameCamera,
@@ -38,8 +39,14 @@ impl Plugin for GameCameraPlugin {
             "camera.set_fov <name> <degrees>",
             set_fov_command,
         )
-        // Before transform propagation (PostUpdate), so the new pose is drawn this frame.
-        .add_systems(Update, sync_game_cameras);
+        // In `PostUpdate`, so it runs after every `Update` system that moves a camera (a follow
+        // camera placed from `DrawnPose`), and before transform propagation, so the new pose is
+        // drawn in the same frame as what it follows. In `Update` it could run first, showing the
+        // camera one frame late: the followed character then trembles when frame times vary.
+        .add_systems(
+            PostUpdate,
+            sync_game_cameras.before(TransformSystems::Propagate),
+        );
     }
 }
 
@@ -136,4 +143,39 @@ fn set_fov_command(world: &mut World, args: &CommandArgs) -> CommandResult {
             fov_degrees: degrees,
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn follow(mut cameras: Query<&mut GameCamera>) {
+        for mut camera in &mut cameras {
+            camera.position.x += 1.0;
+        }
+    }
+
+    #[test]
+    fn a_camera_moved_in_update_is_drawn_there_in_the_same_frame() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, TransformPlugin, GameCameraPlugin))
+            .add_systems(Update, follow);
+        let camera = app
+            .world_mut()
+            .spawn((
+                Name::new("camera"),
+                GameCamera::looking_at(Vec3::new(0.0, 2.0, 5.0), Vec3::ZERO),
+            ))
+            .id();
+        for frame in 1..4 {
+            app.update();
+            let wanted = app
+                .world()
+                .get::<GameCamera>(camera)
+                .expect("camera")
+                .position;
+            let drawn = app.world().get::<GlobalTransform>(camera).expect("drawn");
+            assert_eq!(drawn.translation(), wanted, "frame {frame}");
+        }
+    }
 }

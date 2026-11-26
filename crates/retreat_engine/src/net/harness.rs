@@ -3,7 +3,10 @@
 //! `simulate_tick`, so tests and the sandbox's network checks are fast, reproducible and need no real
 //! network. The server and clients are the real ones (`server.rs`, `client.rs`).
 
+use std::time::Duration;
+
 use bevy::prelude::*;
+use bevy::time::TimeUpdateStrategy;
 
 use super::client::{ClientConfig, ClientPhase, NetClient, install_client, process_client_states};
 use super::limits::ServerLimits;
@@ -63,6 +66,8 @@ pub struct NetHarness {
     clocks: Vec<ClientClock>,
     /// Ticks stepped so far.
     pub global_tick: u64,
+    /// Frame time `run_frames` has not yet turned into server ticks.
+    owed_server_time: Duration,
 }
 
 impl NetHarness {
@@ -126,6 +131,7 @@ impl NetHarness {
             network,
             clocks: (0..client_count).map(|_| ClientClock::default()).collect(),
             global_tick: 0,
+            owed_server_time: Duration::ZERO,
         }
     }
 
@@ -158,6 +164,35 @@ impl NetHarness {
             for _ in 0..ticks {
                 simulate_tick(app.world_mut());
             }
+        }
+    }
+
+    /// Runs the clients the way real apps run: `frames` rendered frames of `frame` real time each
+    /// (`App::update`, so Bevy's fixed loop, per-frame systems and drawing between ticks run),
+    /// while the server ticks at its own rate. `after_frame` sees the harness after every frame.
+    /// Do not mix with [`NetHarness::step`] afterwards (it leaves the clients on manual time).
+    pub fn run_frames(
+        &mut self,
+        frame: Duration,
+        frames: u64,
+        mut after_frame: impl FnMut(&mut Self, u64),
+    ) {
+        for app in &mut self.client_apps {
+            app.insert_resource(TimeUpdateStrategy::ManualDuration(frame));
+        }
+        let tick = self.server_app.world().resource::<Time<Fixed>>().timestep();
+        for index in 0..frames {
+            self.owed_server_time += frame;
+            while self.owed_server_time >= tick {
+                self.owed_server_time -= tick;
+                self.global_tick += 1;
+                self.network.set_tick(self.global_tick);
+                simulate_tick(self.server_app.world_mut());
+            }
+            for app in &mut self.client_apps {
+                app.update();
+            }
+            after_frame(self, index);
         }
     }
 

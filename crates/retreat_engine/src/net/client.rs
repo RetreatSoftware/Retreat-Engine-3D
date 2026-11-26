@@ -32,6 +32,7 @@ use super::lag_compensation::{
 };
 use super::module_state::{
     ModuleState, apply_module_states, module_state_lists_match, read_module_states,
+    replace_stand_in,
 };
 use super::state_delta::{ReplicatedState, StateAssembler};
 use super::tick_pacing::{ClientPacing, TimingReport};
@@ -137,6 +138,8 @@ pub struct NetClient {
     current_inputs: Vec<String>,
     /// True while a correction replays ticks.
     replaying: bool,
+    /// True while pacing runs an extra tick.
+    catching_up: bool,
     replay_lines: Vec<String>,
     /// Server states received and not processed yet: (tick, input tick run, state).
     pending_states: Vec<(u64, u64, ReplicatedState)>,
@@ -285,6 +288,7 @@ pub fn install_client(
         pending_inputs: Vec::new(),
         current_inputs: Vec::new(),
         replaying: false,
+        catching_up: false,
         replay_lines: Vec::new(),
         pending_states: Vec::new(),
         received: Vec::new(),
@@ -445,7 +449,10 @@ fn client_after_tick(world: &mut World) {
     if world.resource::<NetClient>().phase != ClientPhase::Running {
         return;
     }
-    if !world.resource::<NetClient>().replaying {
+    // The view time follows the clock: replayed and catch-up ticks pass no new time on screen
+    // (a view moved by them made the other players leap).
+    let client = world.resource::<NetClient>();
+    if !client.replaying && !client.catching_up {
         advance_view(world);
     }
     let tick = {
@@ -528,8 +535,11 @@ fn keep_pace(world: &mut World) {
         client.stats.resyncs += 1;
     }
     for _ in 0..pacing.catch_up {
+        world.resource_mut::<NetClient>().catching_up = true;
         simulate_tick(world);
-        world.resource_mut::<NetClient>().stats.catch_up_ticks += 1;
+        let mut client = world.resource_mut::<NetClient>();
+        client.catching_up = false;
+        client.stats.catch_up_ticks += 1;
     }
     let mut client = world.resource_mut::<NetClient>();
     let tick = client.tick;
@@ -620,6 +630,9 @@ fn correct(
             Vec::new()
         }
     };
+    // Where everything is now, before the restore moves the transforms back: the correction's jump
+    // is the difference between this and the present after the replay.
+    let drawn_before = poses_before_correction(world);
     // Restore from the history entry (taken out and put back, so the world can be borrowed mutably).
     let entry = world
         .resource_mut::<NetClient>()
@@ -636,7 +649,6 @@ fn correct(
         return;
     }
     world.resource_mut::<NetClient>().stats.corrections += 1;
-    let drawn_before = poses_before_correction(world);
     // An entity the server still lists is alive, even if this client had removed it.
     let listed = server.states.iter().map(|state| state.entity.as_str());
     revive_retired_entities(world, &listed.collect());
@@ -690,6 +702,7 @@ fn correct(
 /// Creates a body the client did not know, at the server's pose (any shape): the description and the
 /// list of replicated kinds come from the state, so it behaves like the server's body.
 fn create_body_from_state(world: &mut World, state: &BodyState) {
+    replace_stand_in(world, &state.name);
     spawn_body_from_description(
         world,
         &state.name,

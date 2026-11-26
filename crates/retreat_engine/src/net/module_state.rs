@@ -18,7 +18,7 @@ use retreat_engine_api::{NetStateRegistry, PhysicsBody, PredictedSpawn, RetiredE
 use serde::{Deserialize, Serialize};
 
 use crate::command_script::fail_running_script;
-use crate::physics::PhysicsProxyOf;
+use crate::physics::{PhysicsProxy, PhysicsProxyOf};
 
 /// Largest encoded size of one [`ModuleState`], so that it always fits a state message.
 pub const MAX_MODULE_STATE_BYTES: usize = 1024;
@@ -63,7 +63,7 @@ pub fn read_module_states(world: &mut World) -> Vec<ModuleState> {
     let mut errors = BTreeSet::new();
     for kind in registry.types() {
         for entity in (kind.entities)(world) {
-            if world.get::<RetiredEntity>(entity).is_some() {
+            if world.get::<RetiredEntity>(entity).is_some() || awaits_its_body(world, entity) {
                 continue;
             }
             let Some(name) = world.get::<Name>(entity) else {
@@ -97,6 +97,32 @@ pub fn read_module_states(world: &mut World) -> Vec<ModuleState> {
         fail_running_script(world, message);
     }
     states.into_values().collect()
+}
+
+/// True for a body spawned too late in this tick to be simulated in it: the body list does not
+/// have it yet, so its state must wait too. A client that heard of the state alone would make an
+/// entity without a body and, a broadcast later, a second one with it.
+fn awaits_its_body(world: &World, entity: Entity) -> bool {
+    world.get::<PhysicsBody>(entity).is_some() && world.get::<PhysicsProxy>(entity).is_none()
+}
+
+/// Marks an entity a client made from module state alone.
+#[derive(Component)]
+pub(crate) struct MadeFromState;
+
+/// Removes the stand-in made from state alone for `name`, because its body arrived: the body is
+/// spawned as a new entity (a body is added with its entity, never to an older one) and takes the
+/// state in the same correction.
+pub(crate) fn replace_stand_in(world: &mut World, name: &str) {
+    let stand_ins: Vec<Entity> = world
+        .query_filtered::<(Entity, &Name), (With<MadeFromState>, Without<PhysicsBody>)>()
+        .iter(world)
+        .filter(|(_, found)| found.as_str() == name)
+        .map(|(entity, _)| entity)
+        .collect();
+    for entity in stand_ins {
+        world.despawn(entity);
+    }
 }
 
 /// True when two sorted lists hold the same values, each by its type's `NetState::matches`.
@@ -292,9 +318,11 @@ pub fn apply_module_states(world: &mut World, server: &[ModuleState], keep: &BTr
         let Some(kind) = registry.get(&state.id) else {
             continue;
         };
-        let entity = *by_name
-            .entry(state.entity.clone())
-            .or_insert_with(|| world.spawn(Name::new(state.entity.clone())).id());
+        let entity = *by_name.entry(state.entity.clone()).or_insert_with(|| {
+            world
+                .spawn((Name::new(state.entity.clone()), MadeFromState))
+                .id()
+        });
         if let Err(message) = (kind.write)(world, entity, &state.data) {
             error!("applying `{}`: {message}", state.entity);
         }

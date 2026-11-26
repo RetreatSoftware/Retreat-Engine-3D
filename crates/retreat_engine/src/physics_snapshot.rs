@@ -235,10 +235,15 @@ pub fn restore_physics(world: &mut World, snapshot: &PhysicsSnapshot) -> Result<
     *colliders = snapshot.colliders.clone();
     *joints = snapshot.joints.clone();
     // Rewind the fixed clock: a fresh clock with the same step, advanced to the captured time.
+    // The time accumulated towards the next tick is real frame time, not simulation state, and
+    // stays: dropping it made a client that corrects often run slow (and catch up in bursts), and
+    // everything drawn between ticks jump.
     let timestep = world.resource::<Time<Fixed>>().timestep();
+    let overstep = world.resource::<Time<Fixed>>().overstep();
     let mut clock = Time::<Fixed>::from_duration(timestep);
     clock.advance_by(snapshot.fixed_elapsed);
     clock.advance_by(Duration::ZERO);
+    clock.accumulate_overstep(overstep);
     *world.resource_mut::<Time<Fixed>>() = clock;
     if let Some(rng) = &snapshot.rng {
         world.insert_resource(rng.clone());
