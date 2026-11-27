@@ -73,6 +73,17 @@ debug = false
 inherits = "dev"
 debug = false
 
+# The browser build players get (`build_web.mjs --release`; games copy this profile; package plan P1, measured 2026-11-27 on Retreat Arena, see the engine's
+# CLAUDE.md "Release browser build"): smallest code, link-time optimization over every crate, one
+# codegen unit. Not stripped here: wasm-bindgen reads the `target_features` section, and wasm-opt
+# strips afterwards. Slow to build (about 17 minutes the first time).
+[profile.web-release]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+debug = false
+
 # Modules depend on retreat_engine_api through git (they live in another repository). Inside
 # this workspace that must be the same crate as our local crates/retreat_engine_api, or the
 # module's CommandRegistry and ours would be two different types. This redirects their git

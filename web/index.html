@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- The page of every Retreat game's browser build. A template: scripts/web/build_web.mjs fills in
-     {{TITLE}} and {{WASM_NAME}} and writes it as <output>/index.html.
+     {{TITLE}}, {{WASM_NAME}} and {{WASM_BYTES}} and writes it as <output>/index.html.
      Launch options come from the URL: ?commands=scripts/verify/<name>.cmds&seed=<n>. A page served
      by a game server (--serve-web) joins that server by itself.
      Agents drive it through window.__retreat (see crates/retreat_engine/src/platform/wasm.rs). -->
@@ -23,12 +23,14 @@
   </head>
   <body>
     <canvas id="retreat-canvas"></canvas>
-    <div id="retreat-notice">Loading…</div>
+    <div id="retreat-notice" data-kind="loading">Loading…</div>
     <script>
-      // Shows `text` over the game; an empty text hides the notice.
-      window.__retreatNotice = (text) => {
+      // Shows `text` over the game; an empty text hides the notice. `kind` "loading" marks a notice
+      // the page itself removes once the game runs; any other notice (a lost connection) stays.
+      window.__retreatNotice = (text, kind = "problem") => {
         const notice = document.getElementById("retreat-notice");
         notice.textContent = text;
+        notice.dataset.kind = kind;
         notice.hidden = text === "";
       };
     </script>
@@ -148,12 +150,38 @@
         snapshotNames: () => retreatSnapshotNames(),
         audioState: () => window.__retreatAudioStates(), // e.g. ["suspended"] until a click or key press
       };
-      init().then(
+      // Loading progress. The game file is most of the download; its size (uncompressed: a browser
+      // counts the bytes after decompressing a compressed answer) is filled in by build_web.mjs.
+      const WASM_BYTES = {{WASM_BYTES}};
+      const megabytes = (bytes) => (bytes / 1e6).toFixed(1);
+      const showLoading = (text) => {
+        // A connection that already failed keeps its message.
+        if (document.getElementById("retreat-notice").dataset.kind === "loading") window.__retreatNotice(text, "loading");
+      };
+      const fetchGameWithProgress = async () => {
+        const response = await fetch(new URL("./{{WASM_NAME}}_bg.wasm", import.meta.url));
+        if (!response.ok) throw new Error(`the game file could not be downloaded (HTTP ${response.status})`);
+        if (!response.body) return response;
+        let received = 0;
+        const counted = response.body.pipeThrough(
+          new TransformStream({
+            transform(chunk, controller) {
+              received += chunk.byteLength;
+              showLoading(`Loading the game: ${megabytes(received)} of ${megabytes(Math.max(received, WASM_BYTES))} MB`);
+              controller.enqueue(chunk);
+            },
+            flush() {
+              showLoading("Starting the game…");
+            },
+          }),
+        );
+        // Compiled while it downloads (WebAssembly.instantiateStreaming needs this type).
+        return new Response(counted, { headers: { "Content-Type": "application/wasm" } });
+      };
+      init({ module_or_path: fetchGameWithProgress() }).then(
         () => {
           loaded = true;
-          // A connection that already failed keeps its message.
-          const notice = document.getElementById("retreat-notice");
-          if (notice.textContent === "Loading…") window.__retreatNotice("");
+          showLoading("");
         },
         (error) => window.__retreatNotice(`The game could not start: ${error}`),
       );

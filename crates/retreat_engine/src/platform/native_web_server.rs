@@ -11,6 +11,11 @@
 //! client sends: connections, request size and time are limited, and every connection closes after one
 //! response. It is written on `rustls` (already linked by the WebTransport library) and blocking
 //! threads, so it adds no HTTP crate.
+//!
+//! **Compressed files (decided 2026-11-27, package plan P1).** A release web build
+//! (`build_web.mjs --release`) writes `<file>.br` beside each file that compresses well. When the
+//! browser accepts Brotli ([`accepts_brotli`]) and that copy exists, it is sent instead, with
+//! `Content-Encoding: br` and the original file's type; the server compresses nothing itself.
 
 use std::io::{Read, Write};
 use std::net::{IpAddr, TcpListener, TcpStream, UdpSocket};
@@ -101,6 +106,19 @@ pub(crate) struct WebFileServer {
 struct Site {
     root: PathBuf,
     offer: String,
+}
+
+impl Site {
+    /// The file at a safe relative path, if it is a file below the root. Canonical paths also stop a
+    /// link inside the directory from leading out of it.
+    fn open(&self, path: &str) -> Option<std::fs::File> {
+        self.root
+            .join(path)
+            .canonicalize()
+            .ok()
+            .filter(|file| file.starts_with(&self.root) && file.is_file())
+            .and_then(|file| std::fs::File::open(file).ok())
+    }
 }
 
 impl WebFileServer {
@@ -211,7 +229,12 @@ struct Request {
     head_only: bool,
     /// The requested path relative to the site, `/`-separated, safe to join to the root.
     path: String,
+    /// The browser takes a Brotli-compressed answer (its `Accept-Encoding` header).
+    brotli: bool,
 }
+
+/// The suffix of a file's compressed copy (written by `scripts/web/build_web.mjs --release`).
+const BROTLI_SUFFIX: &str = ".br";
 
 /// An HTTP status line's code and text.
 type Status = (u16, &'static str);
@@ -237,7 +260,39 @@ fn parse_request(head: &[u8]) -> Result<Request, Status> {
         _ => return Err(METHOD_NOT_ALLOWED),
     };
     let path = safe_relative_path(target).ok_or(NOT_FOUND)?;
-    Ok(Request { head_only, path })
+    let brotli = header_value(head, "accept-encoding").is_some_and(|value| accepts_brotli(&value));
+    Ok(Request {
+        head_only,
+        path,
+        brotli,
+    })
+}
+
+/// The value of the first header called `name` (any case), if the request head has one.
+fn header_value(head: &[u8], name: &str) -> Option<String> {
+    let text = String::from_utf8_lossy(head);
+    text.split("\r\n").skip(1).find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        key.trim()
+            .eq_ignore_ascii_case(name)
+            .then(|| value.trim().to_string())
+    })
+}
+
+/// Whether an `Accept-Encoding` value allows `br`: listed (or `*`) and not refused with `q=0`.
+fn accepts_brotli(accept_encoding: &str) -> bool {
+    accept_encoding.split(',').any(|item| {
+        let mut parts = item.split(';');
+        let coding = parts.next().unwrap_or_default().trim();
+        let refused = parts.any(|parameter| {
+            parameter
+                .trim()
+                .strip_prefix("q=")
+                .and_then(|quality| quality.trim().parse::<f32>().ok())
+                .is_some_and(|quality| quality <= 0.0)
+        });
+        (coding.eq_ignore_ascii_case("br") || coding == "*") && !refused
+    })
 }
 
 /// The file a request target names, or `None` when it could name anything outside the site.
@@ -291,11 +346,17 @@ fn write_head(
     status: Status,
     kind: &str,
     length: u64,
+    brotli: bool,
 ) -> std::io::Result<()> {
     let (code, text) = status;
+    let encoding = if brotli {
+        "Content-Encoding: br\r\n"
+    } else {
+        ""
+    };
     write!(
         stream,
-        "HTTP/1.1 {code} {text}\r\nContent-Type: {kind}\r\nContent-Length: {length}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n"
+        "HTTP/1.1 {code} {text}\r\nContent-Type: {kind}\r\n{encoding}Content-Length: {length}\r\nCache-Control: no-store\r\nVary: Accept-Encoding\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n"
     )
 }
 
@@ -307,7 +368,7 @@ fn respond(
     let plain = "text/plain; charset=utf-8";
     let refuse = |stream: &mut dyn Write, status: Status| {
         let mut stream = stream;
-        write_head(&mut stream, status, plain, status.1.len() as u64)?;
+        write_head(&mut stream, status, plain, status.1.len() as u64, false)?;
         stream.write_all(status.1.as_bytes())
     };
     let request = match request {
@@ -320,25 +381,30 @@ fn respond(
             (200, "OK"),
             content_type(&request.path),
             site.offer.len() as u64,
+            false,
         )?;
         if !request.head_only {
             stream.write_all(site.offer.as_bytes())?;
         }
         return Ok(());
     }
-    // Canonical paths also stop a link inside the directory from leading out of it.
-    let file = site
-        .root
-        .join(&request.path)
-        .canonicalize()
-        .ok()
-        .filter(|file| file.starts_with(&site.root) && file.is_file())
-        .and_then(|file| std::fs::File::open(file).ok());
-    let Some(mut file) = file else {
+    // The compressed copy when the browser takes it; the type is the original file's.
+    let compressed = request
+        .brotli
+        .then(|| site.open(&format!("{}{BROTLI_SUFFIX}", request.path)))
+        .flatten();
+    let brotli = compressed.is_some();
+    let Some(mut file) = compressed.or_else(|| site.open(&request.path)) else {
         return refuse(stream, NOT_FOUND);
     };
     let length = file.metadata()?.len();
-    write_head(stream, (200, "OK"), content_type(&request.path), length)?;
+    write_head(
+        stream,
+        (200, "OK"),
+        content_type(&request.path),
+        length,
+        brotli,
+    )?;
     if !request.head_only {
         std::io::copy(&mut file, stream)?;
     }
@@ -389,6 +455,24 @@ mod tests {
     }
 
     #[test]
+    fn brotli_is_sent_only_to_browsers_that_accept_it() {
+        assert!(accepts_brotli("gzip, deflate, br, zstd"));
+        assert!(accepts_brotli("BR;q=0.5"));
+        assert!(accepts_brotli("*"));
+        assert!(!accepts_brotli("gzip, deflate"));
+        assert!(!accepts_brotli("br;q=0, gzip"));
+        assert!(!accepts_brotli("br; q=0.0"));
+        assert!(!accepts_brotli("brotli"));
+        assert!(!accepts_brotli(""));
+        let request = |head: &[u8]| parse_request(head).expect("valid").brotli;
+        assert!(request(
+            b"GET /a.wasm HTTP/1.1\r\nHost: x\r\nAccept-Encoding: gzip, br\r\n\r\n"
+        ));
+        assert!(request(b"GET / HTTP/1.1\r\naccept-encoding:br\r\n\r\n"));
+        assert!(!request(b"GET / HTTP/1.1\r\nHost: br\r\n\r\n"));
+    }
+
+    #[test]
     fn the_startup_lines_name_the_address_the_warning_and_both_ports() {
         let text = startup_lines(Some("192.168.1.20".parse().unwrap()), 8443, 5000).join("\n");
         assert!(text.contains("https://192.168.1.20:8443/"), "{text}");
@@ -430,20 +514,41 @@ mod tests {
             .with_root_certificates(roots)
             .with_no_client_auth(),
         );
-        let get = |path: &str| {
+        let request = |path: &str, headers: &str| {
             let connection =
                 rustls::ClientConnection::new(client.clone(), "localhost".try_into().unwrap())
                     .unwrap();
             let socket = TcpStream::connect(("127.0.0.1", server.port)).unwrap();
             let mut stream = StreamOwned::new(connection, socket);
-            write!(stream, "GET {path} HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
+            write!(
+                stream,
+                "GET {path} HTTP/1.1\r\nHost: localhost\r\n{headers}\r\n"
+            )
+            .unwrap();
             let mut answer = String::new();
             stream.read_to_string(&mut answer).unwrap();
             answer
         };
+        let get = |path: &str| request(path, "");
         let page = get("/");
         assert!(page.starts_with("HTTP/1.1 200 OK"), "{page}");
         assert!(page.ends_with("\r\n\r\n<p>page</p>"), "{page}");
+        assert!(!page.contains("Content-Encoding"), "{page}");
+
+        // A compressed copy goes only to a browser that takes it, typed as the original.
+        std::fs::write(directory.join("game.js"), "plain").unwrap();
+        std::fs::write(directory.join("game.js.br"), "squeezed").unwrap();
+        let brotli = request("/game.js", "Accept-Encoding: gzip, br\r\n");
+        assert!(brotli.contains("Content-Encoding: br\r\n"), "{brotli}");
+        assert!(brotli.contains("Content-Type: text/javascript"), "{brotli}");
+        assert!(brotli.ends_with("\r\n\r\nsqueezed"), "{brotli}");
+        let plain = request("/game.js", "Accept-Encoding: gzip\r\n");
+        assert!(plain.ends_with("\r\n\r\nplain"), "{plain}");
+        assert!(!plain.contains("Content-Encoding"), "{plain}");
+        // A file without a compressed copy is sent as it is.
+        let page = request("/", "Accept-Encoding: br\r\n");
+        assert!(page.ends_with("\r\n\r\n<p>page</p>"), "{page}");
+        assert!(!page.contains("Content-Encoding"), "{page}");
         let offer = get("/retreat-server.json");
         assert!(
             offer.ends_with("{\"web_transport_port\":5000,\"certificate_hash\":\"abcd\"}"),
