@@ -33,6 +33,9 @@ const WEB_DIR = resolve("target/web");
 const SNAPSHOT_DIR = resolve("target/snapshots/web");
 const POLL_INTERVAL_MS = 500;
 const DEFAULT_TIMEOUT_SECONDS = 300;
+// Long enough for the page to load between two clicks on the certificate warning.
+const CERTIFICATE_CLICK_INTERVAL_MS = 1000;
+const CERTIFICATE_TIMEOUT_MS = 60_000;
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -161,27 +164,35 @@ async function connectDevtools(url) {
 /**
  * Clicks through the browser's certificate warning ("Advanced", then "Proceed"), like a player, and
  * checks that the page behind it may use WebTransport. No browser flag ignores certificate errors.
+ *
+ * It clicks again until the page is there: Chrome sometimes drops a click on a warning it has only
+ * just shown and stays on it (seen about once in 40 runs; the check then failed with "the page did
+ * not load after the certificate warning").
  */
 async function passCertificateWarning(evaluate) {
-  const pause = () => new Promise((wait) => setTimeout(wait, 200));
-  let clicked = false;
-  for (let attempt = 0; attempt < 100 && !clicked; attempt += 1) {
-    await pause();
-    clicked = await evaluate(
-      "(() => { const link = document.getElementById('proceed-link'); if (!link) return false; document.getElementById('details-button')?.click(); link.click(); return true; })()",
-    ).catch(() => false);
-  }
-  if (!clicked) throw new Error("the browser showed no certificate warning to click through");
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  const pause = () => new Promise((wait) => setTimeout(wait, CERTIFICATE_CLICK_INTERVAL_MS));
+  const deadline = Date.now() + CERTIFICATE_TIMEOUT_MS;
+  let clicks = 0;
+  while (Date.now() < deadline) {
     await pause();
     const page = await evaluate(
       "document.getElementById('retreat-canvas') ? { secure: window.isSecureContext, webTransport: typeof WebTransport } : null",
     ).catch(() => null);
-    if (!page) continue;
-    console.log(`run_in_browser: passed the certificate warning; secure context ${page.secure}, WebTransport ${page.webTransport}`);
-    return;
+    if (page) {
+      console.log(`run_in_browser: passed the certificate warning (${clicks} click(s)); secure context ${page.secure}, WebTransport ${page.webTransport}`);
+      return;
+    }
+    const clicked = await evaluate(
+      "(() => { const link = document.getElementById('proceed-link'); if (!link) return false; if (document.getElementById('details')?.classList.contains('hidden')) document.getElementById('details-button')?.click(); link.click(); return true; })()",
+    ).catch(() => false);
+    if (clicked) clicks += 1;
   }
-  throw new Error("the page did not load after the certificate warning");
+  const shown = await evaluate("`${location.href} \"${document.title}\"`").catch((error) => `unreadable: ${error.message}`);
+  throw new Error(
+    clicks === 0
+      ? `the browser showed no certificate warning to click through within ${CERTIFICATE_TIMEOUT_MS / 1000} s; it shows ${shown}`
+      : `the page did not load after the certificate warning (${clicks} clicks in ${CERTIFICATE_TIMEOUT_MS / 1000} s); it shows ${shown}`,
+  );
 }
 
 async function main() {
