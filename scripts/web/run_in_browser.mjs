@@ -4,6 +4,11 @@
 //
 //   node scripts/web/run_in_browser.mjs scripts/verify/physics_boxes.cmds [--seed 0]
 //
+//   node scripts/web/run_in_browser.mjs scripts/verify/browser/text_field_page.cmds --type-into-field "Ada"
+//
+// `--type-into-field <text>` types the text (as trusted input, like a keyboard or an IME) into the
+// page input over the game's text field once the script has given that field the focus.
+//
 //   node scripts/web/run_in_browser.mjs <script.cmds> --url https://192.168.1.20:8443/ [--query real_time=1]
 //
 // `--url` opens a page that a game server serves (--serve-web) instead of serving target/web here, and
@@ -47,18 +52,19 @@ const MIME_TYPES = {
 
 function usage(message) {
   console.error(`run_in_browser: ${message}`);
-  console.error("usage: node scripts/web/run_in_browser.mjs <script.cmds> [--seed <n>] [--timeout <seconds>] [--query <extra URL query>] [--click-for-pointer-lock] [--url <https page of a game server>]");
+  console.error("usage: node scripts/web/run_in_browser.mjs <script.cmds> [--seed <n>] [--timeout <seconds>] [--query <extra URL query>] [--click-for-pointer-lock] [--type-into-field <text>] [--url <https page of a game server>]");
   process.exit(2);
 }
 
 function parseArguments(argv) {
-  const options = { script: null, seed: "0", timeoutSeconds: DEFAULT_TIMEOUT_SECONDS, query: "", clickForPointerLock: false, url: null };
+  const options = { script: null, seed: "0", timeoutSeconds: DEFAULT_TIMEOUT_SECONDS, query: "", clickForPointerLock: false, typeIntoField: null, url: null };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--seed") options.seed = argv[++index] ?? usage("--seed needs a value");
     else if (argument === "--timeout") options.timeoutSeconds = Number(argv[++index]);
     else if (argument === "--query") options.query = argv[++index] ?? usage("--query needs a value");
     else if (argument === "--click-for-pointer-lock") options.clickForPointerLock = true;
+    else if (argument === "--type-into-field") options.typeIntoField = argv[++index] ?? usage("--type-into-field needs a value");
     else if (argument === "--url") options.url = argv[++index] ?? usage("--url needs a value");
     else if (argument.startsWith("--")) usage(`unknown option ${argument}`);
     else options.script = argument.replaceAll("\\", "/");
@@ -236,9 +242,20 @@ async function main() {
 
   const deadline = Date.now() + options.timeoutSeconds * 1000;
   let status = { script: "loading" };
+  let typed = false;
   while (Date.now() < deadline) {
     status = await evaluate("window.__retreat ? window.__retreat.status() : { script: 'loading' }").catch(() => status);
     if (status.script === "passed" || status.script === "failed" || status.script === "none") break;
+    // `--type-into-field`: once the game has given a text field the focus (the page's own <input>
+    // over it, see web/index.html), type into it the way a keyboard or IME does (trusted input).
+    if (options.typeIntoField !== null && !typed) {
+      const focused = await evaluate("document.activeElement?.classList.contains('retreat-text-field') ?? false").catch(() => false);
+      if (focused) {
+        await devtools.call("Input.insertText", { text: options.typeIntoField }, sessionId);
+        typed = true;
+        console.log(`run_in_browser: typed ${JSON.stringify(options.typeIntoField)} into the focused text field`);
+      }
+    }
     await new Promise((wait) => setTimeout(wait, POLL_INTERVAL_MS));
   }
 

@@ -1,0 +1,50 @@
+# A UI text field (crawler plan CE2): focus, typing, no input action while typing, the length
+# limit, submitting, and the placeholder.
+# Run: cargo run -p retreat_sandbox -- --headless --commands scripts/verify/text_field.cmds
+# Expected pictures:
+#   text_field_empty.png:     top right a "Greeting" panel: a dark field with the grey hint
+#                             "Your name", a "Greet" button below it; nothing at the bottom.
+#   text_field_typed.png:     the field (lighter, it has the focus) holds "Ada Lovelace"; no hint.
+#   text_field_submitted.png: "Hello, Ada Lovelace!" at the bottom centre; the field is darker
+#                             again (no focus) and still holds the name.
+
+ui.show_panel greeting
+wait 2
+snapshot text_field_empty
+assert.ui_field greeting name
+assert.ui_not_focused
+ui.focus_field greeting name
+wait 1
+assert.ui_focused greeting name
+ui.type_text Ada
+ui.type_text Lovelace
+wait 1
+# Two pieces typed one after the other join with nothing between them, like key presses.
+assert.ui_field greeting name AdaLovelace
+ui.set_field greeting name Ada Lovelace
+wait 1
+assert.ui_field greeting name Ada Lovelace
+# While the field has the focus, W walks nobody.
+input.key_down W
+wait 2
+assert.input_not_held walk_forward
+input.key_up W
+# At most 12 characters fit.
+ui.set_field greeting name Ada Lovelace Byron
+wait 1
+assert.ui_field greeting name Ada Lovelace
+snapshot text_field_typed
+ui.press greeting greet
+wait 2
+assert.ui_text greeting_text Hello, Ada Lovelace!
+ui.unfocus_field
+wait 2
+assert.ui_not_focused
+# Without the focus, W is an input action again.
+input.key_down W
+wait 2
+assert.input_held walk_forward
+input.key_up W
+assert.ui_field greeting name Ada Lovelace
+snapshot text_field_submitted
+quit

@@ -6,6 +6,7 @@
 //! hides the platform difference.
 
 mod drop_box;
+mod greeting;
 mod pickup;
 mod scene;
 mod stripes_material;
@@ -33,6 +34,8 @@ fn add_sandbox_plugins(app: &mut App) {
     // A demo pickup without a body (`sandbox.pickup_spawn`); its own call because Bevy's plugin
     // tuples hold at most 15 entries.
     app.add_plugins(pickup::PickupPlugin);
+    // A demo text field (`greeting` panel, `sandbox.greet`).
+    app.add_plugins(greeting::GreetingPlugin);
     app.add_plugins((
         scene::SandboxScenePlugin,
         stripes_material::StripesMaterialPlugin,

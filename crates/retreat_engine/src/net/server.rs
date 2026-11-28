@@ -14,6 +14,13 @@
 //! never joins is dropped; who may join is decided by the contract's `NetIdentity`. Nothing a client
 //! sends can panic the server: every refusal is counted.
 //!
+//! **One connection per player id** (decided 2026-11-27, crawler plan CE1): when a hello is allowed
+//! as a player id that another open connection already holds (a reload, a second browser with the
+//! same login), the older connection is disconnected (`NetClientLeft` for it, counted in
+//! `ServerStats::connections_replaced`, not a refusal) and the new one joins. Whenever a player id
+//! joins that had another client id earlier in this server's life, the server also writes
+//! `NetClientRejoined`, so a module can move that player's entity to the new client id.
+//!
 //! Because these run inside `FixedMain`, a real app (Bevy's fixed loop) and the in-process harness
 //! (`simulate_tick`) run exactly the same server code.
 
@@ -22,9 +29,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use bevy::app::{FixedFirst, FixedLast};
 use bevy::prelude::*;
 use retreat_engine_api::{
-    MAX_REWIND_TICKS, NetAllowedCommands, NetClientJoined, NetClientLeft, NetCommandSender,
-    NetIdentity, NetIdentityDecision, NetIdentityRequest, NetInputTick, NetPlayerIds,
-    NetStateRegistry, run_command_line,
+    MAX_REWIND_TICKS, NetAllowedCommands, NetClientJoined, NetClientLeft, NetClientRejoined,
+    NetCommandSender, NetIdentity, NetIdentityDecision, NetIdentityRequest, NetInputTick,
+    NetPlayerIds, NetStateRegistry, run_command_line,
 };
 
 use super::body_state::{BodyState, read_replicated_body_states};
@@ -78,6 +85,8 @@ pub struct ServerStats {
     pub join_timeouts: u64,
     /// Hellos the identity check denied.
     pub identity_denied: u64,
+    /// Older connections closed because the same player id joined again (not a refusal).
+    pub connections_replaced: u64,
     /// Bytes of every datagram received (including refused ones).
     pub bytes_received: u64,
     /// Bytes of every datagram sent (one count per receiving connection).
@@ -178,6 +187,8 @@ pub struct NetServer {
     connections: BTreeMap<ConnectionId, ConnectionState>,
     /// Decides which bodies each broadcast lists (see `state_delta.rs`).
     delta: DeltaEncoder,
+    /// Each player id's latest client id in this server's life (see the module docs).
+    player_clients: BTreeMap<String, u32>,
 }
 
 impl NetServer {
@@ -226,6 +237,7 @@ pub fn install_server(
         limits: config.limits,
         connections: BTreeMap::new(),
         delta: DeltaEncoder::default(),
+        player_clients: BTreeMap::new(),
     })
     .insert_non_send(ServerTransportBox(Box::new(transport)))
     .add_systems(FixedFirst, server_before_tick)
@@ -412,6 +424,15 @@ fn handle_packet(
                 let decision = world.resource::<NetIdentity>().0.check(request);
                 match decision {
                     NetIdentityDecision::Allow { player_id } => {
+                        let previous = server.player_clients.get(&player_id).copied();
+                        if let Some(older) = previous.filter(|older| server.known.contains(older)) {
+                            server.stats.connections_replaced += 1;
+                            info!(
+                                "net server: player `{player_id}` joined again as client {from};                                  its older connection {older} is closed (one connection per player)"
+                            );
+                            drop_connection(world, server, transport, older);
+                        }
+                        server.player_clients.insert(player_id.clone(), from);
                         server.known.insert(from);
                         server.delta.request_full_state();
                         world
@@ -419,6 +440,12 @@ fn handle_packet(
                             .0
                             .insert(from, player_id);
                         world.write_message(NetClientJoined { client_id: from });
+                        if let Some(previous_client_id) = previous {
+                            world.write_message(NetClientRejoined {
+                                client_id: from,
+                                previous_client_id,
+                            });
+                        }
                     }
                     NetIdentityDecision::Deny { reason } => {
                         server.stats.identity_denied += 1;

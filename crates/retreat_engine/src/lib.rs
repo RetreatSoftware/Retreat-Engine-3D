@@ -33,6 +33,7 @@ mod physics;
 mod physics_queries;
 mod physics_snapshot;
 mod platform;
+mod records;
 mod render_smoothing;
 mod retired_bodies;
 mod shader_material;
@@ -42,6 +43,7 @@ mod state_hash;
 mod storage;
 mod ui_hud;
 mod ui_panels;
+mod ui_text_fields;
 mod visual_effects;
 mod visuals;
 
@@ -92,6 +94,7 @@ pub use physics_snapshot::{PhysicsSnapshot, RollbackError, capture_physics, rest
 pub use platform::launch;
 #[cfg(not(target_arch = "wasm32"))]
 pub use platform::{WebTransportClient, WebTransportServer, parse_certificate_hash};
+pub use records::{DEFAULT_RECORDS_DIRECTORY, RecordLocation, RecordsPlugin};
 pub use render_smoothing::RenderSmoothingPlugin;
 pub use retired_bodies::ROLLBACK_WINDOW_TICKS;
 pub use shader_material::{
@@ -104,7 +107,7 @@ pub use state_hash::{
 };
 pub use storage::StorageCommandsPlugin;
 pub use ui_hud::UiHudPlugin;
-pub use ui_panels::UiPanelsPlugin;
+pub use ui_panels::{UiClickTarget, UiPanelsPlugin};
 pub use visual_effects::{EFFECT_NAME_PREFIX, EffectLog, VisualEffectsPlugin};
 pub use visuals::{VISUAL_NAME_SUFFIX, VisualsPlugin};
 
@@ -122,6 +125,8 @@ pub struct RetreatEnginePlugin {
     pub real_time: bool,
     /// Mute the sound device (`LaunchOptions::sound_muted`); logical audio state is unchanged.
     pub sound_muted: bool,
+    /// Where the server records are (`LaunchOptions::record_location`).
+    pub records: RecordLocation,
     pub commands: RetreatCommandsPlugin,
 }
 
@@ -135,6 +140,7 @@ impl RetreatEnginePlugin {
             software_renderer: false,
             real_time: false,
             sound_muted: false,
+            records: RecordLocation::Memory,
             commands: RetreatCommandsPlugin::default(),
         }
     }
@@ -154,6 +160,7 @@ impl RetreatEnginePlugin {
             software_renderer: options.software_renderer,
             real_time: options.real_time,
             sound_muted: options.sound_muted(),
+            records: options.record_location(platform::HAS_FILE_SYSTEM),
             commands: RetreatCommandsPlugin {
                 seed: options.seed,
                 command_script,
@@ -295,6 +302,9 @@ impl Plugin for RetreatEnginePlugin {
             NetPosePlugin,
             VisualEffectsPlugin,
             SoundEventsPlugin,
+            RecordsPlugin {
+                location: self.records.clone(),
+            },
         ));
         // Scans the render world for failed pipelines, so it needs one.
         if !self.no_render {

@@ -1,0 +1,19 @@
+# Browser only: a text field takes typing through the page's own <input> (what a phone's on-screen
+# keyboard and an IME need), not through the canvas. Needs a typist, so it is not in the
+# scripts/verify/*.cmds loops:
+#   node scripts/web/run_in_browser.mjs scripts/verify/browser/text_field_page.cmds --type-into-field "Ada"
+# The runner types "Ada" (trusted input, like an IME commit) once the page input has the focus.
+# Expected picture:
+#   text_field_page.png: the "Greeting" panel at the top right, the field holds "Ada" (lighter: it
+#                        has the focus), "Hello, Ada!" at the bottom centre.
+
+ui.show_panel greeting
+wait 2
+ui.focus_field greeting name
+wait_until 3000 assert.ui_field greeting name Ada
+assert.ui_focused greeting name
+ui.press greeting greet
+wait 2
+assert.ui_text greeting_text Hello, Ada!
+snapshot text_field_page
+quit

@@ -1,0 +1,15 @@
+# Server records (crawler plan CE1): a versioned document per owner and part, read back, listed
+# and deleted. Under a script the store is in memory, so the run leaves nothing behind.
+# Run: cargo run -p retreat_sandbox -- --headless --no-render --commands scripts/verify/records.cmds
+# (no pictures: records are not drawn).
+
+records.status
+records.write account/alice account 1 {"characters":["alice-1"]}
+records.write character/alice-1 player_spawn 1 {"x":2.5}
+assert.record_field account/alice account characters ["alice-1"]
+assert.record_field character/alice-1 player_spawn x 2.5
+records.list character/alice-1
+records.read account/alice account
+records.delete character/alice-1 player_spawn
+assert.record_absent character/alice-1 player_spawn
+quit

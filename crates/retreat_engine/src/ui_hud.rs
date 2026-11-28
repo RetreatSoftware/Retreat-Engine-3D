@@ -71,13 +71,14 @@ fn occupied_by_panels(panels: &UiPanels, viewport: Vec2) -> HudOccupied {
             continue;
         };
         let layout = compute_panel_layout(
+            panels.text_fields(id),
             &panels.visible_entries(id),
             panel.title.is_some(),
             panel.anchor,
             panel.direction,
             viewport,
         );
-        if layout.buttons.is_empty() {
+        if layout.is_empty() {
             continue;
         }
         let height = layout.bounds.top + layout.bounds.height - PANEL_MARGIN;

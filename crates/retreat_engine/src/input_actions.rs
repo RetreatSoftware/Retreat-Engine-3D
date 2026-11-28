@@ -11,6 +11,12 @@
 //! 3. `update_held_actions` (`FixedUpdate`, in `InputActionSystems`, after the script line of the
 //!    tick) recomputes `InputActions::is_held` from `pressed`, so held state is per fixed tick.
 //!
+//! A mouse button press while the pointer is over a UI button or text field (`UiClickTarget`)
+//! runs no action: the click belongs to the UI.
+//!
+//! While a text field has the keyboard focus (`UiTextFields::is_typing`), no action runs and none
+//! is held: the keys belong to the field.
+//!
 //! Mouse look, axes and cursor capture are in `analog_input.rs`.
 //!
 //! Commands: `input.key_down <key>`, `input.key_up <key>`, `input.tap <key>` (down for exactly one
@@ -22,10 +28,13 @@
 
 use std::collections::BTreeSet;
 
+use crate::UiClickTarget;
+use bevy::picking::hover::HoverMap;
+use bevy::picking::pointer::PointerId;
 use bevy::prelude::*;
 use retreat_engine_api::{
     AppCommandExt, CommandArgs, CommandOutcome, CommandRegistry, CommandResult, INPUT_KEY_NAMES,
-    InputActionSystems, InputActions, InputKey,
+    InputActionSystems, InputActions, InputKey, UiTextFields,
 };
 
 use crate::CommandScriptSystems;
@@ -183,17 +192,30 @@ impl Plugin for InputActionsPlugin {
 
 /// Recomputes `InputActions::is_held` from the keys that are down. Read `pressed`, never
 /// `just_pressed`: a fixed tick can run twice or not at all in one frame.
+/// While a text field has the keyboard focus nothing is held: typing `w` must not walk.
 fn update_held_actions(
     mut actions: ResMut<InputActions>,
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
+    fields: Option<Res<UiTextFields>>,
 ) {
-    actions.update_held(|key| is_key_down(&keys, &mouse, key));
+    let typing = fields.is_some_and(|fields| fields.is_typing());
+    actions.update_held(|key| !typing && is_key_down(&keys, &mouse, key));
 }
 
 /// Runs the command of every action whose bound key went down this frame, once per action, in
 /// action-id order.
 fn dispatch_pressed_actions(world: &mut World) {
+    // Keys pressed while typing in a text field belong to the field (see `ui_panel.rs`).
+    if world
+        .get_resource::<UiTextFields>()
+        .is_some_and(UiTextFields::is_typing)
+    {
+        return;
+    }
+    // A mouse press on a UI button or text field belongs to the UI, not to the game (a click on
+    // "Log in" must not also capture the cursor or fire).
+    let mouse_on_ui = mouse_is_over_ui(world);
     let keys = world.resource::<ButtonInput<KeyCode>>();
     let mouse = world.resource::<ButtonInput<MouseButton>>();
     let actions = world.resource::<InputActions>();
@@ -201,6 +223,9 @@ fn dispatch_pressed_actions(world: &mut World) {
     let mut seen: BTreeSet<&'static str> = BTreeSet::new();
     for (_, key) in INPUT_KEY_NAMES {
         if !was_key_pressed_this_frame(keys, mouse, *key) {
+            continue;
+        }
+        if mouse_on_ui && matches!(to_bevy_input(*key), BevyInput::Mouse(_)) {
             continue;
         }
         for id in actions.actions_for_key(*key) {
@@ -215,6 +240,18 @@ fn dispatch_pressed_actions(world: &mut World) {
     for (id, command_line) in to_run {
         dispatch_command_line(world, &format!("input action `{id}`"), command_line);
     }
+}
+
+/// True when the mouse pointer is over a UI element that takes clicks (`UiClickTarget`).
+fn mouse_is_over_ui(world: &World) -> bool {
+    let Some(hits) = world
+        .get_resource::<HoverMap>()
+        .and_then(|hover| hover.get(&PointerId::Mouse))
+    else {
+        return false;
+    };
+    hits.keys()
+        .any(|entity| world.get::<UiClickTarget>(*entity).is_some())
 }
 
 /// Releases the keys `input.tap` pressed, after `dispatch_pressed_actions` saw them go down.

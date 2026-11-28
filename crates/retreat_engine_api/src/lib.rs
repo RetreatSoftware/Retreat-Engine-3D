@@ -41,11 +41,15 @@
 //! Module state: a component that implements [`NetState`] and is registered with
 //! [`AppNetStateExt::register_net_state`] is rolled back and replicated.
 //!
+//! Server records: [`RecordStore`] keeps versioned JSON documents per owner (account, character)
+//! and module, with atomic multi-record writes; it exists only where the game is decided, never
+//! on a network client.
+//!
 //! Saving: [`SaveStore`] keeps one versioned JSON document per module; the engine decides where
 //! it lives (file, browser storage, memory).
 //!
-//! UI: [`UiPanel`] declares a panel of buttons that run command lines; its layout is the pure
-//! [`compute_panel_layout`].
+//! UI: [`UiPanel`] declares a panel of text fields ([`UiTextField`]) and buttons that run command
+//! lines; its layout is the pure [`compute_panel_layout`]; [`UiTextFields`] holds what was typed.
 //!
 //! Physics: an entity with a [`PhysicsBody`] becomes a rigid body; the types name no physics
 //! library, so modules do not depend on one. [`PhysicsVelocity`] reads a body's velocity,
@@ -69,6 +73,7 @@ mod net_state;
 mod physics_body;
 mod physics_queries;
 mod predicted_spawn;
+mod record_store;
 mod save_store;
 mod simulation_rng;
 mod sound_events;
@@ -97,10 +102,10 @@ pub use input_actions::{
 pub use intangible::Intangible;
 pub use lag_compensation::{LagCaster, MAX_REWIND_TICKS, NetViewTick, cast_ray_at, cast_shape_at};
 pub use net::{
-    AcceptEveryone, AppNetExt, NetAllowedCommands, NetClientJoined, NetClientLeft,
-    NetCommandSender, NetIdentity, NetIdentityCheck, NetIdentityDecision, NetIdentityRequest,
-    NetInputQueue, NetLocalClient, NetPlayerIds, NetReplaying, Replicated, SyncedKind,
-    add_net_contract,
+    AcceptEveryone, AppNetExt, MAX_IDENTITY_TOKEN_BYTES, NetAllowedCommands, NetClientIdentity,
+    NetClientJoined, NetClientLeft, NetClientRejoined, NetCommandSender, NetIdentity,
+    NetIdentityCheck, NetIdentityDecision, NetIdentityRequest, NetInputQueue, NetLocalClient,
+    NetPlayerIds, NetReplaying, Replicated, SyncedKind, add_net_contract,
 };
 pub use net_pose::NetPose;
 pub use net_state::{
@@ -114,6 +119,11 @@ pub use physics_body::{
 pub use physics_queries::{CastHit, PhysicsCaster, RayCast, ShapeCast, cast_ray, cast_shape};
 pub use predicted_spawn::{
     NetInputTick, PREDICTION_REORDER_TICKS, PredictedSpawn, spawn_predicted,
+};
+pub use record_store::{
+    MAX_OWNER_SEGMENTS, MAX_RECORD_SEGMENT_CHARS, MemoryRecordBackend, RECORD_FORMAT_VERSION,
+    RecordBackend, RecordBatch, RecordChange, RecordError, RecordKey, RecordStore, StoredRecord,
+    decode_record, encode_record, is_valid_record_owner, is_valid_record_segment,
 };
 pub use save_store::{
     MemorySaveBackend, SAVE_FORMAT_VERSION, SaveBackend, SaveError, SaveStore, SavedData,
@@ -130,9 +140,10 @@ pub use ui_hud::{
     HudOccupied, HudState, HudStyle, HudWidget, UiHud, compute_hud_layout,
 };
 pub use ui_panel::{
-    AppUiExt, BUTTON_HEIGHT, ButtonRect, COLUMN_BUTTON_WIDTH, MIN_BUTTON_HEIGHT, PANEL_GAP,
-    PANEL_MARGIN, PanelAnchor, PanelDirection, PanelLayout, PanelRect, ROW_MAX_BUTTON_WIDTH,
-    TITLE_HEIGHT, UiButtonEntry, UiPanel, UiPanels, compute_panel_layout, visible_entries,
+    AppUiExt, BUTTON_HEIGHT, ButtonRect, COLUMN_BUTTON_WIDTH, FieldRect, MIN_BUTTON_HEIGHT,
+    PANEL_GAP, PANEL_MARGIN, PanelAnchor, PanelDirection, PanelLayout, PanelRect,
+    ROW_MAX_BUTTON_WIDTH, TITLE_HEIGHT, UiButtonEntry, UiPanel, UiPanels, UiTextField,
+    UiTextFields, compute_panel_layout, fit_text_field, text_field_submit_line, visible_entries,
 };
 pub use visual_effects::{EFFECT_MEMORY_TICKS, EffectTime, VisualEffect, VisualEffects};
 pub use visuals::{

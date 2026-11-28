@@ -1,5 +1,5 @@
 //! UI toolkit, engine side: draws the contract's `UiPanels` with `bevy_ui` (Bevy 0.20 widgets) and
-//! runs a button's command line when it is activated. This is the one place that turns panel
+//! runs a button's command line when it is activated. Text fields are made in `ui_text_fields.rs`. This is the one place that turns panel
 //! descriptions into UI nodes; where each button goes is decided by the contract's pure
 //! `compute_panel_layout`.
 //!
@@ -18,16 +18,18 @@
 //! Startup check (`Plugin::finish`): every entry's command must be registered; otherwise the app
 //! panics naming the panel entry and the missing command.
 
+use bevy::input_focus::{FocusCause, InputFocus};
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui::Pressed;
 use bevy::ui_widgets::{Activate, Button, observe};
 use retreat_engine_api::{
     AppCommandExt, CommandArgs, CommandOutcome, CommandRegistry, CommandResult, PanelRect,
-    UiButtonEntry, UiPanels, compute_panel_layout,
+    UiButtonEntry, UiPanels, UiTextFields, compute_panel_layout,
 };
 
 use crate::command_dispatch::dispatch_command_line;
+use crate::ui_text_fields::{UiTextFieldsPlugin, spawn_text_field};
 
 const BUTTON_COLOR: Color = Color::srgb(0.16, 0.17, 0.20);
 const BUTTON_HOVERED_COLOR: Color = Color::srgb(0.25, 0.27, 0.32);
@@ -40,6 +42,7 @@ pub struct UiPanelsPlugin;
 
 impl Plugin for UiPanelsPlugin {
     fn build(&self, app: &mut App) {
+        app.add_plugins(UiTextFieldsPlugin);
         app.init_resource::<UiPanels>()
             .init_resource::<PendingPresses>()
             .register_command("ui.show_panel", "ui.show_panel <panel>", show_panel_command)
@@ -87,6 +90,11 @@ impl Plugin for UiPanelsPlugin {
     }
 }
 
+/// A UI element that takes mouse clicks (panel buttons and text fields): a mouse press on it runs no
+/// input action (`input_actions.rs`), so a click on a button does not also capture the cursor.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct UiClickTarget;
+
 /// The root node of one panel (rebuilt as a whole).
 #[derive(Component)]
 struct PanelRoot;
@@ -123,10 +131,12 @@ fn node_at(rect: PanelRect) -> Node {
 }
 
 /// Rebuilds every visible panel when `UiPanels` changed or the view was resized (or on the first
-/// frame a camera has a size).
+/// frame a camera has a size). A text field keeps its text and its keyboard focus across a rebuild.
 fn rebuild_panels_when_needed(
     mut commands: Commands,
     panels: Res<UiPanels>,
+    texts: Res<UiTextFields>,
+    mut focus: ResMut<InputFocus>,
     cameras: Query<&Camera, With<Camera3d>>,
     roots: Query<Entity, With<PanelRoot>>,
     mut last_viewport: Local<Option<Vec2>>,
@@ -151,13 +161,14 @@ fn rebuild_panels_when_needed(
         };
         let entries = panels.visible_entries(id);
         let layout = compute_panel_layout(
+            panels.text_fields(id),
             &entries,
             panel.title.is_some(),
             panel.anchor,
             panel.direction,
             viewport,
         );
-        if layout.buttons.is_empty() {
+        if layout.is_empty() {
             continue;
         }
         commands
@@ -180,6 +191,13 @@ fn rebuild_panels_when_needed(
                         TextColor(Color::WHITE),
                     ));
                 }
+                for (field, placed) in panels.text_fields(id).iter().zip(&layout.fields) {
+                    let entity =
+                        spawn_text_field(root, id, *field, placed.rect, texts.text(id, field.id));
+                    if texts.focused == Some((id, field.id)) {
+                        focus.set(entity, FocusCause::Navigated);
+                    }
+                }
                 for (entry, button) in entries.iter().zip(&layout.buttons) {
                     root.spawn((
                         Name::new(panel_button_name(id, entry.id)),
@@ -187,6 +205,7 @@ fn rebuild_panels_when_needed(
                             panel: id,
                             entry: *entry,
                         },
+                        UiClickTarget,
                         Button,
                         node_at(button.rect),
                         BackgroundColor(BUTTON_COLOR),

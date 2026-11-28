@@ -21,9 +21,9 @@ use std::time::Duration;
 use bevy::app::{FixedFirst, FixedLast, RunFixedMainLoop, RunFixedMainLoopSystems};
 use bevy::prelude::*;
 use retreat_engine_api::{
-    NetCommandSender, NetInputQueue, NetInputTick, NetLocalClient, NetReplaying, NetStateRegistry,
-    NetViewTick, PREDICTION_REORDER_TICKS, PhysicsBody, PredictedSpawn, Replicated, RetiredEntity,
-    run_command_line,
+    NetClientIdentity, NetCommandSender, NetInputQueue, NetInputTick, NetLocalClient, NetReplaying,
+    NetStateRegistry, NetViewTick, PREDICTION_REORDER_TICKS, PhysicsBody, PredictedSpawn,
+    Replicated, RetiredEntity, run_command_line,
 };
 
 use super::body_state::{BodyState, apply_body_states, read_replicated_body_states};
@@ -272,6 +272,8 @@ pub fn install_client(
     app.init_resource::<PoseHistory>();
     app.init_resource::<ViewClock>();
     app.world_mut().resource_mut::<NetInputQueue>().accepting = true;
+    // A client decides nothing that is saved (crawler plan CE1).
+    crate::records::remove_record_store_on_client(app);
     // A slow frame must not lose simulated time (Bevy caps a frame at 250 ms by default): a
     // client that ticks slower than the server falls behind it.
     if let Some(mut clock) = app.world_mut().get_resource_mut::<Time<Virtual>>() {
@@ -321,6 +323,12 @@ fn pump_transport(world: &mut World) {
         return;
     };
     let mut joined_as = None;
+    // The hello carries the token the game set (a login name); a game that waits for one says
+    // hello only once it is there.
+    let identity = world
+        .get_resource::<NetClientIdentity>()
+        .cloned()
+        .unwrap_or_default();
     let mut client = world.resource_mut::<NetClient>();
     for event in transport.0.poll() {
         let bytes = match event {
@@ -377,7 +385,7 @@ fn pump_transport(world: &mut World) {
     // The round trip is measured from the first Hello, so Hellos wait for the connection: a browser
     // needs seconds to open a WebTransport session, and counting them as round trip made the client
     // start hundreds of ticks ahead of the server, far outside the window the server accepts.
-    if client.phase == ClientPhase::Connecting && client.connected {
+    if client.phase == ClientPhase::Connecting && client.connected && identity.ready() {
         let due = match client.hello_first_sent_at {
             None => true,
             Some(first) => (client.steps - first).is_multiple_of(HELLO_RESEND_TICKS),
@@ -387,7 +395,7 @@ fn pump_transport(world: &mut World) {
             client.hello_first_sent_at.get_or_insert(step);
             let hello = ClientMessage::Hello {
                 nonce: client.nonce,
-                token: client.token.clone(),
+                token: identity.token.clone().or_else(|| client.token.clone()),
             };
             let hello_bytes = wire::encode_client_message(&hello);
             client.stats.bytes_sent += hello_bytes.len() as u64;

@@ -14,7 +14,7 @@ pub const DEFAULT_SEED: u64 = 0;
 /// waits at most half a tick for its frame.
 const HEADLESS_FRAMES_PER_SECOND: f64 = 128.0;
 
-const LAUNCH_USAGE: &str = "usage: <app> [--commands <script.cmds>] [--seed <whole number>] [--headless [--no-render]] [--software-renderer] [--real-time] [--sound] [--server <port> [--serve-web <web build directory> [--web-port <port>] [--lan-address <ip>]] | --connect <https://host:port> [--cert-hash <64 hex digits>]]";
+const LAUNCH_USAGE: &str = "usage: <app> [--commands <script.cmds>] [--seed <whole number>] [--headless [--no-render]] [--software-renderer] [--real-time] [--sound] [--records-dir <folder>] [--server <port> [--serve-web <web build directory> [--web-port <port>] [--lan-address <ip>]] | --connect <https://host:port> [--cert-hash <64 hex digits>]]";
 
 /// Whether and how the app takes part in a network game.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -102,6 +102,8 @@ pub struct LaunchOptions {
     pub net: NetLaunch,
     /// `--serve-web`, `--web-port`, `--lan-address` (a server only).
     pub web: Option<WebServeLaunch>,
+    /// `--records-dir <folder>`: where a server keeps its records (also under a script).
+    pub records_dir: Option<PathBuf>,
 }
 
 impl Default for LaunchOptions {
@@ -116,6 +118,7 @@ impl Default for LaunchOptions {
             sound: false,
             net: NetLaunch::Off,
             web: None,
+            records_dir: None,
         }
     }
 }
@@ -138,6 +141,19 @@ impl LaunchOptions {
     /// Only the output is muted; the logical audio state is unchanged. The one rule for this.
     pub fn sound_muted(&self) -> bool {
         !self.sound && (self.commands_file.is_some() || self.headless)
+    }
+
+    /// Where this app keeps its server records (`records.rs`): the `--records-dir` folder when
+    /// given; otherwise memory under a command script and without a file system (browser), and
+    /// the default folder for interactive native play. The one rule for this; a network client
+    /// drops its store whatever this says.
+    pub fn record_location(&self, has_file_system: bool) -> crate::records::RecordLocation {
+        use crate::records::{DEFAULT_RECORDS_DIRECTORY, RecordLocation};
+        match &self.records_dir {
+            Some(directory) if has_file_system => RecordLocation::Files(directory.clone()),
+            _ if !has_file_system || self.commands_file.is_some() => RecordLocation::Memory,
+            _ => RecordLocation::Files(PathBuf::from(DEFAULT_RECORDS_DIRECTORY)),
+        }
     }
 
     /// Reads the process arguments. In the browser there are none, so this gives the defaults.
@@ -171,6 +187,10 @@ impl LaunchOptions {
                 "--software-renderer" => options.software_renderer = true,
                 "--real-time" => options.real_time = true,
                 "--sound" => options.sound = true,
+                "--records-dir" => {
+                    let value = next_value(&mut args, "--records-dir")?;
+                    options.records_dir = Some(PathBuf::from(value));
+                }
                 "--server" => {
                     let value = next_value(&mut args, "--server")?;
                     let port = value.parse().map_err(|error| {
@@ -328,6 +348,31 @@ fn next_value(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::records::RecordLocation;
+
+    #[test]
+    fn records_are_files_for_play_memory_under_scripts_and_a_named_folder_wins() {
+        let play = LaunchOptions::default();
+        assert_eq!(
+            play.record_location(true),
+            RecordLocation::Files(PathBuf::from("records"))
+        );
+        assert_eq!(play.record_location(false), RecordLocation::Memory);
+        let script =
+            LaunchOptions::parse(["--commands".to_string(), "a.cmds".to_string()]).unwrap();
+        assert_eq!(script.record_location(true), RecordLocation::Memory);
+        let named = LaunchOptions::parse(
+            ["--commands", "a.cmds", "--records-dir", "target/rec"].map(String::from),
+        )
+        .unwrap();
+        assert_eq!(
+            named.record_location(true),
+            RecordLocation::Files(PathBuf::from("target/rec"))
+        );
+        assert_eq!(named.record_location(false), RecordLocation::Memory);
+        let error = LaunchOptions::parse(["--records-dir".to_string()]).unwrap_err();
+        assert!(error.contains("--records-dir needs a value"), "{error}");
+    }
 
     fn parse(args: &[&str]) -> Result<LaunchOptions, String> {
         LaunchOptions::parse(args.iter().map(|arg| arg.to_string()))

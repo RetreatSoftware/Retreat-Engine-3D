@@ -16,6 +16,13 @@
 //! - [`NetIdentityCheck`] / [`NetIdentity`]: the server's hook that decides whether a joining client is
 //!   let in and which stable player id it gets. The default accepts everyone; a platform's trusted
 //!   backend plugs in its own check. [`NetPlayerIds`] lists the id of every joined client.
+//! - [`NetClientIdentity`]: on a **client**, the token its hello carries. A game with a login screen
+//!   sets `wait_for_token`, and the client says hello only once the token is set (the login name
+//!   for a dev login, later the platform's token). `net.identify <token>` sets it.
+//! - [`NetClientRejoined`]: the server saw this player id before under another client id (a
+//!   reconnect, or a second connection that took over a still-open one: **one connection per
+//!   player id**, the older is disconnected). A module that keeps a player's entity past a leave,
+//!   or across a takeover, moves it to the new client id on this message.
 
 use std::collections::BTreeSet;
 
@@ -37,6 +44,37 @@ pub struct NetClientJoined {
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NetClientLeft {
     pub client_id: u32,
+}
+
+/// The player id of `previous_client_id` joined again as `client_id` (written by the server, in the
+/// same tick as the [`NetClientJoined`] of `client_id`). When the older connection was still open
+/// (a reload, a second browser with the same login), the server disconnected it in this same tick,
+/// so its [`NetClientLeft`] is in this tick too: a module that moves the player's entity to the new
+/// client id instead of removing it reads this message before acting on the leave.
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NetClientRejoined {
+    pub client_id: u32,
+    pub previous_client_id: u32,
+}
+
+/// Most bytes of an identity token (a server refuses longer ones, see `ServerLimits`).
+pub const MAX_IDENTITY_TOKEN_BYTES: usize = 512;
+
+/// On a network client: the token its hello carries for the server's [`NetIdentityCheck`]. With
+/// `wait_for_token`, the client connects but says hello only once `token` is set, so a game can show
+/// a login screen first. Changing the token after the client joined has no effect (reconnect to
+/// change identity). Ignored on a server and without a network.
+#[derive(Resource, Default, Debug, Clone, PartialEq, Eq)]
+pub struct NetClientIdentity {
+    pub wait_for_token: bool,
+    pub token: Option<String>,
+}
+
+impl NetClientIdentity {
+    /// Whether a hello may be sent now.
+    pub fn ready(&self) -> bool {
+        !self.wait_for_token || self.token.is_some()
+    }
 }
 
 /// On a client, its own client id once it has joined (written by the engine); `None` on a server,
@@ -113,6 +151,21 @@ impl Default for NetIdentity {
 /// [`NetClientJoined`], and removed after [`NetClientLeft`]). Empty on a client.
 #[derive(Resource, Default, Debug, Clone, PartialEq, Eq)]
 pub struct NetPlayerIds(pub std::collections::BTreeMap<u32, String>);
+
+impl NetPlayerIds {
+    /// The player id of a joined client.
+    pub fn player_of(&self, client_id: u32) -> Option<&str> {
+        self.0.get(&client_id).map(String::as_str)
+    }
+
+    /// The client id a player id is joined as, if it is.
+    pub fn client_of(&self, player_id: &str) -> Option<u32> {
+        self.0
+            .iter()
+            .find(|(_, player)| player.as_str() == player_id)
+            .map(|(client, _)| *client)
+    }
+}
 
 /// Command lines a client module wants to send as the player's input this tick. The engine sets
 /// `accepting` when the app is a network client; until then [`NetInputQueue::push`] drops lines, so a
@@ -224,11 +277,13 @@ pub fn add_net_contract(app: &mut App) {
         .init_resource::<crate::NetViewTick>()
         .init_resource::<NetIdentity>()
         .init_resource::<NetPlayerIds>()
+        .init_resource::<NetClientIdentity>()
         .init_resource::<crate::NetStateRegistry>()
         .init_resource::<crate::NetInputTick>()
         .init_resource::<crate::VisualEffects>()
         .add_message::<NetClientJoined>()
         .add_message::<NetClientLeft>()
+        .add_message::<NetClientRejoined>()
         .register_net_state::<crate::NetPose>()
         .register_net_state::<crate::Intangible>();
 }
@@ -287,6 +342,27 @@ mod tests {
                 player_id: "guest-4".to_string()
             }
         );
+    }
+
+    #[test]
+    fn player_ids_answer_both_ways() {
+        let mut ids = NetPlayerIds::default();
+        ids.0.insert(3, "dev:alice".to_string());
+        assert_eq!(ids.player_of(3), Some("dev:alice"));
+        assert_eq!(ids.client_of("dev:alice"), Some(3));
+        assert_eq!(ids.client_of("dev:bob"), None);
+    }
+
+    #[test]
+    fn a_client_waiting_for_a_token_is_ready_once_it_has_one() {
+        assert!(NetClientIdentity::default().ready());
+        let mut identity = NetClientIdentity {
+            wait_for_token: true,
+            token: None,
+        };
+        assert!(!identity.ready());
+        identity.token = Some("alice".to_string());
+        assert!(identity.ready());
     }
 
     #[test]

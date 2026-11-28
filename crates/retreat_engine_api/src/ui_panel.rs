@@ -1,4 +1,4 @@
-//! UI toolkit for modules: a panel of buttons that run command lines.
+//! UI toolkit for modules: a panel of text fields and buttons that run command lines.
 //!
 //! A module declares a panel with [`AppUiExt::register_panel`]: an id, an optional title, where
 //! it sits ([`PanelAnchor`]), which way its buttons run ([`PanelDirection`]) and the buttons
@@ -7,6 +7,16 @@
 //! line, so every button is drivable by scripts (`ui.press <panel> <entry>`) and the browser
 //! bridge. A module shows and hides its panel with [`UiPanels::set_visible`] or the commands
 //! `ui.show_panel` / `ui.hide_panel`.
+//!
+//! **Text fields** ([`UiTextField`], decided 2026-11-27, crawler plan CE2; added to a registered
+//! panel with [`AppUiExt::register_text_fields`], so panels declared before fields existed keep
+//! compiling): a one-line field above the panel's buttons (a login name, later chat and prices). Typing goes into the field that has
+//! the keyboard focus (a click on it, or `ui.focus_field`); while a field has the focus no input
+//! action runs, so typing `w` does not walk. Enter (or a button running `ui.submit_field`) runs
+//! the field's `submit_command` with the text appended as its last argument. What a field holds is
+//! [`UiTextFields`] (read it, never write it from a module: the engine mirrors the real widget
+//! there). Native typing and IME go through Bevy's text input widget; in a browser the engine puts
+//! a real page `<input>` over the field, so phones show their on-screen keyboard and IMEs work.
 //!
 //! **Layout is computed from what is shown**, in the pure function [`compute_panel_layout`]:
 //! sizes and positions come only from the visible entries and the viewport, so hiding a button
@@ -57,6 +67,19 @@ pub struct UiButtonEntry {
     pub command_line: &'static str,
 }
 
+/// One text field: a stable id, the grey hint shown while it is empty, the most characters it
+/// takes, and the command it submits to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UiTextField {
+    pub id: &'static str,
+    pub placeholder: &'static str,
+    pub max_chars: usize,
+    /// Submitting runs `<submit_command> <text>` (text as one last argument, spaces kept).
+    pub submit_command: &'static str,
+    /// Empty the field after it was submitted (a chat line); keep it otherwise (a login name).
+    pub clear_on_submit: bool,
+}
+
 /// What a module declares for one panel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UiPanel {
@@ -88,13 +111,29 @@ pub struct ButtonRect {
     pub rect: PanelRect,
 }
 
-/// Where everything of one panel goes. Empty (no buttons, no title) when no entry is visible.
+/// Where one text field goes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FieldRect {
+    pub id: &'static str,
+    pub rect: PanelRect,
+}
+
+/// Where everything of one panel goes. Empty (no fields, no buttons, no title) when nothing is
+/// visible.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PanelLayout {
-    /// The whole panel: title and buttons.
+    /// The whole panel: title, fields and buttons.
     pub bounds: PanelRect,
     pub title: Option<PanelRect>,
+    pub fields: Vec<FieldRect>,
     pub buttons: Vec<ButtonRect>,
+}
+
+impl PanelLayout {
+    /// True when the panel shows nothing.
+    pub fn is_empty(&self) -> bool {
+        self.fields.is_empty() && self.buttons.is_empty()
+    }
 }
 
 /// The entries that are not hidden, in panel order.
@@ -109,18 +148,20 @@ pub fn visible_entries(
         .collect()
 }
 
-/// Lays a panel out in `viewport` (width, height). Pure: positions come only from the entries
-/// passed in and the viewport size, so a hidden entry leaves no gap. A row shares the width
-/// equally (at most [`ROW_MAX_BUTTON_WIDTH`] each); a column has buttons of
-/// [`COLUMN_BUTTON_WIDTH`] whose height shrinks if the column would not fit the view.
+/// Lays a panel out in `viewport` (width, height). Pure: positions come only from the fields and
+/// entries passed in and the viewport size, so a hidden entry leaves no gap. Every field and
+/// button takes one slot, fields first. A row shares the width equally (at most
+/// [`ROW_MAX_BUTTON_WIDTH`] each); a column has slots of [`COLUMN_BUTTON_WIDTH`] whose height
+/// shrinks if the column would not fit the view.
 pub fn compute_panel_layout(
+    fields: &[UiTextField],
     entries: &[UiButtonEntry],
     has_title: bool,
     anchor: PanelAnchor,
     direction: PanelDirection,
     viewport: Vec2,
 ) -> PanelLayout {
-    if entries.is_empty() {
+    if fields.is_empty() && entries.is_empty() {
         return PanelLayout {
             bounds: PanelRect {
                 left: 0.0,
@@ -129,10 +170,11 @@ pub fn compute_panel_layout(
                 height: 0.0,
             },
             title: None,
+            fields: Vec::new(),
             buttons: Vec::new(),
         };
     }
-    let count = entries.len() as f32;
+    let count = (fields.len() + entries.len()) as f32;
     let title_block = if has_title {
         TITLE_HEIGHT + PANEL_GAP
     } else {
@@ -170,30 +212,40 @@ pub fn compute_panel_layout(
         PanelAnchor::TopRight => Vec2::new(viewport.x - PANEL_MARGIN - size.x, PANEL_MARGIN),
         PanelAnchor::Center => (viewport - size) / 2.0,
     };
+    // The rectangle of slot `index` (fields take the first slots, buttons the rest).
+    let slot = |index: usize| {
+        let step = index as f32;
+        let (left, top) = match direction {
+            PanelDirection::Row => (
+                origin.x + step * (button_width + PANEL_GAP),
+                origin.y + title_block,
+            ),
+            PanelDirection::Column => (
+                origin.x,
+                origin.y + title_block + step * (button_height + PANEL_GAP),
+            ),
+        };
+        PanelRect {
+            left,
+            top,
+            width: button_width,
+            height: button_height,
+        }
+    };
+    let fields_shown = fields
+        .iter()
+        .enumerate()
+        .map(|(index, field)| FieldRect {
+            id: field.id,
+            rect: slot(index),
+        })
+        .collect();
     let buttons = entries
         .iter()
         .enumerate()
-        .map(|(index, entry)| {
-            let step = index as f32;
-            let (left, top) = match direction {
-                PanelDirection::Row => (
-                    origin.x + step * (button_width + PANEL_GAP),
-                    origin.y + title_block,
-                ),
-                PanelDirection::Column => (
-                    origin.x,
-                    origin.y + title_block + step * (button_height + PANEL_GAP),
-                ),
-            };
-            ButtonRect {
-                id: entry.id,
-                rect: PanelRect {
-                    left,
-                    top,
-                    width: button_width,
-                    height: button_height,
-                },
-            }
+        .map(|(index, entry)| ButtonRect {
+            id: entry.id,
+            rect: slot(fields.len() + index),
         })
         .collect();
     PanelLayout {
@@ -209,6 +261,7 @@ pub fn compute_panel_layout(
             width: size.x,
             height: TITLE_HEIGHT,
         }),
+        fields: fields_shown,
         buttons,
     }
 }
@@ -219,6 +272,8 @@ struct PanelState {
     panel: UiPanel,
     visible: bool,
     hidden_entries: BTreeSet<&'static str>,
+    /// Added with [`UiPanels::add_text_fields`]; shown before the buttons.
+    text_fields: &'static [UiTextField],
 }
 
 /// Every panel of the app (a Bevy resource). Changing it (show, hide) makes the engine rebuild the
@@ -267,8 +322,49 @@ impl UiPanels {
                 panel,
                 visible: panel.visible,
                 hidden_entries: BTreeSet::new(),
+                text_fields: &[],
             },
         );
+    }
+
+    /// Gives a registered panel its text fields (shown before its buttons, in this order). A panel
+    /// gets its fields in one call.
+    ///
+    /// # Panics
+    /// If the panel is not registered or already has fields, or a field's id or submit command is
+    /// not one word, takes 0 characters, or shares an id with another field or entry of the panel.
+    pub fn add_text_fields(&mut self, panel: &'static str, fields: &'static [UiTextField]) {
+        let is_word = |id: &str| !id.is_empty() && !id.contains(char::is_whitespace);
+        let Some(state) = self.panels.get_mut(panel) else {
+            panic!(
+                "UiPanels::add_text_fields: panel `{panel}` is not registered; register the panel first"
+            );
+        };
+        assert!(
+            state.text_fields.is_empty(),
+            "UiPanels::add_text_fields: panel `{panel}` already has text fields; give them in one call"
+        );
+        let mut seen: BTreeSet<&str> = state.panel.entries.iter().map(|entry| entry.id).collect();
+        for field in fields {
+            assert!(
+                is_word(field.id) && is_word(field.submit_command),
+                "UiPanels::add_text_fields: panel `{panel}` has a text field with an invalid id `{}` \
+                 or submit command `{}` (both one word)",
+                field.id,
+                field.submit_command
+            );
+            assert!(
+                field.max_chars > 0,
+                "UiPanels::add_text_fields: text field `{panel}/{}` takes 0 characters; set max_chars",
+                field.id
+            );
+            assert!(
+                seen.insert(field.id),
+                "UiPanels::add_text_fields: panel `{panel}` lists `{}` twice; field and entry ids must be unique",
+                field.id
+            );
+        }
+        state.text_fields = fields;
     }
 
     /// All panel ids, sorted.
@@ -301,6 +397,36 @@ impl UiPanels {
             .get(id)
             .map(|state| visible_entries(state.panel.entries, &state.hidden_entries))
             .unwrap_or_default()
+    }
+
+    /// The text fields of a panel (all of a panel's fields are shown with it). Empty for an
+    /// unknown id.
+    pub fn text_fields(&self, id: &str) -> &'static [UiTextField] {
+        self.panels
+            .get(id)
+            .map(|state| state.text_fields)
+            .unwrap_or_default()
+    }
+
+    /// The text field `field` of panel `panel`, or an error listing the panel's fields.
+    pub fn text_field(&self, panel: &str, field: &str) -> Result<UiTextField, String> {
+        let state = self.state(panel)?;
+        state
+            .text_fields
+            .iter()
+            .find(|candidate| candidate.id == field)
+            .copied()
+            .ok_or_else(|| {
+                let ids: Vec<&str> = state.text_fields.iter().map(|f| f.id).collect();
+                format!(
+                    "panel `{panel}` has no text field `{field}`; text fields: {}",
+                    if ids.is_empty() {
+                        "none".to_string()
+                    } else {
+                        ids.join(", ")
+                    }
+                )
+            })
     }
 
     /// Hides one entry (the others re-flow). Hiding a hidden entry is fine.
@@ -352,6 +478,14 @@ impl UiPanels {
                     ));
                 }
             }
+            for field in state.text_fields {
+                if !is_registered(field.submit_command) {
+                    unknown.push((
+                        format!("{}/{}", state.panel.id, field.id),
+                        field.submit_command.to_string(),
+                    ));
+                }
+            }
         }
         unknown
     }
@@ -379,6 +513,12 @@ impl UiPanels {
 pub trait AppUiExt {
     /// Registers a panel, creating [`UiPanels`] if needed. See [`UiPanels::register`].
     fn register_panel(&mut self, panel: UiPanel) -> &mut Self;
+    /// Gives a registered panel its text fields. See [`UiPanels::add_text_fields`].
+    fn register_text_fields(
+        &mut self,
+        panel: &'static str,
+        fields: &'static [UiTextField],
+    ) -> &mut Self;
 }
 
 impl AppUiExt for App {
@@ -387,6 +527,56 @@ impl AppUiExt for App {
         self.world_mut().resource_mut::<UiPanels>().register(panel);
         self
     }
+
+    fn register_text_fields(
+        &mut self,
+        panel: &'static str,
+        fields: &'static [UiTextField],
+    ) -> &mut Self {
+        self.init_resource::<UiPanels>();
+        self.world_mut()
+            .resource_mut::<UiPanels>()
+            .add_text_fields(panel, fields);
+        self
+    }
+}
+
+/// What every text field holds and which one has the keyboard focus (a Bevy resource the engine
+/// keeps up to date from the real widgets; modules read it). Keys are `(panel, field)`.
+#[derive(Resource, Default, Debug, Clone, PartialEq, Eq)]
+pub struct UiTextFields {
+    pub texts: BTreeMap<(&'static str, &'static str), String>,
+    pub focused: Option<(&'static str, &'static str)>,
+}
+
+impl UiTextFields {
+    /// The text of a field (empty when it was never typed in).
+    pub fn text(&self, panel: &str, field: &str) -> &str {
+        self.texts
+            .iter()
+            .find(|((p, f), _)| *p == panel && *f == field)
+            .map_or("", |(_, text)| text.as_str())
+    }
+
+    /// True while some field has the keyboard focus: input actions do not run then.
+    pub fn is_typing(&self) -> bool {
+        self.focused.is_some()
+    }
+}
+
+/// The command line a submitted field runs: `<submit_command> <text>`, or `None` for an empty
+/// (or only blank) text, which submits nothing.
+pub fn text_field_submit_line(field: &UiTextField, text: &str) -> Option<String> {
+    let text = text.trim();
+    (!text.is_empty()).then(|| format!("{} {text}", field.submit_command))
+}
+
+/// `text` cut to the field's `max_chars` characters and to one line (what a field can hold).
+pub fn fit_text_field(field: &UiTextField, text: &str) -> String {
+    text.chars()
+        .filter(|c| *c != '\n' && *c != '\r')
+        .take(field.max_chars)
+        .collect()
 }
 
 #[cfg(test)]
@@ -430,6 +620,7 @@ mod tests {
     #[test]
     fn a_row_shows_entries_in_order_at_full_width_from_the_corner() {
         let layout = compute_panel_layout(
+            &[],
             ENTRIES,
             false,
             PanelAnchor::TopLeft,
@@ -453,6 +644,7 @@ mod tests {
         let hidden = BTreeSet::from(["b"]);
         let shown = visible_entries(ENTRIES, &hidden);
         let layout = compute_panel_layout(
+            &[],
             &shown,
             false,
             PanelAnchor::TopLeft,
@@ -473,6 +665,7 @@ mod tests {
     fn row_buttons_shrink_to_fit_a_narrow_view() {
         let narrow = Vec2::new(300.0, 720.0);
         let layout = compute_panel_layout(
+            &[],
             ENTRIES,
             false,
             PanelAnchor::TopLeft,
@@ -487,6 +680,7 @@ mod tests {
     #[test]
     fn a_top_right_row_ends_at_the_right_margin() {
         let layout = compute_panel_layout(
+            &[],
             ENTRIES,
             false,
             PanelAnchor::TopRight,
@@ -500,6 +694,7 @@ mod tests {
     #[test]
     fn a_centered_column_is_centered_with_a_title_above_its_buttons() {
         let layout = compute_panel_layout(
+            &[],
             ENTRIES,
             true,
             PanelAnchor::Center,
@@ -531,6 +726,7 @@ mod tests {
     fn a_column_in_a_short_view_shrinks_its_buttons_but_not_below_the_minimum() {
         let short = Vec2::new(800.0, 140.0);
         let layout = compute_panel_layout(
+            &[],
             ENTRIES,
             false,
             PanelAnchor::TopLeft,
@@ -546,6 +742,7 @@ mod tests {
         assert!(last.rect.top + last.rect.height + PANEL_MARGIN <= short.y + 1e-3);
         let tiny = Vec2::new(800.0, 20.0);
         let layout = compute_panel_layout(
+            &[],
             ENTRIES,
             false,
             PanelAnchor::TopLeft,
@@ -557,10 +754,115 @@ mod tests {
 
     #[test]
     fn no_visible_entry_gives_an_empty_layout_with_no_title() {
-        let layout =
-            compute_panel_layout(&[], true, PanelAnchor::Center, PanelDirection::Column, WIDE);
+        let layout = compute_panel_layout(
+            &[],
+            &[],
+            true,
+            PanelAnchor::Center,
+            PanelDirection::Column,
+            WIDE,
+        );
         assert!(layout.buttons.is_empty());
         assert_eq!(layout.title, None);
+    }
+
+    const NAME_FIELD: UiTextField = UiTextField {
+        id: "name",
+        placeholder: "Name",
+        max_chars: 5,
+        submit_command: "x.login",
+        clear_on_submit: false,
+    };
+
+    #[test]
+    fn fields_take_the_first_slots_and_buttons_follow_without_a_gap() {
+        let layout = compute_panel_layout(
+            &[NAME_FIELD],
+            &ENTRIES[..2],
+            true,
+            PanelAnchor::Center,
+            PanelDirection::Column,
+            WIDE,
+        );
+        assert_eq!(layout.fields.len(), 1);
+        let field = layout.fields[0].rect;
+        assert_eq!(field.width, COLUMN_BUTTON_WIDTH);
+        assert_eq!(
+            layout.buttons[0].rect.top,
+            field.top + field.height + PANEL_GAP
+        );
+        let without = compute_panel_layout(
+            &[],
+            &ENTRIES[..2],
+            true,
+            PanelAnchor::Center,
+            PanelDirection::Column,
+            WIDE,
+        );
+        assert!(layout.bounds.height > without.bounds.height);
+        let only_field = compute_panel_layout(
+            &[NAME_FIELD],
+            &[],
+            false,
+            PanelAnchor::TopLeft,
+            PanelDirection::Row,
+            WIDE,
+        );
+        assert!(!only_field.is_empty() && only_field.buttons.is_empty());
+    }
+
+    #[test]
+    fn a_field_submits_its_trimmed_text_and_an_empty_one_submits_nothing() {
+        assert_eq!(
+            text_field_submit_line(&NAME_FIELD, " alice "),
+            Some("x.login alice".to_string())
+        );
+        assert_eq!(text_field_submit_line(&NAME_FIELD, "   "), None);
+        assert_eq!(fit_text_field(&NAME_FIELD, "abcdefgh"), "abcde");
+        assert_eq!(fit_text_field(&NAME_FIELD, "a\nb"), "ab");
+        let mut fields = UiTextFields::default();
+        assert_eq!(fields.text("login", "name"), "");
+        fields.texts.insert(("login", "name"), "bob".to_string());
+        assert_eq!(fields.text("login", "name"), "bob");
+        assert!(!fields.is_typing());
+    }
+
+    #[test]
+    fn a_panel_finds_its_text_fields_and_names_the_valid_ones() {
+        const FIELDS: &[UiTextField] = &[NAME_FIELD];
+        let mut panels = UiPanels::default();
+        panels.register(panel(PanelDirection::Column, PanelAnchor::Center));
+        panels.add_text_fields("menu", FIELDS);
+        assert_eq!(panels.text_field("menu", "name").unwrap().max_chars, 5);
+        let error = panels.text_field("menu", "nam").unwrap_err();
+        assert!(error.contains("text fields: name"), "{error}");
+        let unknown =
+            panels.entries_with_unknown_commands(|id| id.starts_with("x.") && id != "x.login");
+        assert_eq!(
+            unknown,
+            vec![("menu/name".to_string(), "x.login".to_string())]
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "lists `a` twice")]
+    fn a_field_cannot_share_an_id_with_an_entry() {
+        const CLASH: &[UiTextField] = &[UiTextField {
+            id: "a",
+            ..NAME_FIELD
+        }];
+        let mut panels = UiPanels::default();
+        panels.register(panel(PanelDirection::Row, PanelAnchor::TopLeft));
+        panels.add_text_fields("menu", CLASH);
+    }
+
+    #[test]
+    #[should_panic(expected = "field and entry ids must be unique")]
+    fn a_field_cannot_share_an_id_with_another_field() {
+        const TWICE: &[UiTextField] = &[NAME_FIELD, NAME_FIELD];
+        let mut panels = UiPanels::default();
+        panels.register(panel(PanelDirection::Row, PanelAnchor::TopLeft));
+        panels.add_text_fields("menu", TWICE);
     }
 
     #[test]

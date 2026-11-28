@@ -73,7 +73,7 @@ impl Default for ServerLimits {
             max_datagram_bytes: 1200,
             max_lines_per_input: 16,
             max_line_bytes: 256,
-            max_token_bytes: 512,
+            max_token_bytes: retreat_engine_api::MAX_IDENTITY_TOKEN_BYTES,
             max_ticks_ahead: super::MAX_HISTORY_TICKS,
             max_ticks_behind: 4096,
             violations_before_mute: 16,

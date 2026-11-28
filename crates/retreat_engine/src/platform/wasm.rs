@@ -24,8 +24,11 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
+#[path = "wasm_text_fields.rs"]
+mod wasm_text_fields;
 #[path = "wasm_transport.rs"]
 pub mod wasm_transport;
+pub(crate) use wasm_text_fields::sync_page_text_fields;
 
 use crate::bridge_status::script_status_json;
 use crate::command_script::ScriptProgress;
@@ -38,6 +41,9 @@ pub(crate) const AUDIO_NEEDS_USER_GESTURE: bool = true;
 pub(crate) const HAS_FILE_SYSTEM: bool = false;
 
 pub(crate) const SCRIPT_END_EXITS_APP: bool = false;
+
+/// Browser text fields are page inputs over the canvas (`wasm_text_fields.rs`).
+pub(crate) const TEXT_FIELDS_ON_PAGE: bool = true;
 
 /// What `retreatStatus` says before the app published its first status (the script is still
 /// being fetched, or the first frame has not run).
@@ -332,6 +338,17 @@ pub fn retreat_snapshot_names() -> Array {
 /// What `save.status` tells the player about where saves live.
 pub(crate) const SAVE_LOCATION: &str =
     "the browser's localStorage (keys start with `retreat.save.`)";
+
+/// A browser has no file system for server records (and is never a server); records stay in
+/// memory there (`LaunchOptions::record_location`), so this is never asked for.
+pub(crate) fn platform_record_backend(
+    directory: std::path::PathBuf,
+) -> Result<Box<dyn retreat_engine_api::RecordBackend>, String> {
+    Err(format!(
+        "a browser keeps no record files (asked for `{}`)",
+        directory.display()
+    ))
+}
 
 /// The save backend of this platform: the page's `localStorage`.
 pub(crate) fn platform_save_backend() -> Box<dyn retreat_engine_api::SaveBackend> {

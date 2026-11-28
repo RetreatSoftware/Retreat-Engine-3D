@@ -19,6 +19,13 @@
         font: 16px system-ui, sans-serif; text-align: center;
       }
       #retreat-notice[hidden] { display: none; }
+      /* A game text field's page input, over the field the game draws: its own text is transparent
+         (the game draws it), its caret shows (see window.__retreatText below). */
+      .retreat-text-field {
+        position: fixed; box-sizing: border-box; margin: 0; padding: 0 8px; border: none;
+        outline: none; background: transparent; color: transparent; caret-color: #fff;
+        font: 16px system-ui, sans-serif;
+      }
     </style>
   </head>
   <body>
@@ -85,6 +92,73 @@
           },
           poll() {
             return events.splice(0, events.length);
+          },
+        };
+      })();
+    </script>
+    <!-- Text fields: the browser half of the game's text fields (the Rust half is
+         crates/retreat_engine/src/platform/wasm_text_fields.rs). A phone shows its on-screen keyboard
+         and an IME composes only for a real input element, so every field the game shows gets a page
+         <input> over it. `sync(json)` (from the game, when something changed) creates, places and
+         removes inputs and applies the game's text and focus; `poll()` returns, as JSON, what the
+         player did since the last call: {kind: "text", key, text}, {kind: "submit", key} (Enter),
+         {kind: "focus", key}, {kind: "blur", key}. Keys pressed in an input stay there. -->
+    <script>
+      (() => {
+        const events = [];
+        const inputs = new Map();
+        const makeInput = (key) => {
+          const input = document.createElement("input");
+          input.type = "text";
+          input.className = "retreat-text-field";
+          input.dataset.key = key;
+          input.autocomplete = "off";
+          input.spellcheck = false;
+          input.addEventListener("input", () => events.push({ kind: "text", key, text: input.value }));
+          input.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" && !event.isComposing) {
+              events.push({ kind: "text", key, text: input.value }, { kind: "submit", key });
+            } else if (event.key === "Escape") {
+              input.blur();
+            }
+            event.stopPropagation();
+          });
+          input.addEventListener("keyup", (event) => event.stopPropagation());
+          input.addEventListener("focus", () => events.push({ kind: "focus", key }));
+          input.addEventListener("blur", () => events.push({ kind: "blur", key }));
+          document.body.appendChild(input);
+          inputs.set(key, input);
+          return input;
+        };
+        window.__retreatText = {
+          sync(json) {
+            const fields = JSON.parse(json);
+            const canvas = document.getElementById("retreat-canvas").getBoundingClientRect();
+            const shown = new Set();
+            for (const field of fields) {
+              shown.add(field.key);
+              const input = inputs.get(field.key) || makeInput(field.key);
+              Object.assign(input.style, {
+                left: `${canvas.left + field.left}px`,
+                top: `${canvas.top + field.top}px`,
+                width: `${field.width}px`,
+                height: `${field.height}px`,
+              });
+              input.maxLength = field.maxLength;
+              if (input.value !== field.text) input.value = field.text;
+              const focused = document.activeElement === input;
+              if (field.focused && !focused) input.focus({ preventScroll: true });
+              if (!field.focused && focused) input.blur();
+            }
+            for (const [key, input] of inputs) {
+              if (!shown.has(key)) {
+                input.remove();
+                inputs.delete(key);
+              }
+            }
+          },
+          poll() {
+            return JSON.stringify(events.splice(0, events.length));
           },
         };
       })();

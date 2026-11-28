@@ -3,6 +3,8 @@
 use bevy::asset::AssetMetaCheck;
 use bevy::prelude::*;
 
+#[path = "native_records.rs"]
+mod native_records;
 #[path = "native_transport.rs"]
 pub mod native_transport;
 #[path = "native_web_server.rs"]
@@ -17,6 +19,12 @@ pub(crate) const AUDIO_NEEDS_USER_GESTURE: bool = false;
 pub(crate) const HAS_FILE_SYSTEM: bool = true;
 
 pub(crate) const SCRIPT_END_EXITS_APP: bool = true;
+
+/// Native text fields take the keyboard and IME through Bevy's own text input widget.
+pub(crate) const TEXT_FIELDS_ON_PAGE: bool = false;
+
+/// Only the browser puts page inputs over text fields (`ui_text_fields.rs`).
+pub(crate) fn sync_page_text_fields() {}
 
 /// Reads the process arguments, reads the `--commands` file, builds the app with
 /// `RetreatEnginePlugin` and the game's plugins, and runs it. Returns the app's exit status
@@ -162,6 +170,15 @@ impl retreat_engine_api::SaveBackend for FileSaveBackend {
         keys.sort();
         Ok(keys)
     }
+}
+
+/// The server records as files in `directory` (finishes a commit a crash interrupted).
+pub(crate) fn platform_record_backend(
+    directory: std::path::PathBuf,
+) -> Result<Box<dyn retreat_engine_api::RecordBackend>, String> {
+    Ok(Box::new(native_records::FileRecordBackend::open(
+        directory,
+    )?))
 }
 
 /// A native window grants every cursor grab, so there is nothing to ask.

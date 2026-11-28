@@ -153,6 +153,37 @@ fn mouse_buttons_work_like_keys() {
 }
 
 #[test]
+fn a_mouse_press_over_a_ui_button_runs_no_action_but_a_key_does() {
+    use bevy::picking::hover::HoverMap;
+    use bevy::picking::pointer::PointerId;
+    let mut app = test_app(
+        "input.bind hit MouseLeft
+input.tap MouseLeft
+wait 1
+input.tap Space
+wait 1
+quit
+",
+    );
+    let button = app.world_mut().spawn(retreat_engine::UiClickTarget).id();
+    let mut hover = HoverMap::default();
+    hover.entry(PointerId::Mouse).or_default().insert(
+        button,
+        bevy::picking::backend::HitData::new(button, 0.0, None, None),
+    );
+    app.insert_resource(hover);
+    for _ in 0..MAX_UPDATES {
+        app.update();
+        if app.should_exit().is_some() {
+            break;
+        }
+    }
+    assert_eq!(app.world().resource::<CommandScript>().failure(), None);
+    // The click went to the button; Space (also bound to `hit`) still ran it once.
+    assert_eq!(app.world().resource::<Hits>().0, 1);
+}
+
+#[test]
 fn errors_name_the_command_the_bad_value_and_the_valid_choices() {
     let (_, failure) = run_script("input.key_down Spcae\nquit\n");
     let failure = failure.expect("an unknown key must fail");

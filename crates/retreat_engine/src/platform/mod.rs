@@ -7,6 +7,10 @@
 //!   key on the page (`web/index.html` resumes the audio contexts then); native output starts at once.
 //! - `SAVE_LOCATION` and `platform_save_backend()`: where saves live (files natively, `localStorage`
 //!   in the browser) and the `SaveBackend` that stores them.
+//! - `TEXT_FIELDS_ON_PAGE` and `sync_page_text_fields`: the browser puts a real page `<input>` over
+//!   each shown text field (on-screen keyboards and IME need one); natively Bevy's widget types.
+//! - `platform_record_backend(folder)`: the server records as files (native; the browser has no
+//!   file system and answers with an error, see `LaunchOptions::record_location`).
 //! - `HAS_FILE_SYSTEM`: native builds can read and write files; the browser cannot.
 //! - `SCRIPT_END_EXITS_APP`: on native, `quit` and a failed script exit the process (so the
 //!   exit code reaches CI); in the browser the page stays up so `__retreat.status()` can be read.
@@ -30,7 +34,8 @@ pub use native::native_transport::{
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use native::{
     AUDIO_NEEDS_USER_GESTURE, HAS_FILE_SYSTEM, PlatformPlugin, SAVE_LOCATION, SCRIPT_END_EXITS_APP,
-    asset_meta_check, platform_save_backend, pointer_is_locked, primary_window, store_snapshot,
+    TEXT_FIELDS_ON_PAGE, asset_meta_check, platform_record_backend, platform_save_backend,
+    pointer_is_locked, primary_window, store_snapshot, sync_page_text_fields,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -40,5 +45,6 @@ pub use wasm::launch;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use wasm::{
     AUDIO_NEEDS_USER_GESTURE, HAS_FILE_SYSTEM, PlatformPlugin, SAVE_LOCATION, SCRIPT_END_EXITS_APP,
-    asset_meta_check, platform_save_backend, pointer_is_locked, primary_window, store_snapshot,
+    TEXT_FIELDS_ON_PAGE, asset_meta_check, platform_record_backend, platform_save_backend,
+    pointer_is_locked, primary_window, store_snapshot, sync_page_text_fields,
 };

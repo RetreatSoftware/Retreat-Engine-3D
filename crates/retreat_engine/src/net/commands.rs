@@ -3,6 +3,9 @@
 //! - `net.send <command line...>`: a client queues a command line as the player's input: it runs on the
 //!   client at the start of the next tick and is sent to the server (which runs it only if the command is
 //!   allowed). Everything after `net.send` is the command line.
+//! - `net.identify <token>`: a client's identity token for its hello (a game that waits for one,
+//!   `NetClientIdentity::wait_for_token`, says hello only after this). Has no effect once joined.
+//! - `assert.net_player <client id> <player id>`: server only; that client joined as that player.
 //! - `net.status`: logs the role, tick and counters.
 //! - `net.bodies`: logs one line per physics body, `net-body <name> <x> <y> <z>`, so a script that
 //!   starts several processes can compare what each of them sees.
@@ -29,7 +32,8 @@
 
 use bevy::prelude::*;
 use retreat_engine_api::{
-    AppCommandExt, CommandArgs, CommandError, CommandOutcome, CommandResult, add_net_contract,
+    AppCommandExt, CommandArgs, CommandError, CommandOutcome, CommandResult,
+    MAX_IDENTITY_TOKEN_BYTES, NetClientIdentity, NetPlayerIds, add_net_contract,
 };
 
 use super::body_state::read_body_states;
@@ -44,6 +48,12 @@ impl Plugin for NetCommandsPlugin {
     fn build(&self, app: &mut App) {
         add_net_contract(app);
         app.register_command("net.send", "net.send <command line...>", send_command)
+            .register_command("net.identify", "net.identify <token>", identify_command)
+            .register_command(
+                "assert.net_player",
+                "assert.net_player <client id> <player id>",
+                assert_player_command,
+            )
             .register_command("net.status", "net.status", status_command)
             .register_command("net.bodies", "net.bodies", bodies_command)
             .register_command("net.states", "net.states", states_command)
@@ -87,6 +97,43 @@ impl Plugin for NetCommandsPlugin {
 }
 
 /// `net.send <command line...>`.
+/// `net.identify <token>`: the token this client's hello carries.
+fn identify_command(world: &mut World, args: &CommandArgs) -> CommandResult {
+    args.expect_count(1)?;
+    let token: String = args.parse(0, "token")?;
+    if token.len() > MAX_IDENTITY_TOKEN_BYTES {
+        return Err(args.failure(format!(
+            "the token has {} bytes; at most {MAX_IDENTITY_TOKEN_BYTES} fit in a hello",
+            token.len()
+        )));
+    }
+    world
+        .get_resource_or_insert_with(NetClientIdentity::default)
+        .token = Some(token);
+    Ok(CommandOutcome::Continue)
+}
+
+/// `assert.net_player <client id> <player id>` (server).
+fn assert_player_command(world: &mut World, args: &CommandArgs) -> CommandResult {
+    args.expect_count(2)?;
+    let client: u32 = args.parse(0, "client id")?;
+    let expected: String = args.parse(1, "player id")?;
+    if world.get_resource::<NetServer>().is_none() {
+        return Err(args.failure("only a server knows player ids; run this on the server"));
+    }
+    let ids = world.resource::<NetPlayerIds>();
+    match ids.player_of(client) {
+        Some(actual) if actual == expected => Ok(CommandOutcome::Continue),
+        Some(actual) => Err(args.failure(format!(
+            "client {client} joined as player `{actual}`, expected `{expected}`"
+        ))),
+        None => Err(args.failure(format!(
+            "client {client} has not joined; joined clients: {:?}",
+            ids.0
+        ))),
+    }
+}
+
 fn send_command(world: &mut World, args: &CommandArgs) -> CommandResult {
     let line = args.rest(0).join(" ");
     if line.is_empty() {
