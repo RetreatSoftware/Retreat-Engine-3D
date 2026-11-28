@@ -8,25 +8,71 @@
 //! rename), then removes the journal. Opening the folder finishes a journal left by a crash, so a
 //! batch is either fully applied or, if the journal never got written, not at all. Applying a
 //! journal twice gives the same result, so a crash during recovery is harmless too.
+//!
+//! **Several server processes on one folder** (every world server of a game; see "Several
+//! servers, one store" in `retreat_engine_api::record_store`). Every read, listing and commit
+//! holds an exclusive operating-system lock on `<directory>/.lock` (`std::fs::File::lock`, released
+//! when the operation ends or the process dies), so no process sees a commit half applied, and a
+//! commit checks its expectations and applies its changes without another process in between.
+//! Whoever takes the lock first finishes a journal that a crashed process left behind.
 
+use std::fs::File;
 use std::path::{Path, PathBuf};
 
 use retreat_engine_api::serde_json::{self, Value, json};
-use retreat_engine_api::{RecordBackend, RecordChange, RecordKey};
+use retreat_engine_api::{
+    RecordBackend, RecordChange, RecordCommitError, RecordExpectation, RecordKey,
+};
 
 /// The journal of the commit in progress.
 const JOURNAL_FILE: &str = "journal.json";
+/// The lock every process holds while it reads or commits (a dot: never an owner or part name).
+const LOCK_FILE: &str = ".lock";
 
 pub(crate) struct FileRecordBackend {
     directory: PathBuf,
+    lock: File,
+}
+
+/// Holds the folder's lock until dropped.
+struct FolderLock<'a>(&'a File);
+
+impl Drop for FolderLock<'_> {
+    fn drop(&mut self) {
+        // Closing the process releases it too; an unlock failure leaves nothing half done.
+        let _ = self.0.unlock();
+    }
 }
 
 impl FileRecordBackend {
     /// Opens (or starts) the records in `directory` and finishes a commit a crash interrupted.
     pub(crate) fn open(directory: PathBuf) -> Result<Self, String> {
-        let backend = Self { directory };
-        backend.finish_interrupted_commit()?;
+        std::fs::create_dir_all(&directory)
+            .map_err(|error| format!("cannot create `{}`: {error}", directory.display()))?;
+        let lock_path = directory.join(LOCK_FILE);
+        let lock = File::options()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)
+            .map_err(|error| format!("cannot open `{}`: {error}", lock_path.display()))?;
+        let backend = Self { directory, lock };
+        backend.locked()?;
         Ok(backend)
+    }
+
+    /// Takes the folder's lock (waiting for another process to finish), then finishes any commit
+    /// a crashed process left, so what follows sees whole records.
+    fn locked(&self) -> Result<FolderLock<'_>, String> {
+        self.lock.lock().map_err(|error| {
+            format!(
+                "cannot lock `{}`: {error}",
+                self.directory.join(LOCK_FILE).display()
+            )
+        })?;
+        let guard = FolderLock(&self.lock);
+        self.finish_interrupted_commit()?;
+        Ok(guard)
     }
 
     fn owner_folder(&self, owner: &str) -> PathBuf {
@@ -73,8 +119,8 @@ impl FileRecordBackend {
     }
 }
 
-impl RecordBackend for FileRecordBackend {
-    fn read(&self, key: &RecordKey) -> Result<Option<String>, String> {
+impl FileRecordBackend {
+    fn read_unlocked(&self, key: &RecordKey) -> Result<Option<String>, String> {
         let file = self.file_for(key);
         match std::fs::read_to_string(&file) {
             Ok(text) => Ok(Some(text)),
@@ -82,8 +128,16 @@ impl RecordBackend for FileRecordBackend {
             Err(error) => Err(format!("cannot read `{}`: {error}", file.display())),
         }
     }
+}
+
+impl RecordBackend for FileRecordBackend {
+    fn read(&self, key: &RecordKey) -> Result<Option<String>, String> {
+        let _lock = self.locked()?;
+        self.read_unlocked(key)
+    }
 
     fn parts(&self, owner: &str) -> Result<Vec<String>, String> {
+        let _lock = self.locked()?;
         let folder = self.owner_folder(owner);
         let entries = match std::fs::read_dir(&folder) {
             Ok(entries) => entries,
@@ -102,10 +156,24 @@ impl RecordBackend for FileRecordBackend {
         Ok(parts)
     }
 
-    fn commit(&mut self, changes: &[RecordChange]) -> Result<(), String> {
-        write_whole(&self.journal(), &encode_journal(changes))?;
-        self.apply(changes)?;
-        remove_file(&self.journal())
+    fn commit(
+        &mut self,
+        expected: &[RecordExpectation],
+        changes: &[RecordChange],
+    ) -> Result<(), RecordCommitError> {
+        let _lock = self.locked().map_err(RecordCommitError::Backend)?;
+        for expectation in expected {
+            let now = self
+                .read_unlocked(&expectation.key)
+                .map_err(RecordCommitError::Backend)?;
+            if !expectation.holds(now.as_deref()) {
+                return Err(RecordCommitError::Conflict(expectation.key.clone()));
+            }
+        }
+        write_whole(&self.journal(), &encode_journal(changes))
+            .map_err(RecordCommitError::Backend)?;
+        self.apply(changes).map_err(RecordCommitError::Backend)?;
+        remove_file(&self.journal()).map_err(RecordCommitError::Backend)
     }
 
     fn location(&self) -> String {
@@ -261,6 +329,76 @@ mod tests {
         let recovered = store(&directory);
         assert!(recovered.read(&first).unwrap().is_some());
         assert!(recovered.read(&second).unwrap().is_some());
+        assert!(!directory.0.join(JOURNAL_FILE).exists());
+    }
+
+    #[test]
+    fn two_servers_on_one_folder_never_lose_a_change() {
+        // Each thread is a world server with its own backend on the same folder; each adds one to
+        // a shared counter many times, reading and then writing only if nobody changed it.
+        let directory = TempDirectory::new("two_servers");
+        let counter = RecordKey::new("items", "item_uids");
+        const ADDS: u64 = 40;
+        let servers: Vec<_> = (0..2)
+            .map(|_| {
+                let folder = directory.0.clone();
+                let counter = counter.clone();
+                std::thread::spawn(move || {
+                    let mut store =
+                        RecordStore::new(Box::new(FileRecordBackend::open(folder).unwrap()));
+                    let mut conflicts = 0;
+                    let mut added = 0;
+                    while added < ADDS {
+                        let now = store.read(&counter).unwrap();
+                        let value = now
+                            .as_ref()
+                            .and_then(|record| record.data["n"].as_u64())
+                            .unwrap_or(0);
+                        let batch = RecordBatch::new()
+                            .expect_unchanged(counter.clone(), now)
+                            .put(counter.clone(), 1, json!({ "n": value + 1 }));
+                        match store.write(batch) {
+                            Ok(()) => added += 1,
+                            Err(retreat_engine_api::RecordError::Conflict { .. }) => conflicts += 1,
+                            Err(error) => panic!("{error}"),
+                        }
+                    }
+                    conflicts
+                })
+            })
+            .collect();
+        for server in servers {
+            server.join().unwrap();
+        }
+        let total = store(&directory).read(&counter).unwrap().unwrap().data["n"].as_u64();
+        assert_eq!(total, Some(2 * ADDS), "every add is kept");
+    }
+
+    #[test]
+    fn a_stale_write_is_refused_across_two_backends_on_one_folder() {
+        let directory = TempDirectory::new("stale");
+        let chest = RecordKey::new("account/alice", "town_chest");
+        let mut world_one = store(&directory);
+        let mut world_two = store(&directory);
+        let seen = world_one.read(&chest).unwrap();
+        world_two
+            .put(chest.clone(), 1, json!({"items": [1]}))
+            .unwrap();
+        let error = world_one
+            .write(
+                RecordBatch::new()
+                    .expect_unchanged(chest.clone(), seen)
+                    .put(chest.clone(), 1, json!({"items": []})),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error,
+            retreat_engine_api::RecordError::Conflict { key: chest.clone() }
+        );
+        assert_eq!(
+            world_one.read(&chest).unwrap().unwrap().data,
+            json!({"items": [1]})
+        );
         assert!(!directory.0.join(JOURNAL_FILE).exists());
     }
 

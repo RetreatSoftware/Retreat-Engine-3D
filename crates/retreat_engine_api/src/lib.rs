@@ -125,8 +125,9 @@ pub use predicted_spawn::{
 };
 pub use record_store::{
     MAX_OWNER_SEGMENTS, MAX_RECORD_SEGMENT_CHARS, MemoryRecordBackend, RECORD_FORMAT_VERSION,
-    RecordBackend, RecordBatch, RecordChange, RecordError, RecordKey, RecordStore, StoredRecord,
-    decode_record, encode_record, is_valid_record_owner, is_valid_record_segment,
+    RecordBackend, RecordBatch, RecordChange, RecordCommitError, RecordError, RecordExpectation,
+    RecordKey, RecordStore, SharedMemoryRecordBackend, StoredRecord, decode_record, encode_record,
+    is_valid_record_owner, is_valid_record_segment,
 };
 pub use save_store::{
     MemorySaveBackend, SAVE_FORMAT_VERSION, SaveBackend, SaveError, SaveStore, SavedData,

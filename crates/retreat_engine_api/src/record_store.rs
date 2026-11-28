@@ -19,6 +19,17 @@
 //! writes the batch to a journal first and finishes it on the next start. Anything that must
 //! change two records together (create a character and its name entry, a trade) is one batch.
 //!
+//! **Several servers, one store** (decided 2026-11-28, crawler plan: the town chest is one per
+//! account across all worlds, and each world is its own server process). Every world server of a
+//! game opens the same records, so two servers may change one record (an account's chest, the
+//! account's character list, the item id counter) at the same moment. Two rules keep that safe:
+//! a backend applies a commit and reads only while it holds the store's lock (the file backend
+//! locks `<folder>/.lock`, shared by every process), and a batch may carry **expectations**
+//! ([`RecordBatch::expect_unchanged`]): "this record is still exactly what I read" (or still
+//! absent). If another server changed it in between, the whole batch is refused with
+//! [`RecordError::Conflict`] and nothing is written; the module reads again and decides again.
+//! A record only one server writes (a character bound to one world) needs no expectation.
+//!
 //! **Format** of one stored document (the engine reads only the envelope):
 //!
 //! ```json
@@ -90,15 +101,53 @@ pub enum RecordChange {
     Delete { key: RecordKey },
 }
 
-/// Where records physically live. The engine has a file backend (native) and
-/// [`MemoryRecordBackend`]. Keys reaching a backend are always valid.
+/// "The record at `key` is still exactly `expected` (`None`: still absent)", checked by a backend
+/// at the moment of a commit ([`RecordBatch::expect_unchanged`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecordExpectation {
+    pub key: RecordKey,
+    pub expected: Option<StoredRecord>,
+}
+
+impl RecordExpectation {
+    /// Whether `stored` (the text at the key now, as a backend holds it) is what was expected. A
+    /// damaged record never matches. Pure; every backend calls it under its lock.
+    pub fn holds(&self, stored: Option<&str>) -> bool {
+        match (stored, &self.expected) {
+            (None, None) => true,
+            (Some(text), Some(expected)) => {
+                decode_record(&self.key, text).is_ok_and(|now| now == *expected)
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Why a backend did not commit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RecordCommitError {
+    /// An expectation did not hold (another server changed the record): nothing was written.
+    Conflict(RecordKey),
+    /// The storage failed (the message says how).
+    Backend(String),
+}
+
+/// Where records physically live. The engine has a file backend (native),
+/// [`MemoryRecordBackend`] and [`SharedMemoryRecordBackend`]. Keys reaching a backend are always
+/// valid. A backend that several servers share applies [`RecordBackend::commit`] and reads under
+/// one lock that all of them respect (see "Several servers, one store" in the module docs).
 pub trait RecordBackend: Send + Sync {
     /// The stored text at `key`, or `None`.
     fn read(&self, key: &RecordKey) -> Result<Option<String>, String>;
     /// The parts stored for `owner`, sorted.
     fn parts(&self, owner: &str) -> Result<Vec<String>, String>;
-    /// Applies every change or none of them, in order. A later change to the same key wins.
-    fn commit(&mut self, changes: &[RecordChange]) -> Result<(), String>;
+    /// When every expectation holds, applies every change or none of them, in order (a later
+    /// change to the same key wins); checking and applying happen under the store's lock.
+    fn commit(
+        &mut self,
+        expected: &[RecordExpectation],
+        changes: &[RecordChange],
+    ) -> Result<(), RecordCommitError>;
     /// Where the records are, for messages (`records/` or `memory`).
     fn location(&self) -> String;
 }
@@ -123,7 +172,18 @@ impl RecordBackend for MemoryRecordBackend {
             .collect())
     }
 
-    fn commit(&mut self, changes: &[RecordChange]) -> Result<(), String> {
+    fn commit(
+        &mut self,
+        expected: &[RecordExpectation],
+        changes: &[RecordChange],
+    ) -> Result<(), RecordCommitError> {
+        let now = |key: &RecordKey| self.records.get(key).map(String::as_str);
+        if let Some(failed) = expected
+            .iter()
+            .find(|expectation| !expectation.holds(now(&expectation.key)))
+        {
+            return Err(RecordCommitError::Conflict(failed.key.clone()));
+        }
         // Nothing can fail half way in memory, so applying in order is all-or-nothing.
         for change in changes {
             match change {
@@ -140,6 +200,46 @@ impl RecordBackend for MemoryRecordBackend {
 
     fn location(&self) -> String {
         "memory".to_string()
+    }
+}
+
+/// Records in memory that several stores share, like several world servers on one record folder
+/// (tests of modules whose records more than one server writes). Clones share the same records;
+/// the mutex is the store's lock.
+#[derive(Default, Debug, Clone)]
+pub struct SharedMemoryRecordBackend {
+    records: std::sync::Arc<std::sync::Mutex<MemoryRecordBackend>>,
+}
+
+impl SharedMemoryRecordBackend {
+    fn locked(&self) -> std::sync::MutexGuard<'_, MemoryRecordBackend> {
+        // A memory commit cannot stop half way, so even a lock poisoned by a panic holds whole
+        // records.
+        self.records
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+impl RecordBackend for SharedMemoryRecordBackend {
+    fn read(&self, key: &RecordKey) -> Result<Option<String>, String> {
+        self.locked().read(key)
+    }
+
+    fn parts(&self, owner: &str) -> Result<Vec<String>, String> {
+        self.locked().parts(owner)
+    }
+
+    fn commit(
+        &mut self,
+        expected: &[RecordExpectation],
+        changes: &[RecordChange],
+    ) -> Result<(), RecordCommitError> {
+        self.locked().commit(expected, changes)
+    }
+
+    fn location(&self) -> String {
+        "shared memory".to_string()
     }
 }
 
@@ -160,6 +260,9 @@ pub enum RecordError {
         found: u32,
         supported: u32,
     },
+    /// The batch expected the record unchanged ([`RecordBatch::expect_unchanged`]), but another
+    /// server changed it since it was read: nothing was written.
+    Conflict { key: RecordKey },
 }
 
 impl fmt::Display for RecordError {
@@ -193,6 +296,11 @@ impl fmt::Display for RecordError {
                 f,
                 "record `{key}` holds data version {found}, but its module reads up to \
                  {supported}; update the module"
+            ),
+            RecordError::Conflict { key } => write!(
+                f,
+                "record `{key}` was changed by another server since it was read, so nothing was \
+                 written; read it again and decide again"
             ),
         }
     }
@@ -294,9 +402,11 @@ enum BatchStep {
 }
 
 /// Changes that happen together or not at all ([`RecordStore::write`]). Steps apply in order.
+/// Expectations are checked first; one that fails refuses the whole batch.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RecordBatch {
     steps: Vec<BatchStep>,
+    expectations: Vec<RecordExpectation>,
 }
 
 impl RecordBatch {
@@ -321,6 +431,13 @@ impl RecordBatch {
         self.steps.push(BatchStep::DeleteOwner {
             owner: owner.into(),
         });
+        self
+    }
+
+    /// Writes the batch only if the record at `key` is still `expected` (what this server read;
+    /// `None`: still absent). Use it for every record another server may also change.
+    pub fn expect_unchanged(mut self, key: RecordKey, expected: Option<StoredRecord>) -> Self {
+        self.expectations.push(RecordExpectation { key, expected });
         self
     }
 
@@ -376,6 +493,9 @@ impl RecordStore {
 
     /// Applies the whole batch or nothing (see the module docs).
     pub fn write(&mut self, batch: RecordBatch) -> Result<(), RecordError> {
+        for expectation in &batch.expectations {
+            check_key(&expectation.key)?;
+        }
         let mut changes = Vec::new();
         for step in batch.steps {
             match step {
@@ -400,9 +520,11 @@ impl RecordStore {
         if changes.is_empty() {
             return Ok(());
         }
-        self.backend
-            .commit(&changes)
-            .map_err(|message| self.backend_error(message))
+        match self.backend.commit(&batch.expectations, &changes) {
+            Ok(()) => Ok(()),
+            Err(RecordCommitError::Conflict(key)) => Err(RecordError::Conflict { key }),
+            Err(RecordCommitError::Backend(message)) => Err(self.backend_error(message)),
+        }
     }
 
     /// Writes one record (a batch of one).
@@ -501,6 +623,48 @@ mod tests {
         assert!(store.parts("character/alice-1").unwrap().is_empty());
         let account = store.read(&key("account/alice", "account")).unwrap();
         assert_eq!(account.unwrap().data, json!({"n": 2}));
+    }
+
+    #[test]
+    fn a_batch_whose_expectation_another_server_broke_writes_nothing() {
+        let shared = SharedMemoryRecordBackend::default();
+        let mut world_one = RecordStore::new(Box::new(shared.clone()));
+        let mut world_two = RecordStore::new(Box::new(shared));
+        let chest = key("account/alice", "town_chest");
+        let other = key("character/alice-1", "bag");
+        assert!(world_one.read(&chest).unwrap().is_none());
+        // World two writes the chest after world one read it (absent).
+        world_two
+            .write(
+                RecordBatch::new()
+                    .expect_unchanged(chest.clone(), None)
+                    .put(chest.clone(), 1, json!({"items": [1]})),
+            )
+            .unwrap();
+        let stale = world_one.write(
+            RecordBatch::new()
+                .expect_unchanged(chest.clone(), None)
+                .put(chest.clone(), 1, json!({"items": [2]}))
+                .put(other.clone(), 1, json!({})),
+        );
+        let error = stale.unwrap_err();
+        assert_eq!(error, RecordError::Conflict { key: chest.clone() });
+        assert!(error.to_string().contains("read it again"), "{error}");
+        assert!(world_one.read(&other).unwrap().is_none(), "nothing written");
+        // Read again, decide again: now it holds.
+        let now = world_one.read(&chest).unwrap();
+        assert_eq!(now.as_ref().unwrap().data, json!({"items": [1]}));
+        world_one
+            .write(RecordBatch::new().expect_unchanged(chest.clone(), now).put(
+                chest.clone(),
+                1,
+                json!({"items": [1, 2]}),
+            ))
+            .unwrap();
+        assert_eq!(
+            world_two.read(&chest).unwrap().unwrap().data,
+            json!({"items": [1, 2]})
+        );
     }
 
     #[test]
