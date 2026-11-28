@@ -169,7 +169,12 @@ pub(crate) fn spawn_text_field(
         },
         node,
         Pickable::IGNORE,
-        Visibility::Hidden,
+        // Right from the first frame (a slow browser frame showed an empty field without its hint).
+        if text.is_empty() {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        },
     ))
     .with_child((
         Text::new(field.placeholder),
