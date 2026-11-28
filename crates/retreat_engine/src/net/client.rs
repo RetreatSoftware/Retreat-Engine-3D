@@ -262,8 +262,17 @@ struct ClientTransportBox(Box<dyn ClientTransport>);
 pub fn install_client(
     app: &mut App,
     config: ClientConfig,
-    transport: impl ClientTransport + 'static,
+    mut transport: impl ClientTransport + 'static,
 ) {
+    // A game that does not wait for a login token connects at once, as before deferred transports
+    // existed (the connection is made while the app starts, which can take long on a slow GPU).
+    let ready = app
+        .world()
+        .get_resource::<NetClientIdentity>()
+        .is_none_or(NetClientIdentity::ready);
+    if ready {
+        transport.start();
+    }
     app.init_resource::<NetInputQueue>();
     app.init_resource::<NetStateRegistry>();
     app.init_resource::<NetLocalClient>();
