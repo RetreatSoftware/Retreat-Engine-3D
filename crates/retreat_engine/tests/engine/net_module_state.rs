@@ -193,11 +193,8 @@ fn predicted_state_matches_the_server_without_corrections() {
     let (tick, _) = harness.server().last_broadcast.clone().expect("broadcast");
     harness.run_idle(1);
     assert!(tick > 0);
-    for index in 0..2 {
-        assert_eq!(
-            health(harness.client_apps[index].world_mut(), "hero"),
-            Some(5)
-        );
+    for client in &mut harness.client_apps {
+        assert_eq!(health(client.world_mut(), "hero"), Some(5));
     }
 }
 
@@ -316,8 +313,8 @@ fn removed_entities_are_retired_and_clients_follow_without_refusing_a_rollback()
     harness.run_idle(300);
     assert_converged(&mut harness);
     assert!(read_module_states(harness.server_app.world_mut()).is_empty());
-    for index in 0..2 {
-        let world = harness.client_apps[index].world_mut();
+    for client in &mut harness.client_apps {
+        let world = client.world_mut();
         assert_eq!(find(world, "hero"), None);
         assert_eq!(find(world, "villain"), None);
     }
@@ -356,8 +353,8 @@ fn state_on_a_physics_body_reaches_clients_that_lack_the_body() {
     ));
     harness.run_idle(300);
     assert_converged(&mut harness);
-    for index in 0..2 {
-        let world = harness.client_apps[index].world_mut();
+    for client in &mut harness.client_apps {
+        let world = client.world_mut();
         let player = find(world, "player").expect("created from the state");
         assert!(world.get::<PhysicsBody>(player).is_some());
         assert_eq!(world.get::<Health>(player), Some(&Health { points: 42 }));

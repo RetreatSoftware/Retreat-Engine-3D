@@ -671,8 +671,8 @@ fn a_ball_the_server_has_is_created_on_every_client_and_converges() {
     );
     run_plan(&mut harness, &Plan::new(), 150);
     harness.run_idle(300);
-    for index in 0..2 {
-        let ball = state_named(harness.client_apps[index].world_mut(), "ball");
+    for (index, client) in harness.client_apps.iter_mut().enumerate() {
+        let ball = state_named(client.world_mut(), "ball");
         assert_eq!(
             ball.description.shape,
             PhysicsShape::Ball { radius: 0.5 },
