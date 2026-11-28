@@ -148,7 +148,8 @@ pub use ui_grid::{
 };
 pub use ui_hud::{
     AppHudExt, HUD_LINE_HEIGHT, HUD_PANEL_PADDING, HUD_TEXT_WIDTH, HudAnchor, HudBlock, HudKind,
-    HudOccupied, HudState, HudStyle, HudWidget, UiHud, compute_hud_layout,
+    HudOccupied, HudState, HudStyle, HudWidget, UiHud, compute_hud_layout, hud_occupied_by_panels,
+    top_area_bottom,
 };
 pub use ui_panel::{
     AppUiExt, BUTTON_HEIGHT, ButtonRect, COLUMN_BUTTON_WIDTH, FieldRect, MIN_BUTTON_HEIGHT,

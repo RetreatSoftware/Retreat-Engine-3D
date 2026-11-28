@@ -171,6 +171,53 @@ impl UiHud {
     }
 }
 
+/// The height the shown button panels take at the top corners (stacked panels included), margin
+/// excluded: where the HUD's top-corner text starts. Pure; the one rule the HUD and grid windows
+/// share.
+pub fn hud_occupied_by_panels(panels: &crate::UiPanels, viewport: Vec2) -> HudOccupied {
+    let mut occupied = HudOccupied::default();
+    for (id, layout) in panels.layouts(viewport) {
+        let Some(panel) = panels.panel(id) else {
+            continue;
+        };
+        let height = layout.bounds.top + layout.bounds.height - PANEL_MARGIN;
+        match panel.anchor {
+            crate::PanelAnchor::TopLeft => occupied.top_left = occupied.top_left.max(height),
+            crate::PanelAnchor::TopRight => occupied.top_right = occupied.top_right.max(height),
+            crate::PanelAnchor::Center => {}
+        }
+    }
+    occupied
+}
+
+/// How far down the top of the view is taken by what is shown there: the button panels at the top
+/// corners and the HUD text anchored at the top (left, center, right; laid out below the panels
+/// exactly as the HUD draws it). Grid windows start below it, so they never cover a button or a
+/// label. Computed from what is shown: a hidden panel or widget takes no room. Pure.
+pub fn top_area_bottom(panels: &crate::UiPanels, hud: &[&HudState], viewport: Vec2) -> f32 {
+    let panels_bottom = panels
+        .layouts(viewport)
+        .iter()
+        .filter(|(id, _)| {
+            panels
+                .panel(id)
+                .is_some_and(|panel| panel.anchor != crate::PanelAnchor::Center)
+        })
+        .map(|(_, layout)| layout.bounds.top + layout.bounds.height)
+        .fold(0.0, f32::max);
+    let hud_bottom = compute_hud_layout(hud, viewport, hud_occupied_by_panels(panels, viewport))
+        .iter()
+        .filter(|block| {
+            matches!(
+                block.anchor,
+                HudAnchor::TopLeft | HudAnchor::TopCenter | HudAnchor::TopRight
+            )
+        })
+        .map(|block| block.rect.top + block.rect.height)
+        .fold(0.0, f32::max);
+    panels_bottom.max(hud_bottom)
+}
+
 /// How much height the button panels take at the top corners, margin excluded.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct HudOccupied {
@@ -501,5 +548,66 @@ mod tests {
             HudOccupied::default(),
         );
         assert_eq!(rect(&blocks, "a").width, 300.0 - 2.0 * PANEL_MARGIN);
+    }
+
+    #[test]
+    fn grid_windows_start_below_every_shown_panel_and_top_label() {
+        use crate::{PanelAnchor, PanelDirection, UiButtonEntry, UiPanel, UiPanels};
+        const ENTRIES: &[UiButtonEntry] = &[UiButtonEntry {
+            id: "a",
+            label: "A",
+            command_line: "x.a",
+        }];
+        let mut panels = UiPanels::default();
+        panels.register(UiPanel {
+            id: "tools",
+            title: None,
+            anchor: PanelAnchor::TopLeft,
+            direction: PanelDirection::Column,
+            entries: ENTRIES,
+            visible: true,
+        });
+        let panel_bottom =
+            panels.layouts(VIEW)[0].1.bounds.top + panels.layouts(VIEW)[0].1.bounds.height;
+        // Only the panel: windows start below it.
+        assert_eq!(top_area_bottom(&panels, &[], VIEW), panel_bottom);
+        // A label under the panel at the same corner (the area name): windows start below it.
+        let area = text("area", HudAnchor::TopLeft);
+        let blocks = layout(
+            std::slice::from_ref(&area),
+            VIEW,
+            hud_occupied_by_panels(&panels, VIEW),
+        );
+        let label = rect(&blocks, "area");
+        assert!(label.top >= panel_bottom);
+        assert_eq!(
+            top_area_bottom(&panels, &[&area], VIEW),
+            label.top + label.height
+        );
+        // Text in the middle or at the bottom takes no room at the top; a hidden label neither.
+        let middle = text("notice", HudAnchor::Center);
+        let low = text("hint", HudAnchor::BottomLeft);
+        let mut hidden = text("area", HudAnchor::TopLeft);
+        hidden.visible = false;
+        assert_eq!(
+            top_area_bottom(&panels, &[&middle, &low, &hidden], VIEW),
+            panel_bottom
+        );
+        // Nothing shown at the top: nothing reserved.
+        assert_eq!(top_area_bottom(&UiPanels::default(), &[&middle], VIEW), 0.0);
+        // In a short view the panel shrinks and the label follows it up.
+        let short = Vec2::new(1264.0, 400.0);
+        let short_label = rect(
+            &layout(
+                std::slice::from_ref(&area),
+                short,
+                hud_occupied_by_panels(&panels, short),
+            ),
+            "area",
+        );
+        assert_eq!(
+            top_area_bottom(&panels, &[&area], short),
+            short_label.top + short_label.height
+        );
     }
 }

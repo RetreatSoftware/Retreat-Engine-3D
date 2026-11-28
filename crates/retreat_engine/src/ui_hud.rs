@@ -6,8 +6,8 @@
 use bevy::prelude::*;
 use retreat_engine_api::{
     AppCommandExt, CommandArgs, CommandOutcome, CommandResult, HUD_PANEL_PADDING, HudAnchor,
-    HudBlock, HudKind, HudOccupied, HudState, HudStyle, PANEL_MARGIN, PanelAnchor, PanelRect,
-    UiHud, UiPanels, compute_hud_layout,
+    HudBlock, HudKind, HudState, HudStyle, PanelRect, UiHud, UiPanels, compute_hud_layout,
+    hud_occupied_by_panels,
 };
 
 const CROSSHAIR_THICKNESS: f32 = 2.0;
@@ -63,23 +63,6 @@ impl Plugin for UiHudPlugin {
 #[derive(Component)]
 struct HudRoot;
 
-/// The height the shown button panels take at the top corners (stacked panels included).
-fn occupied_by_panels(panels: &UiPanels, viewport: Vec2) -> HudOccupied {
-    let mut occupied = HudOccupied::default();
-    for (id, layout) in panels.layouts(viewport) {
-        let Some(panel) = panels.panel(id) else {
-            continue;
-        };
-        let height = layout.bounds.top + layout.bounds.height - PANEL_MARGIN;
-        match panel.anchor {
-            PanelAnchor::TopLeft => occupied.top_left = occupied.top_left.max(height),
-            PanelAnchor::TopRight => occupied.top_right = occupied.top_right.max(height),
-            PanelAnchor::Center => {}
-        }
-    }
-    occupied
-}
-
 fn node_at(rect: PanelRect, justify: JustifyContent) -> Node {
     Node {
         position_type: PositionType::Absolute,
@@ -122,7 +105,7 @@ fn rebuild_hud_when_needed(
         commands.entity(root).despawn();
     }
     let widgets: Vec<&HudState> = hud.widgets().collect();
-    let occupied = occupied_by_panels(&panels, viewport);
+    let occupied = hud_occupied_by_panels(&panels, viewport);
     for block in compute_hud_layout(&widgets, viewport, occupied) {
         spawn_block(&mut commands, &hud, &block);
     }

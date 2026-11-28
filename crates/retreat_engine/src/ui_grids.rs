@@ -20,9 +20,9 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use retreat_engine_api::{
     AppCommandExt, CommandArgs, CommandOutcome, CommandResult, GridLayout, GridWindowRect,
-    PanelAnchor, PanelRect, UiGridDrag, UiGridItem, UiGridShape, UiGridView, UiGrids, UiPanels,
+    HudState, PanelRect, UiGridDrag, UiGridItem, UiGridShape, UiGridView, UiGrids, UiHud, UiPanels,
     UiTextFields, cell_at, cells_rect, compute_grid_layout, drop_command_line, drop_origin,
-    fits_at, item_at, item_rect, tooltip_rect,
+    fits_at, item_at, item_rect, tooltip_rect, top_area_bottom,
 };
 
 use crate::asset_paths::{load_asset, resolve_asset_location};
@@ -188,21 +188,12 @@ fn viewport(cameras: &Query<&Camera, With<Camera3d>>) -> Option<Vec2> {
     cameras.iter().find_map(Camera::logical_viewport_size)
 }
 
-/// How far down the button panels at the top corners reach: the windows stay below them.
-fn panels_top(panels: Option<&UiPanels>, viewport: Vec2) -> f32 {
-    let Some(panels) = panels else {
-        return 0.0;
-    };
-    panels
-        .layouts(viewport)
-        .iter()
-        .filter(|(id, _)| {
-            panels
-                .panel(id)
-                .is_some_and(|panel| panel.anchor != PanelAnchor::Center)
-        })
-        .map(|(_, layout)| layout.bounds.top + layout.bounds.height)
-        .fold(0.0, f32::max)
+/// How far down the top of the view is taken (button panels and HUD text at the top): the windows
+/// stay below it (the contract's `top_area_bottom`).
+fn reserved_top(panels: Option<&UiPanels>, hud: Option<&UiHud>, viewport: Vec2) -> f32 {
+    let no_panels = UiPanels::default();
+    let widgets: Vec<&HudState> = hud.map(|hud| hud.widgets().collect()).unwrap_or_default();
+    top_area_bottom(panels.unwrap_or(&no_panels), &widgets, viewport)
 }
 
 fn current_layout(grids: &UiGrids, viewport: Vec2, reserved_top: f32) -> GridLayout {
@@ -380,6 +371,7 @@ fn rebuild_windows_when_needed(
     mut commands: Commands,
     grids: Res<UiGrids>,
     panels: Option<Res<UiPanels>>,
+    hud: Option<Res<UiHud>>,
     cameras: Query<&Camera, With<Camera3d>>,
     roots: Query<Entity, With<GridWindowsRoot>>,
     asset_server: Option<Res<AssetServer>>,
@@ -389,7 +381,8 @@ fn rebuild_windows_when_needed(
     let Some(viewport) = viewport(&cameras) else {
         return;
     };
-    let panels_changed = panels.as_ref().is_some_and(|panels| panels.is_changed());
+    let panels_changed = panels.as_ref().is_some_and(|panels| panels.is_changed())
+        || hud.as_ref().is_some_and(|hud| hud.is_changed());
     if !grids.is_changed()
         && !panels_changed
         && last
@@ -398,7 +391,7 @@ fn rebuild_windows_when_needed(
     {
         return;
     }
-    let reserved_top = panels_top(panels.as_deref(), viewport);
+    let reserved_top = reserved_top(panels.as_deref(), hud.as_deref(), viewport);
     let shown = windows_shown(&grids, viewport, reserved_top);
     if last.as_ref() == Some(&shown) {
         return;
@@ -572,6 +565,7 @@ fn rebuild_overlay_when_needed(
     mut commands: Commands,
     grids: Res<UiGrids>,
     panels: Option<Res<UiPanels>>,
+    hud: Option<Res<UiHud>>,
     cameras: Query<&Camera, With<Camera3d>>,
     roots: Query<Entity, With<GridOverlayRoot>>,
     asset_server: Option<Res<AssetServer>>,
@@ -581,11 +575,12 @@ fn rebuild_overlay_when_needed(
     let Some(viewport) = viewport(&cameras) else {
         return;
     };
-    let panels_changed = panels.as_ref().is_some_and(|panels| panels.is_changed());
+    let panels_changed = panels.as_ref().is_some_and(|panels| panels.is_changed())
+        || hud.as_ref().is_some_and(|hud| hud.is_changed());
     if !grids.is_changed() && !panels_changed && last.is_some() {
         return;
     }
-    let reserved_top = panels_top(panels.as_deref(), viewport);
+    let reserved_top = reserved_top(panels.as_deref(), hud.as_deref(), viewport);
     let shown = OverlayShown {
         hovered: grids.hovered().map(|(g, i)| (g.to_string(), i.to_string())),
         drag: grids.drag().cloned(),
@@ -834,6 +829,7 @@ fn handle_pointer(
     mut grids: ResMut<UiGrids>,
     mut pending: ResMut<PendingGridDrops>,
     panels: Option<Res<UiPanels>>,
+    hud: Option<Res<UiHud>>,
     cameras: Query<&Camera, With<Camera3d>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mouse: Option<Res<ButtonInput<MouseButton>>>,
@@ -874,7 +870,11 @@ fn handle_pointer(
     ) else {
         return;
     };
-    let layout = current_layout(&grids, viewport, panels_top(panels.as_deref(), viewport));
+    let layout = current_layout(
+        &grids,
+        viewport,
+        reserved_top(panels.as_deref(), hud.as_deref(), viewport),
+    );
     let hit = hit_at(&grids, &layout, cursor);
     if scrolled != 0.0
         && let Some(window) = window_under(&layout, cursor)
