@@ -1,7 +1,7 @@
 //! UI toolkit, engine side: draws the contract's `UiPanels` with `bevy_ui` (Bevy 0.20 widgets) and
 //! runs a button's command line when it is activated. Text fields are made in `ui_text_fields.rs`. This is the one place that turns panel
 //! descriptions into UI nodes; where each button goes is decided by the contract's pure
-//! `compute_panel_layout`.
+//! `compute_panel_layout`, stacked per corner by `UiPanels::layouts`.
 //!
 //! The UI is rebuilt as a whole when the `UiPanels` resource changes (show, hide a panel or an
 //! entry) or when the view size changes, so hiding anything re-flows what is left.
@@ -27,7 +27,7 @@ use bevy::ui::Pressed;
 use bevy::ui_widgets::{Activate, Button};
 use retreat_engine_api::{
     AppCommandExt, CommandArgs, CommandOutcome, CommandRegistry, CommandResult, PanelRect,
-    UiButtonEntry, UiPanels, UiTextFields, compute_panel_layout,
+    UiButtonEntry, UiPanels, UiTextFields,
 };
 
 use crate::command_dispatch::dispatch_command_line;
@@ -177,25 +177,12 @@ fn rebuild_panels_when_needed(
     for root in &roots {
         commands.entity(root).despawn();
     }
-    for id in panels.ids() {
-        if !panels.is_visible(id) {
-            continue;
-        }
+    // Panels at one corner stack (`UiPanels::layouts`).
+    for (id, layout) in panels.layouts(viewport) {
         let Some(panel) = panels.panel(id) else {
             continue;
         };
         let entries = panels.visible_entries(id);
-        let layout = compute_panel_layout(
-            panels.text_fields(id),
-            &entries,
-            panel.title.is_some(),
-            panel.anchor,
-            panel.direction,
-            viewport,
-        );
-        if layout.is_empty() {
-            continue;
-        }
         commands
             .spawn((
                 Name::new(panel_root_name(id)),

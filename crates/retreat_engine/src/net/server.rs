@@ -31,7 +31,7 @@ use bevy::prelude::*;
 use retreat_engine_api::{
     MAX_REWIND_TICKS, NetAllowedCommands, NetClientJoined, NetClientLeft, NetClientRejoined,
     NetCommandSender, NetIdentity, NetIdentityDecision, NetIdentityRequest, NetInputTick,
-    NetPlayerIds, NetStateRegistry, run_command_line,
+    NetPlayerIds, NetPrivateTo, NetStateRegistry, RetiredEntity, run_command_line,
 };
 
 use super::body_state::{BodyState, read_replicated_body_states};
@@ -592,9 +592,16 @@ fn server_after_tick(world: &mut World) {
         // At least one message even when there is nothing to list, so the client hears the tick.
         let pieces = split_into_chunks(listed);
         let chunks = pieces.len() as u16;
+        let private = private_entities(world);
         for (index, piece) in pieces.into_iter().enumerate() {
             // Encoded per client: each hears how far its own inputs were run.
             for id in &known {
+                let states: Vec<ModuleState> = piece
+                    .states
+                    .iter()
+                    .filter(|state| private.get(&state.entity).is_none_or(|owner| owner == id))
+                    .cloned()
+                    .collect();
                 let mut server = world.resource_mut::<NetServer>();
                 let input_tick = server
                     .connections
@@ -607,7 +614,7 @@ fn server_after_tick(world: &mut World) {
                     chunk: index as u16,
                     chunks,
                     bodies: piece.bodies.clone(),
-                    states: piece.states.clone(),
+                    states,
                 });
                 server.stats.bytes_sent += bytes.len() as u64;
                 transport.0.send(*id, bytes);
@@ -618,6 +625,16 @@ fn server_after_tick(world: &mut World) {
         server.last_broadcast = Some((tick, state.bodies));
     }
     world.insert_non_send(transport);
+}
+
+/// Names of the entities whose module states go to one client only (`NetPrivateTo`), and that
+/// client.
+fn private_entities(world: &mut World) -> BTreeMap<String, ConnectionId> {
+    let mut private = world.query_filtered::<(&Name, &NetPrivateTo), Without<RetiredEntity>>();
+    private
+        .iter(world)
+        .map(|(name, to)| (name.as_str().to_string(), to.client_id))
+        .collect()
 }
 
 /// The module states to broadcast: all of them, except values too large for one datagram, which

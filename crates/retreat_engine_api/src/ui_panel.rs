@@ -134,6 +134,20 @@ impl PanelLayout {
     pub fn is_empty(&self) -> bool {
         self.fields.is_empty() && self.buttons.is_empty()
     }
+
+    /// Moves everything down by `by` pixels.
+    pub fn shift_down(&mut self, by: f32) {
+        self.bounds.top += by;
+        if let Some(title) = &mut self.title {
+            title.top += by;
+        }
+        for field in &mut self.fields {
+            field.rect.top += by;
+        }
+        for button in &mut self.buttons {
+            button.rect.top += by;
+        }
+    }
 }
 
 /// The entries that are not hidden, in panel order.
@@ -365,6 +379,42 @@ impl UiPanels {
             );
         }
         state.text_fields = fields;
+    }
+
+    /// Where every shown panel goes, in id order: each one's own [`compute_panel_layout`], and
+    /// panels at the same top corner stacked downward (in id order, [`PANEL_GAP`] apart) so they
+    /// never overlap; a hidden or empty panel takes no place. Centered panels do not stack. Pure.
+    pub fn layouts(&self, viewport: Vec2) -> Vec<(&'static str, PanelLayout)> {
+        let mut below_left = 0.0;
+        let mut below_right = 0.0;
+        let mut layouts = Vec::new();
+        for id in self.ids() {
+            let Some(panel) = self.panel(id).filter(|_| self.is_visible(id)) else {
+                continue;
+            };
+            let mut layout = compute_panel_layout(
+                self.text_fields(id),
+                &self.visible_entries(id),
+                panel.title.is_some(),
+                panel.anchor,
+                panel.direction,
+                viewport,
+            );
+            if layout.is_empty() {
+                continue;
+            }
+            let below = match panel.anchor {
+                PanelAnchor::TopLeft => Some(&mut below_left),
+                PanelAnchor::TopRight => Some(&mut below_right),
+                PanelAnchor::Center => None,
+            };
+            if let Some(below) = below {
+                layout.shift_down(*below);
+                *below += layout.bounds.height + PANEL_GAP;
+            }
+            layouts.push((id, layout));
+        }
+        layouts
     }
 
     /// All panel ids, sorted.
@@ -926,5 +976,58 @@ mod tests {
         panels.register(panel(PanelDirection::Row, PanelAnchor::TopLeft));
         let unknown = panels.entries_with_unknown_commands(|id| id == "x.a" || id == "x.c");
         assert_eq!(unknown, vec![("menu/b".to_string(), "x.b".to_string())]);
+    }
+}
+
+#[cfg(test)]
+mod stacking_tests {
+    use super::*;
+
+    const ONE: &[UiButtonEntry] = &[UiButtonEntry {
+        id: "go",
+        label: "Go",
+        command_line: "x.go",
+    }];
+
+    fn panel(id: &'static str, anchor: PanelAnchor) -> UiPanel {
+        UiPanel {
+            id,
+            title: None,
+            anchor,
+            direction: PanelDirection::Column,
+            entries: ONE,
+            visible: true,
+        }
+    }
+
+    #[test]
+    fn panels_at_one_corner_stack_and_a_hidden_one_leaves_no_gap() {
+        let mut panels = UiPanels::default();
+        panels.register(panel("a_first", PanelAnchor::TopLeft));
+        panels.register(panel("b_second", PanelAnchor::TopLeft));
+        panels.register(panel("c_third", PanelAnchor::TopLeft));
+        panels.register(panel("d_right", PanelAnchor::TopRight));
+        let viewport = Vec2::new(1280.0, 720.0);
+        let tops = |panels: &UiPanels| -> Vec<(&str, f32)> {
+            panels
+                .layouts(viewport)
+                .into_iter()
+                .map(|(id, layout)| (id, layout.bounds.top))
+                .collect()
+        };
+        let step = BUTTON_HEIGHT + PANEL_GAP;
+        assert_eq!(
+            tops(&panels),
+            vec![
+                ("a_first", PANEL_MARGIN),
+                ("b_second", PANEL_MARGIN + step),
+                ("c_third", PANEL_MARGIN + 2.0 * step),
+                ("d_right", PANEL_MARGIN),
+            ]
+        );
+        panels.set_visible("b_second", false).unwrap();
+        assert_eq!(tops(&panels)[1], ("c_third", PANEL_MARGIN + step));
+        let layouts = panels.layouts(viewport);
+        assert_eq!(layouts[1].1.buttons[0].rect.top, PANEL_MARGIN + step);
     }
 }

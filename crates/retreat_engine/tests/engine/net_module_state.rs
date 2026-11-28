@@ -9,8 +9,8 @@ use retreat_engine::net::server::NetServer;
 use retreat_engine::net::simulate_tick;
 use retreat_engine::{RollbackError, capture_physics, compute_state_hash, restore_physics};
 use retreat_engine_api::{
-    AppCommandExt, AppNetStateExt, CommandArgs, CommandOutcome, CommandResult, NetState,
-    PhysicsBody, RemoveNetEntity, RetiredEntity, encode_net_state,
+    AppCommandExt, AppNetStateExt, CommandArgs, CommandOutcome, CommandResult, NetPrivateTo,
+    NetState, PhysicsBody, RemoveNetEntity, RetiredEntity, encode_net_state,
 };
 use serde::{Deserialize, Serialize};
 
@@ -556,4 +556,45 @@ fn an_entity_known_only_by_its_state_gets_its_body_without_a_double() {
         assert_eq!(named(app.world_mut(), "late"), [(true, Some(7))]);
     }
     assert_eq!(harness.client(0).stats.refused_rollbacks, 0);
+}
+
+#[test]
+fn private_state_reaches_only_its_client_and_follows_a_change_of_owner() {
+    let mut harness = harness(10, link(4, 0, 0.0));
+    send(&mut harness, 0, "test.add bag 3");
+    send(&mut harness, 0, "test.add public 1");
+    harness.run_idle(60);
+    let first = harness.client(0).id;
+    let second = harness.client(1).id;
+    let bag = find(harness.server_app.world_mut(), "bag").expect("bag");
+    harness
+        .server_app
+        .world_mut()
+        .entity_mut(bag)
+        .insert(NetPrivateTo { client_id: second });
+    // A full state (at most every 30 broadcasts) removes it from the first client.
+    harness.run_idle(120);
+    assert_eq!(health(harness.client_apps[1].world_mut(), "bag"), Some(3));
+    assert_eq!(health(harness.client_apps[0].world_mut(), "bag"), None);
+    assert_eq!(
+        health(harness.client_apps[0].world_mut(), "public"),
+        Some(1)
+    );
+    // Changes go to the owner only.
+    server_set_health(&mut harness, "bag", 9);
+    harness.run_idle(30);
+    assert_eq!(health(harness.client_apps[1].world_mut(), "bag"), Some(9));
+    assert_eq!(health(harness.client_apps[0].world_mut(), "bag"), None);
+    // The owner changes (a takeover): the new owner gets it, the old one loses it.
+    harness
+        .server_app
+        .world_mut()
+        .entity_mut(bag)
+        .insert(NetPrivateTo { client_id: first });
+    harness.run_idle(120);
+    assert_eq!(health(harness.client_apps[0].world_mut(), "bag"), Some(9));
+    assert_eq!(health(harness.client_apps[1].world_mut(), "bag"), None);
+    for index in 0..2 {
+        assert_eq!(harness.client(index).stats.refused_rollbacks, 0);
+    }
 }

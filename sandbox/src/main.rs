@@ -7,6 +7,7 @@
 
 mod drop_box;
 mod greeting;
+mod item_grids;
 mod pickup;
 mod scene;
 mod stripes_material;
@@ -36,6 +37,8 @@ fn add_sandbox_plugins(app: &mut App) {
     app.add_plugins(pickup::PickupPlugin);
     // A demo text field (`greeting` panel, `sandbox.greet`).
     app.add_plugins(greeting::GreetingPlugin);
+    // A demo of item grid windows (`sandbox.grids_show`, `sandbox.grid_put`).
+    app.add_plugins(item_grids::ItemGridsPlugin);
     app.add_plugins((
         scene::SandboxScenePlugin,
         stripes_material::StripesMaterialPlugin,

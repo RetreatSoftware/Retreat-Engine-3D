@@ -1,0 +1,73 @@
+# Item grid windows (crawler plan CE2): icons, slots, drag and drop with rotation, a refused drop,
+# scrolling and tooltips, through the same commands the mouse uses.
+# Run: cargo run -p retreat_sandbox -- --headless --commands scripts/verify/item_grids.cmds
+# Expected pictures:
+#   item_grids_shown.png:    three dark windows side by side in the middle: "Equipment" (slots
+#                            "Head" with a grey "helm", and "Hand"), "Bag" (6x4 cells: a tall
+#                            "sword" with the checker icon at the left, a blue 2x2 "shield", a red
+#                            "potion" bottom right, "Gold: 120" in yellow below), "Chest" (4 rows
+#                            shown, a scroll bar at its right).
+#   item_grids_tooltip.png:  a black box right of the shield: "shield" in gold, "2x2 cells" below.
+#   item_grids_preview.png:  the sword turned flat (3x1, icon turned) over a green row of the bag;
+#                            the sword's own place is faded.
+#   item_grids_blocked.png:  the flat sword over the shield, shown red.
+#   item_grids_moved.png:    the sword lies flat at the bottom row of the bag, the shield is in the
+#                            Hand slot, the bag has room where both were.
+#   item_grids_scrolled.png: the chest shows rows 6 to 9: the green "gem" in its bottom row, the
+#                            scroll thumb lower.
+
+sandbox.grids_show
+wait_until 60 assert.ui_grid_shown demo_bag
+wait_until 600 assert.ui_images_loaded
+wait 2
+assert.ui_grid_item demo_bag sword 0 0 upright
+assert.ui_grid_count demo_gear 1
+snapshot item_grids_shown
+
+ui.hover_item demo_bag shield
+wait 1
+assert.ui_tooltip 2x2 cells
+snapshot item_grids_tooltip
+ui.unhover
+
+# Take the sword, turn it, show where it would go.
+ui.drag_start demo_bag sword
+assert.ui_dragging sword
+ui.drag_rotate
+ui.drag_over demo_bag 1 3
+wait 2
+snapshot item_grids_preview
+# Over the shield it does not fit: red.
+ui.drag_over demo_bag 2 1
+wait 2
+snapshot item_grids_blocked
+ui.drag_drop demo_bag 1 3
+wait 2
+assert.ui_dragging nothing
+assert.ui_grid_item demo_bag sword 1 3 rotated
+
+# Into a slot.
+ui.drag_start demo_bag shield
+ui.drag_drop demo_gear 1 0
+wait 2
+assert.ui_grid_absent demo_bag shield
+assert.ui_grid_item demo_gear shield 1 0
+snapshot item_grids_moved
+
+# Escape-like cancel leaves the item where it was.
+ui.drag_start demo_bag potion
+ui.drag_cancel
+assert.ui_grid_item demo_bag potion 5 3
+
+ui.scroll_grid demo_chest 99
+wait 2
+assert.ui_grid_scroll demo_chest 8
+ui.scroll_grid demo_chest 6
+wait 2
+assert.ui_grid_scroll demo_chest 6
+snapshot item_grids_scrolled
+
+sandbox.grids_hide
+wait 2
+assert.ui_grid_hidden demo_bag
+quit

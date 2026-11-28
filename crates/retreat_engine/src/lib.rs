@@ -41,6 +41,7 @@ mod snapshot;
 mod sound_events;
 mod state_hash;
 mod storage;
+mod ui_grids;
 mod ui_hud;
 mod ui_panels;
 mod ui_text_fields;
@@ -106,6 +107,7 @@ pub use state_hash::{
     LastStateHash, StateHashPlugin, compute_state_hash, format_state_hash, parse_state_hash,
 };
 pub use storage::StorageCommandsPlugin;
+pub use ui_grids::UiGridsPlugin;
 pub use ui_hud::UiHudPlugin;
 pub use ui_panels::{UiClickTarget, UiPanelsPlugin};
 pub use visual_effects::{EFFECT_NAME_PREFIX, EffectLog, VisualEffectsPlugin};
@@ -298,6 +300,7 @@ impl Plugin for RetreatEnginePlugin {
             RenderSmoothingPlugin,
             VisualsPlugin,
             UiHudPlugin,
+            UiGridsPlugin,
             MotionRecordPlugin,
             NetPosePlugin,
             VisualEffectsPlugin,

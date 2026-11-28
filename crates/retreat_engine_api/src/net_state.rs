@@ -61,6 +61,16 @@ pub trait NetState: Component + Clone + PartialEq + Serialize + DeserializeOwned
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RemoveNetEntity;
 
+/// On a replicated entity, on the server: its module states are sent only to this client (a
+/// player's bag, chest or balance: private, and no bandwidth for the others). The server keeps and
+/// decides them as usual; other clients never create the entity. Not replicated itself; when a
+/// player's connection changes (a takeover), the module that owns the entity updates the client id.
+/// Bodies (physics) are never private.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NetPrivateTo {
+    pub client_id: u32,
+}
+
 /// Set by the engine on a removed entity until it is despawned: it is hidden, not replicated and not
 /// hashed, and a rewind can bring it back. Module systems skip it with `Without<RetiredEntity>`.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]

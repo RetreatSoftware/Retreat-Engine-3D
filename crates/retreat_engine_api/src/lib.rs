@@ -50,6 +50,8 @@
 //!
 //! UI: [`UiPanel`] declares a panel of text fields ([`UiTextField`]) and buttons that run command
 //! lines; its layout is the pure [`compute_panel_layout`]; [`UiTextFields`] holds what was typed.
+//! [`UiGrids`] shows item grid windows (icons, drag and drop with rotation, scrolling, tooltips);
+//! their layout is the pure [`compute_grid_layout`].
 //!
 //! Physics: an entity with a [`PhysicsBody`] becomes a rigid body; the types name no physics
 //! library, so modules do not depend on one. [`PhysicsVelocity`] reads a body's velocity,
@@ -78,6 +80,7 @@ mod save_store;
 mod simulation_rng;
 mod sound_events;
 mod sound_playback;
+mod ui_grid;
 mod ui_hud;
 mod ui_panel;
 mod visual_effects;
@@ -109,8 +112,8 @@ pub use net::{
 };
 pub use net_pose::NetPose;
 pub use net_state::{
-    AppNetStateExt, NetState, NetStateRegistry, NetStateType, RemoveNetEntity, RetiredEntity,
-    decode_net_state, encode_net_state,
+    AppNetStateExt, NetPrivateTo, NetState, NetStateRegistry, NetStateType, RemoveNetEntity,
+    RetiredEntity, decode_net_state, encode_net_state,
 };
 pub use physics_body::{
     PhysicsBody, PhysicsBodyKind, PhysicsControlSystems, PhysicsShape, PhysicsVelocity,
@@ -135,6 +138,13 @@ pub use sound_events::{
     SoundMix, SoundPosition, spatial_mix,
 };
 pub use sound_playback::{MAX_SOUND_VOLUME, SoundKind, SoundPlayback};
+pub use ui_grid::{
+    GRID_CELL, GRID_FOOTER_HEIGHT, GRID_PADDING, GRID_SCROLLBAR_WIDTH, GRID_TITLE_HEIGHT,
+    GRID_WINDOW_GAP, GridLayout, GridWindowRect, MIN_GRID_CELL, TOOLTIP_LINE_HEIGHT, TOOLTIP_WIDTH,
+    UiGridDrag, UiGridItem, UiGridShape, UiGridSlot, UiGridView, UiGrids, UiTooltipLine, cell_at,
+    cells_rect, compute_grid_layout, drawn_size, drop_command_line, drop_origin, fits_at, item_at,
+    item_rect, slot_at, tooltip_rect,
+};
 pub use ui_hud::{
     AppHudExt, HUD_LINE_HEIGHT, HUD_PANEL_PADDING, HUD_TEXT_WIDTH, HudAnchor, HudBlock, HudKind,
     HudOccupied, HudState, HudStyle, HudWidget, UiHud, compute_hud_layout,

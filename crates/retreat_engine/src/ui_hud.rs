@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use retreat_engine_api::{
     AppCommandExt, CommandArgs, CommandOutcome, CommandResult, HUD_PANEL_PADDING, HudAnchor,
     HudBlock, HudKind, HudOccupied, HudState, HudStyle, PANEL_MARGIN, PanelAnchor, PanelRect,
-    UiHud, UiPanels, compute_hud_layout, compute_panel_layout,
+    UiHud, UiPanels, compute_hud_layout,
 };
 
 const CROSSHAIR_THICKNESS: f32 = 2.0;
@@ -63,24 +63,13 @@ impl Plugin for UiHudPlugin {
 #[derive(Component)]
 struct HudRoot;
 
-/// The height the shown button panels take at the top corners.
+/// The height the shown button panels take at the top corners (stacked panels included).
 fn occupied_by_panels(panels: &UiPanels, viewport: Vec2) -> HudOccupied {
     let mut occupied = HudOccupied::default();
-    for id in panels.ids() {
-        let Some(panel) = panels.panel(id).filter(|_| panels.is_visible(id)) else {
+    for (id, layout) in panels.layouts(viewport) {
+        let Some(panel) = panels.panel(id) else {
             continue;
         };
-        let layout = compute_panel_layout(
-            panels.text_fields(id),
-            &panels.visible_entries(id),
-            panel.title.is_some(),
-            panel.anchor,
-            panel.direction,
-            viewport,
-        );
-        if layout.is_empty() {
-            continue;
-        }
         let height = layout.bounds.top + layout.bounds.height - PANEL_MARGIN;
         match panel.anchor {
             PanelAnchor::TopLeft => occupied.top_left = occupied.top_left.max(height),
