@@ -15,7 +15,8 @@
 //! run inside another command, which the registry forbids.)
 //!
 //! Commands: `ui.show_panel <panel>`, `ui.hide_panel <panel>`, `ui.hide_entry <panel> <entry>`,
-//! `ui.show_entry <panel> <entry>`, `ui.press <panel> <entry>`, `ui.list`.
+//! `ui.show_entry <panel> <entry>`, `ui.press <panel> <entry>`, `ui.list`, `assert.ui_panel_state <panel>
+//! <shown|hidden>`.
 //!
 //! Startup check (`Plugin::finish`): every entry's command must be registered; otherwise the app
 //! panics naming the panel entry and the missing command.
@@ -63,6 +64,11 @@ impl Plugin for UiPanelsPlugin {
             )
             .register_command("ui.press", "ui.press <panel> <entry>", press_command)
             .register_command("ui.list", "ui.list", list_command)
+            .register_command(
+                "assert.ui_panel_state",
+                "assert.ui_panel_state <panel> <shown|hidden>",
+                assert_panel_command,
+            )
             // One app-wide observer instead of one per button: buttons are rebuilt with the
             // panels, and an entity observer did not survive every rebuild in the browser.
             .add_observer(run_activated_button)
@@ -377,4 +383,32 @@ fn list_command(world: &mut World, args: &CommandArgs) -> CommandResult {
         );
     }
     Ok(CommandOutcome::Continue)
+}
+
+/// `assert.ui_panel_state <panel> <shown|hidden>`: whether a panel is shown (its state, so it also works
+/// without rendering, where no button is built).
+fn assert_panel_command(world: &mut World, args: &CommandArgs) -> CommandResult {
+    args.expect_count(2)?;
+    let panel: String = args.parse(0, "panel")?;
+    let expected = match args.parse::<String>(1, "shown|hidden")?.as_str() {
+        "shown" => true,
+        "hidden" => false,
+        other => return Err(args.failure(format!("`{other}` is not shown or hidden"))),
+    };
+    let panels = world.resource::<UiPanels>();
+    if panels.panel(&panel).is_none() {
+        return Err(args.failure(format!(
+            "there is no panel `{panel}`; panels: {:?}",
+            panels.ids()
+        )));
+    }
+    let shown = panels.is_visible(&panel);
+    if shown == expected {
+        Ok(CommandOutcome::Continue)
+    } else {
+        Err(args.failure(format!(
+            "panel `{panel}` is {}",
+            if shown { "shown" } else { "hidden" }
+        )))
+    }
 }

@@ -154,3 +154,15 @@ fn a_widget_text_is_set_asserted_and_hidden_by_command() {
     let unknown = failure_of("ui.set_text nope x\nquit\n");
     assert!(unknown.contains("status"), "lists the widgets: {unknown}");
 }
+
+#[test]
+fn a_panels_state_is_asserted_without_rendering() {
+    let (_, failure) = run_script(
+        "assert.ui_panel_state menu hidden\nui.show_panel menu\nassert.ui_panel_state menu shown\nquit\n",
+    );
+    assert_eq!(failure, None);
+    let failure = failure_of("assert.ui_panel_state menu shown\n");
+    assert!(failure.contains("panel `menu` is hidden"), "{failure}");
+    let failure = failure_of("assert.ui_panel_state nothing shown\n");
+    assert!(failure.contains("there is no panel `nothing`"), "{failure}");
+}
