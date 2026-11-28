@@ -140,11 +140,12 @@ pub use sound_events::{
 };
 pub use sound_playback::{MAX_SOUND_VOLUME, SoundKind, SoundPlayback};
 pub use ui_grid::{
-    GRID_CELL, GRID_FOOTER_HEIGHT, GRID_PADDING, GRID_SCROLLBAR_WIDTH, GRID_TITLE_HEIGHT,
-    GRID_WINDOW_GAP, GridLayout, GridWindowRect, MIN_GRID_CELL, TOOLTIP_LINE_HEIGHT, TOOLTIP_WIDTH,
-    UiGridDrag, UiGridItem, UiGridShape, UiGridSlot, UiGridView, UiGrids, UiTooltipLine, cell_at,
-    cells_rect, compute_grid_layout, drawn_size, drop_command_line, drop_origin, fits_at, item_at,
-    item_rect, slot_at, tooltip_rect,
+    GRID_CELL, GRID_FOOTER_HEIGHT, GRID_FOOTER_TEXT_SIZE, GRID_PADDING, GRID_SCROLLBAR_WIDTH,
+    GRID_TITLE_HEIGHT, GRID_TITLE_TEXT_SIZE, GRID_WINDOW_GAP, GridLayout, GridWindowRect,
+    MIN_GRID_CELL, TOOLTIP_LINE_HEIGHT, TOOLTIP_WIDTH, UI_FONT_ADVANCE, UiGridDrag, UiGridItem,
+    UiGridShape, UiGridSlot, UiGridView, UiGrids, UiTooltipLine, cell_at, cells_rect,
+    compute_grid_layout, drawn_size, drop_command_line, drop_origin, fits_at, item_at, item_rect,
+    slot_at, tooltip_rect, ui_text_width,
 };
 pub use ui_hud::{
     AppHudExt, HUD_LINE_HEIGHT, HUD_PANEL_PADDING, HUD_TEXT_WIDTH, HudAnchor, HudBlock, HudKind,

@@ -49,6 +49,13 @@ pub const GRID_PADDING: f32 = 8.0;
 pub const GRID_TITLE_HEIGHT: f32 = 26.0;
 /// Height of a window's footer line (only when it has a footer).
 pub const GRID_FOOTER_HEIGHT: f32 = 22.0;
+/// Font size of a window's title.
+pub const GRID_TITLE_TEXT_SIZE: f32 = 18.0;
+/// Font size of a window's footer.
+pub const GRID_FOOTER_TEXT_SIZE: f32 = 15.0;
+/// How far one character of UI text advances, per pixel of font size: Bevy's default font (Fira
+/// Mono) is monospaced at 0.6 em, so a line's width is known without measuring it.
+pub const UI_FONT_ADVANCE: f32 = 0.6;
 /// Space between windows, and between the windows and the view's edge.
 pub const GRID_WINDOW_GAP: f32 = 12.0;
 /// Width of the scroll bar of a window that scrolls.
@@ -290,13 +297,23 @@ impl GridLayout {
     }
 }
 
+/// The width of one line of `text` at `size` in the UI font. Pure.
+pub fn ui_text_width(text: &str, size: f32) -> f32 {
+    text.chars().count() as f32 * size * UI_FONT_ADVANCE
+}
+
+/// A window is as wide as its cells (and scroll bar), and never narrower than its title or footer
+/// line, so neither wraps out of the window when cells shrink in a small view.
 fn window_width(view: &UiGridView, cell: f32) -> f32 {
     let bar = if view.scrolls() {
         GRID_SCROLLBAR_WIDTH + GRID_PADDING / 2.0
     } else {
         0.0
     };
-    view.columns as f32 * cell + 2.0 * GRID_PADDING + bar
+    let content = (view.columns as f32 * cell + bar)
+        .max(ui_text_width(&view.title, GRID_TITLE_TEXT_SIZE))
+        .max(ui_text_width(&view.footer, GRID_FOOTER_TEXT_SIZE));
+    content + 2.0 * GRID_PADDING
 }
 
 fn window_height(view: &UiGridView, cell: f32) -> f32 {
@@ -327,25 +344,25 @@ pub fn compute_grid_layout(
             windows: Vec::new(),
         };
     }
-    // Width and height are linear in the cell size: solve for the largest that fits.
+    // The largest whole cell size at which every window fits side by side (a window is never
+    // narrower than its title or footer, so width is not linear in the cell size).
     let gaps = GRID_WINDOW_GAP * (ordered.len() as f32 + 1.0);
-    let fixed_width: f32 = ordered
-        .iter()
-        .map(|(_, view)| window_width(view, 0.0))
-        .sum();
-    let columns: f32 = ordered.iter().map(|(_, view)| view.columns as f32).sum();
-    let by_width = (viewport.x - gaps - fixed_width) / columns;
-    let by_height = ordered
-        .iter()
-        .map(|(_, view)| {
-            (room_height - 2.0 * GRID_WINDOW_GAP - window_height(view, 0.0))
-                / view.shown_rows() as f32
-        })
-        .fold(f32::INFINITY, f32::min);
-    let cell = by_width
-        .min(by_height)
-        .clamp(MIN_GRID_CELL, GRID_CELL)
-        .floor();
+    let fits = |cell: f32| {
+        let width: f32 = ordered
+            .iter()
+            .map(|(_, view)| window_width(view, cell))
+            .sum();
+        let height = ordered
+            .iter()
+            .map(|(_, view)| window_height(view, cell))
+            .fold(0.0, f32::max);
+        width + gaps <= viewport.x && height + 2.0 * GRID_WINDOW_GAP <= room_height
+    };
+    let cell = (MIN_GRID_CELL as u32..=GRID_CELL as u32)
+        .rev()
+        .map(|cell| cell as f32)
+        .find(|cell| fits(*cell))
+        .unwrap_or(MIN_GRID_CELL);
     let total_width: f32 = ordered
         .iter()
         .map(|(_, view)| window_width(view, cell))
@@ -982,5 +999,46 @@ mod tests {
             drop_command_line(&bag(Vec::new()), "a", 2, 3, true),
             "bag.put a 2 3 1"
         );
+    }
+
+    #[test]
+    fn a_window_is_never_narrower_than_its_title_or_footer_and_all_still_fit() {
+        let footer = "Gold carried: 0   Safe balance: 150";
+        let mut purse = bag(Vec::new());
+        purse.columns = 8;
+        purse.rows = 6;
+        purse.footer = footer.to_string();
+        let mut chest = bag(Vec::new());
+        chest.columns = 10;
+        chest.rows = 12;
+        chest.visible_rows = 6;
+        chest.order = 2;
+        // The crawler's equipment: 6 x 7 cells of slots, the tallest window.
+        let mut gear = slots();
+        gear.columns = 6;
+        gear.rows = 7;
+        // A short browser view: cells shrink below the footer's width.
+        let view = Vec2::new(1264.0, 625.0);
+        let views = [("bag", &purse), ("chest", &chest), ("gear", &gear)];
+        let layout = compute_grid_layout(&views, view, 290.0);
+        let bag = layout.window("bag").unwrap();
+        let text = ui_text_width(footer, GRID_FOOTER_TEXT_SIZE);
+        assert!(
+            8.0 * layout.cell < text,
+            "the cells alone are narrower than the footer"
+        );
+        assert!(bag.rect.width >= text + 2.0 * GRID_PADDING);
+        assert!(bag.footer.unwrap().width >= text);
+        // Every window inside the view, none overlapping.
+        let mut right = 0.0;
+        for window in &layout.windows {
+            assert!(window.rect.left >= right && window.rect.left >= 0.0);
+            right = window.rect.left + window.rect.width;
+            assert!(window.rect.top + window.rect.height <= view.y);
+        }
+        assert!(right <= view.x);
+        // The cells are the largest that fit: more room, bigger cells.
+        let taller = compute_grid_layout(&views, Vec2::new(1264.0, 825.0), 290.0);
+        assert!(taller.cell > layout.cell);
     }
 }

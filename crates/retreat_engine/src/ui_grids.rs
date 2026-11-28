@@ -19,10 +19,11 @@ use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use retreat_engine_api::{
-    AppCommandExt, CommandArgs, CommandOutcome, CommandResult, GridLayout, GridWindowRect,
-    HudState, PanelRect, UiGridDrag, UiGridItem, UiGridShape, UiGridView, UiGrids, UiHud, UiPanels,
-    UiTextFields, cell_at, cells_rect, compute_grid_layout, drop_command_line, drop_origin,
-    fits_at, item_at, item_rect, tooltip_rect, top_area_bottom,
+    AppCommandExt, CommandArgs, CommandOutcome, CommandResult, GRID_FOOTER_TEXT_SIZE,
+    GRID_TITLE_TEXT_SIZE, GridLayout, GridWindowRect, HudState, PanelRect, UiGridDrag, UiGridItem,
+    UiGridShape, UiGridView, UiGrids, UiHud, UiPanels, UiTextFields, cell_at, cells_rect,
+    compute_grid_layout, drop_command_line, drop_origin, fits_at, item_at, item_rect, tooltip_rect,
+    top_area_bottom,
 };
 
 use crate::asset_paths::{load_asset, resolve_asset_location};
@@ -49,7 +50,6 @@ const BLOCKED_COLOR: Color = Color::srgba(0.9, 0.2, 0.2, 0.45);
 const DRAGGED_SOURCE_ALPHA: f32 = 0.35;
 /// The dragged item's look over its preview.
 const GHOST_ALPHA: f32 = 0.8;
-const TITLE_TEXT_SIZE: f32 = 18.0;
 const LABEL_TEXT_SIZE: f32 = 13.0;
 const TOOLTIP_TEXT_SIZE: f32 = 15.0;
 /// Space between neighboring cells (the grid lines).
@@ -458,7 +458,7 @@ fn spawn_window(
             frame,
             at(window.title),
             &view.title,
-            TITLE_TEXT_SIZE,
+            GRID_TITLE_TEXT_SIZE,
             TITLE_COLOR,
         );
         if let Some(footer) = window.footer {
@@ -466,7 +466,7 @@ fn spawn_window(
                 frame,
                 at(footer),
                 &view.footer,
-                LABEL_TEXT_SIZE + 2.0,
+                GRID_FOOTER_TEXT_SIZE,
                 FOOTER_COLOR,
             );
         }
