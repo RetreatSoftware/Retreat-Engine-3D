@@ -309,9 +309,16 @@ fn window_height(view: &UiGridView, cell: f32) -> f32 {
 }
 
 /// Places the windows in `views` (already only the shown ones) in a view of `viewport` logical
-/// pixels: side by side in `order` then id, centered, one shared cell size as large as fits (at most
+/// pixels below `reserved_top` (what the top corners hold: button panels), side by side in `order`
+/// then id, centered in the space left, one shared cell size as large as fits (at most
 /// [`GRID_CELL`], at least [`MIN_GRID_CELL`]). No windows: an empty layout. Pure.
-pub fn compute_grid_layout(views: &[(&str, &UiGridView)], viewport: Vec2) -> GridLayout {
+pub fn compute_grid_layout(
+    views: &[(&str, &UiGridView)],
+    viewport: Vec2,
+    reserved_top: f32,
+) -> GridLayout {
+    let room_top = reserved_top.clamp(0.0, viewport.y);
+    let room_height = viewport.y - room_top;
     let mut ordered: Vec<&(&str, &UiGridView)> = views.iter().collect();
     ordered.sort_by(|a, b| a.1.order.cmp(&b.1.order).then(a.0.cmp(b.0)));
     if ordered.is_empty() {
@@ -331,7 +338,7 @@ pub fn compute_grid_layout(views: &[(&str, &UiGridView)], viewport: Vec2) -> Gri
     let by_height = ordered
         .iter()
         .map(|(_, view)| {
-            (viewport.y - 2.0 * GRID_WINDOW_GAP - window_height(view, 0.0))
+            (room_height - 2.0 * GRID_WINDOW_GAP - window_height(view, 0.0))
                 / view.shown_rows() as f32
         })
         .fold(f32::INFINITY, f32::min);
@@ -347,12 +354,12 @@ pub fn compute_grid_layout(views: &[(&str, &UiGridView)], viewport: Vec2) -> Gri
     let mut left = ((viewport.x - total_width) / 2.0)
         .max(GRID_WINDOW_GAP)
         .floor();
-    // Tops line up: the tallest window is centered vertically.
+    // Tops line up: the tallest window is centered vertically in the room below the panels.
     let tallest = ordered
         .iter()
         .map(|(_, view)| window_height(view, cell))
         .fold(0.0, f32::max);
-    let top = ((viewport.y - tallest) / 2.0).max(GRID_WINDOW_GAP).floor();
+    let top = (room_top + ((room_height - tallest) / 2.0).max(GRID_WINDOW_GAP)).floor();
     let mut windows = Vec::new();
     for (id, view) in ordered {
         let width = window_width(view, cell);
@@ -418,7 +425,8 @@ pub fn cells_rect(
     }
 }
 
-/// Where `item` of `view` is drawn on screen: its cells, or its slot.
+/// Where `item` of `view` is drawn on screen: its cells, or centered in its slot at its own
+/// proportions (as large as the slot allows, never larger than its cells).
 pub fn item_rect(
     view: &UiGridView,
     window: &GridWindowRect,
@@ -430,7 +438,16 @@ pub fn item_rect(
         UiGridShape::Cells => cells_rect(window, cell, scroll, item.x, item.y, item.drawn_size()),
         UiGridShape::Slots(slots) => {
             let slot = &slots[item.x as usize];
-            cells_rect(window, cell, scroll, slot.x, slot.y, slot.size)
+            let room = cells_rect(window, cell, scroll, slot.x, slot.y, slot.size);
+            let size = item.drawn_size().as_vec2() * cell;
+            let scale = (room.width / size.x).min(room.height / size.y).min(1.0);
+            let (width, height) = (size.x * scale, size.y * scale);
+            PanelRect {
+                left: room.left + (room.width - width) / 2.0,
+                top: room.top + (room.height - height) / 2.0,
+                width,
+                height,
+            }
         }
     }
 }
@@ -823,24 +840,63 @@ mod tests {
         let bag_view = bag(Vec::new());
         let equipment = slots();
         let viewport = Vec2::new(1280.0, 720.0);
-        let both = compute_grid_layout(&[("bag", &bag_view), ("equipment", &equipment)], viewport);
+        let both = compute_grid_layout(
+            &[("bag", &bag_view), ("equipment", &equipment)],
+            viewport,
+            0.0,
+        );
         assert_eq!(both.cell, GRID_CELL);
         assert_eq!(both.windows[0].grid, "equipment", "lower order goes left");
         assert!(both.windows[0].rect.left + both.windows[0].rect.width < both.windows[1].rect.left);
-        let alone = compute_grid_layout(&[("bag", &bag_view)], viewport);
+        let alone = compute_grid_layout(&[("bag", &bag_view)], viewport, 0.0);
         let window = &alone.windows[0];
         let center = window.rect.left + window.rect.width / 2.0;
         assert!(
             (center - 640.0).abs() <= 1.0,
             "the bag alone is centered, at {center}"
         );
-        assert!(compute_grid_layout(&[], viewport).windows.is_empty());
+        assert!(compute_grid_layout(&[], viewport, 0.0).windows.is_empty());
+    }
+
+    #[test]
+    fn windows_stay_below_the_corner_panels_and_shrink_to_fit_there() {
+        let bag_view = bag(Vec::new());
+        let viewport = Vec2::new(1280.0, 720.0);
+        let layout = compute_grid_layout(&[("bag", &bag_view)], viewport, 300.0);
+        let window = &layout.windows[0];
+        assert!(window.rect.top >= 300.0);
+        assert!(window.rect.top + window.rect.height <= 720.0);
+        let mut tall = bag(Vec::new());
+        tall.rows = 12;
+        let squeezed = compute_grid_layout(&[("bag", &tall)], viewport, 300.0);
+        assert!(squeezed.cell < GRID_CELL);
+        assert!(squeezed.windows[0].rect.top >= 300.0);
+    }
+
+    #[test]
+    fn a_slot_item_keeps_its_proportions_centered_in_the_slot() {
+        let mut view = slots();
+        // A 1x3 sword in the 2x3 hand slot (x 0..2, y 2..4): one cell wide, centered.
+        view.items = vec![item("sword", 1, 0, 1, 3)];
+        let layout = compute_grid_layout(&[("gear", &view)], Vec2::new(1280.0, 720.0), 0.0);
+        let window = &layout.windows[0];
+        let rect = item_rect(&view, window, layout.cell, 0, &view.items[0]);
+        let slot = cells_rect(window, layout.cell, 0, 0, 2, UVec2::new(2, 2));
+        assert_eq!(
+            rect.height, slot.height,
+            "as tall as the 2-high slot allows"
+        );
+        assert!(
+            (rect.width - rect.height / 3.0).abs() < 0.01,
+            "a third as wide as tall"
+        );
+        assert!((rect.left + rect.width / 2.0 - (slot.left + slot.width / 2.0)).abs() < 0.01);
     }
 
     #[test]
     fn a_narrow_view_shrinks_the_cells() {
         let bag_view = bag(Vec::new());
-        let layout = compute_grid_layout(&[("bag", &bag_view)], Vec2::new(200.0, 720.0));
+        let layout = compute_grid_layout(&[("bag", &bag_view)], Vec2::new(200.0, 720.0), 0.0);
         assert!(layout.cell < GRID_CELL && layout.cell >= MIN_GRID_CELL);
         let window = &layout.windows[0];
         assert!(window.rect.left + window.rect.width <= 200.0);
@@ -853,7 +909,7 @@ mod tests {
         chest.visible_rows = 4;
         assert!(chest.scrolls());
         assert_eq!(chest.max_scroll(), 6);
-        let layout = compute_grid_layout(&[("chest", &chest)], Vec2::new(1280.0, 720.0));
+        let layout = compute_grid_layout(&[("chest", &chest)], Vec2::new(1280.0, 720.0), 0.0);
         let window = &layout.windows[0];
         assert!(window.scrollbar.is_some());
         assert_eq!(window.cells.height, 4.0 * layout.cell);
