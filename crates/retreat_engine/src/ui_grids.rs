@@ -32,6 +32,10 @@ use crate::ui_panels::UiClickTarget;
 
 const WINDOW_COLOR: Color = Color::srgba(0.08, 0.09, 0.11, 0.92);
 const CELL_COLOR: Color = Color::srgb(0.17, 0.18, 0.21);
+/// The lines between cells: the cell area's own opaque background, seen in the gaps. Opaque so
+/// the lines look the same over any scene (found 2026-11-28: with the see-through window
+/// background in the gaps, a row in front of a dark wall or sky showed no lines at all).
+const GRID_LINE_COLOR: Color = Color::srgb(0.34, 0.36, 0.41);
 const SLOT_COLOR: Color = Color::srgb(0.20, 0.21, 0.25);
 const SLOT_LABEL_COLOR: Color = Color::srgb(0.55, 0.56, 0.60);
 const TITLE_COLOR: Color = Color::WHITE;
@@ -136,6 +140,11 @@ impl Plugin for UiGridsPlugin {
                 "assert.ui_images_loaded",
                 "assert.ui_images_loaded",
                 assert_images_loaded_command,
+            )
+            .register_command(
+                "assert.ui_grid_lines",
+                "assert.ui_grid_lines <grid>",
+                assert_grid_lines_command,
             )
             .add_systems(
                 Update,
@@ -486,12 +495,19 @@ fn spawn_window(
                 Pickable::IGNORE,
             ));
         }
+        // Cells are drawn inset on an opaque line color; slots stand on the window itself.
+        let lines = match view.shape {
+            UiGridShape::Cells => GRID_LINE_COLOR,
+            UiGridShape::Slots(_) => Color::NONE,
+        };
         frame
             .spawn((
+                Name::new(format!("ui/grid/{}/cells", window.grid)),
                 Node {
                     overflow: Overflow::clip(),
                     ..node_at(at(window.cells))
                 },
+                BackgroundColor(lines),
                 Pickable::IGNORE,
             ))
             .with_children(|cells| {
@@ -1204,6 +1220,43 @@ fn assert_dragging_command(world: &mut World, args: &CommandArgs) -> CommandResu
 }
 
 /// `assert.ui_images_loaded`: every icon the windows use has loaded (fails naming a failed load).
+/// Whether lines drawn in `line` between cells of `cell` show the same over any scene: the line
+/// color is opaque and differs clearly from the cells. Pure.
+fn grid_lines_always_show(line: Color, cell: Color) -> bool {
+    let (line, cell) = (line.to_srgba(), cell.to_srgba());
+    let brightness = |c: Srgba| (c.red + c.green + c.blue) / 3.0;
+    line.alpha >= 1.0 && cell.alpha >= 1.0 && (brightness(line) - brightness(cell)).abs() >= 0.1
+}
+
+/// `assert.ui_grid_lines <grid>`: the drawn cell area of a cell window has an opaque line color
+/// that differs from its cells, so every row shows its lines whatever is behind the window.
+fn assert_grid_lines_command(world: &mut World, args: &CommandArgs) -> CommandResult {
+    args.expect_count(1)?;
+    let grid: String = args.parse(0, "grid")?;
+    let view = view_or_error(world.resource::<UiGrids>(), args, &grid)?;
+    if !matches!(view.shape, UiGridShape::Cells) {
+        return Err(args.failure(format!("`{grid}` has slots, not cells: it draws no lines")));
+    }
+    let name = format!("ui/grid/{grid}/cells");
+    let background = world
+        .query::<(&Name, &BackgroundColor)>()
+        .iter(world)
+        .find(|(found, _)| found.as_str() == name)
+        .map(|(_, background)| background.0)
+        .ok_or_else(|| {
+            args.failure(format!(
+                "`{grid}` is not drawn yet (no `{name}`; windows are built only where there is a                  camera: wait a frame, and do not use --no-render)"
+            ))
+        })?;
+    if grid_lines_always_show(background, CELL_COLOR) {
+        Ok(CommandOutcome::Continue)
+    } else {
+        Err(args.failure(format!(
+            "the lines of `{grid}` are {background:?} on cells {CELL_COLOR:?}: not opaque or too              close to the cells, so they vanish over some scenes"
+        )))
+    }
+}
+
 fn assert_images_loaded_command(world: &mut World, args: &CommandArgs) -> CommandResult {
     args.expect_count(0)?;
     let Some(server) = world.get_resource::<AssetServer>() else {
@@ -1223,5 +1276,18 @@ fn assert_images_loaded_command(world: &mut World, args: &CommandArgs) -> Comman
         Ok(CommandOutcome::Continue)
     } else {
         Err(args.failure(format!("icons still loading: {waiting:?}")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grid_lines_show_over_any_scene_only_when_opaque_and_distinct() {
+        assert!(grid_lines_always_show(GRID_LINE_COLOR, CELL_COLOR));
+        // The old look: the see-through window color in the gaps.
+        assert!(!grid_lines_always_show(WINDOW_COLOR, CELL_COLOR));
+        assert!(!grid_lines_always_show(CELL_COLOR, CELL_COLOR));
     }
 }

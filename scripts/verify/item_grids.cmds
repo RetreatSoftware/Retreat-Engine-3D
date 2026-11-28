@@ -19,6 +19,8 @@
 sandbox.grids_show
 wait_until 60 assert.ui_grid_shown demo_bag
 wait_until 600 assert.ui_images_loaded
+# Every row shows its cell lines, whatever is behind the window.
+wait_until 60 assert.ui_grid_lines demo_bag
 wait 2
 assert.ui_grid_item demo_bag sword 0 0 upright
 assert.ui_grid_count demo_gear 1
