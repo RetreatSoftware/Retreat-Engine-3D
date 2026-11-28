@@ -63,7 +63,7 @@ pub(crate) fn sync_page_text_fields(
                 let text = event.get("text").and_then(Value::as_str).unwrap_or("");
                 replace_widget_text(&field.field, &mut editable, text);
             }
-            Some("submit") => pending.0.push(entity),
+            Some("submit") => pending.0.push((field.panel, field.field.id)),
             Some("focus") => focus.set(entity, FocusCause::Pressed),
             Some("blur") if focus.get() == Some(entity) => focus.clear(),
             _ => {}

@@ -15,7 +15,7 @@ use wasm_bindgen::prelude::*;
 
 use crate::NetLaunch;
 use crate::net::client::{ClientConfig as NetClientConfig, install_client};
-use crate::net::transport::{ClientEvent, ClientTransport};
+use crate::net::transport::{ClientEvent, ClientTransport, DeferredClientTransport};
 
 /// Safety margin (ticks) a browser client adds to the measured round trip.
 const CLIENT_MARGIN_TICKS: i64 = 6;
@@ -76,8 +76,13 @@ pub(crate) fn install_net(app: &mut App, net: &NetLaunch) -> Result<(), String> 
                 .to_string(),
         ),
         NetLaunch::Client { url, cert_hash } => {
-            let transport =
-                BrowserTransportClient::connect(url, cert_hash.as_deref().unwrap_or(""));
+            // Connects when the client may say hello (a game with a login screen waits for the
+            // name), so the server's join timeout never runs out while a player types.
+            let (url, cert_hash) = (url.clone(), cert_hash.clone().unwrap_or_default());
+            let transport = DeferredClientTransport::new(Box::new(move || {
+                Ok(Box::new(BrowserTransportClient::connect(&url, &cert_hash))
+                    as Box<dyn ClientTransport>)
+            }));
             install_client(
                 app,
                 NetClientConfig {

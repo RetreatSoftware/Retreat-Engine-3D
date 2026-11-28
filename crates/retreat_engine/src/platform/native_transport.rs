@@ -33,7 +33,8 @@ use super::native_web_server::{
 use crate::net::client::{ClientConfig as NetClientConfig, install_client};
 use crate::net::server::{ServerConfig as NetServerConfig, install_server};
 use crate::net::transport::{
-    ClientEvent, ClientTransport, ConnectionId, ServerEvent, ServerTransport,
+    ClientEvent, ClientTransport, ConnectionId, DeferredClientTransport, ServerEvent,
+    ServerTransport,
 };
 use crate::{LaunchOptions, NetLaunch, WebServeLaunch};
 use retreat_engine_api::NetAllowedCommands;
@@ -83,7 +84,16 @@ pub(crate) fn install_net(app: &mut App, options: &LaunchOptions) -> Result<(), 
             Ok(())
         }
         NetLaunch::Client { url, cert_hash } => {
-            let transport = WebTransportClient::connect(url, cert_hash.as_deref())?;
+            // A wrong hash is reported at launch; the connection itself starts when the client
+            // may say hello (a game with a login screen waits for the name).
+            if let Some(hash) = cert_hash {
+                parse_certificate_hash(hash)?;
+            }
+            let (url, cert_hash) = (url.clone(), cert_hash.clone());
+            let transport = DeferredClientTransport::new(Box::new(move || {
+                WebTransportClient::connect(&url, cert_hash.as_deref())
+                    .map(|transport| Box::new(transport) as Box<dyn ClientTransport>)
+            }));
             install_client(
                 app,
                 NetClientConfig {

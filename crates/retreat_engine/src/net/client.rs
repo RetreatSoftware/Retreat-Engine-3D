@@ -330,6 +330,10 @@ fn pump_transport(world: &mut World) {
         .cloned()
         .unwrap_or_default();
     let mut client = world.resource_mut::<NetClient>();
+    // A transport made not to connect at once connects when the client may say hello.
+    if client.phase == ClientPhase::Connecting && identity.ready() {
+        transport.0.start();
+    }
     for event in transport.0.poll() {
         let bytes = match event {
             ClientEvent::Packet(bytes) => bytes,

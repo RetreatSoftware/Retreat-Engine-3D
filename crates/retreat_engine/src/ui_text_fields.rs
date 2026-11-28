@@ -26,7 +26,7 @@ use bevy::input_focus::{FocusCause, FocusedInput, InputFocus};
 use bevy::picking::events::PointerPress;
 use bevy::prelude::*;
 use bevy::text::{EditableText, EditableTextSystems, TextEdit, TextReadWriteMode};
-use bevy::ui_widgets::{TextInput, observe};
+use bevy::ui_widgets::TextInput;
 use retreat_engine_api::{
     AppCommandExt, CommandArgs, CommandError, CommandOutcome, CommandResult, PanelRect, UiPanels,
     UiTextField, UiTextFields, fit_text_field, text_field_submit_line,
@@ -82,6 +82,9 @@ impl Plugin for UiTextFieldsPlugin {
                 "assert.ui_not_focused",
                 assert_not_focused_command,
             )
+            // App-wide observers (fields are rebuilt with their panels; see `ui_panels.rs`).
+            .add_observer(focus_field_on_press)
+            .add_observer(submit_field_on_enter)
             .add_systems(
                 Update,
                 (submit_pending_fields, platform::sync_page_text_fields),
@@ -109,9 +112,10 @@ struct FieldPlaceholder {
     field: &'static str,
 }
 
-/// Fields asked to submit (Enter or `ui.submit_field`), handled on the next `Update`.
+/// Fields asked to submit (Enter or `ui.submit_field`), handled on the next `Update`: by panel and
+/// field id, not by entity, because the panel may be rebuilt in between.
 #[derive(Resource, Default)]
-pub(crate) struct PendingSubmits(pub(crate) Vec<Entity>);
+pub(crate) struct PendingSubmits(pub(crate) Vec<(&'static str, &'static str)>);
 
 /// Entity name of a field (the same namespace as the panel's buttons: ids are unique per panel).
 pub(crate) fn panel_field_name(panel: &str, field: &str) -> String {
@@ -156,8 +160,6 @@ pub(crate) fn spawn_text_field(
             TextColor(Color::WHITE),
             node.clone(),
             BackgroundColor(FIELD_COLOR),
-            observe(focus_field_on_press),
-            observe(submit_field_on_enter),
         ))
         .id();
     root.spawn((
@@ -179,22 +181,27 @@ pub(crate) fn spawn_text_field(
 }
 
 /// A click (or tap) on a field gives it the keyboard focus.
-fn focus_field_on_press(press: On<PointerPress>, mut focus: ResMut<InputFocus>) {
-    focus.set(press.entity, FocusCause::Pressed);
+fn focus_field_on_press(
+    press: On<PointerPress>,
+    fields: Query<(), With<PanelTextField>>,
+    mut focus: ResMut<InputFocus>,
+) {
+    if fields.contains(press.entity) {
+        focus.set(press.entity, FocusCause::Pressed);
+    }
 }
 
 /// Enter on the focused field submits it.
 fn submit_field_on_enter(
     input: On<FocusedInput<KeyboardInput>>,
-    fields: Query<(), With<PanelTextField>>,
+    fields: Query<&PanelTextField>,
     mut pending: ResMut<PendingSubmits>,
 ) {
-    let entity = input.focused_entity;
-    if fields.contains(entity)
-        && input.input.state.is_pressed()
-        && input.input.logical_key == Key::Enter
-    {
-        pending.0.push(entity);
+    let Ok(field) = fields.get(input.focused_entity) else {
+        return;
+    };
+    if input.input.state.is_pressed() && input.input.logical_key == Key::Enter {
+        pending.0.push((field.panel, field.field.id));
     }
 }
 
@@ -213,8 +220,16 @@ pub(crate) fn replace_widget_text(field: &UiTextField, editable: &mut EditableTe
 /// Runs each submitted field's command (outside any command handler).
 fn submit_pending_fields(world: &mut World) {
     let pending = std::mem::take(&mut world.resource_mut::<PendingSubmits>().0);
-    for entity in pending {
-        let Some(field) = world.get::<PanelTextField>(entity).copied() else {
+    for (panel, field_id) in pending {
+        let mut fields = world.query::<(Entity, &PanelTextField)>();
+        let Some((entity, field)) = fields
+            .iter(world)
+            .find(|(_, field)| field.panel == panel && field.field.id == field_id)
+            .map(|(entity, field)| (entity, *field))
+        else {
+            warn!(
+                "text field `{field_id}` of panel `{panel}` is no longer shown; nothing submitted"
+            );
             continue;
         };
         let Some(mut editable) = world.get_mut::<EditableText>(entity) else {
@@ -380,7 +395,14 @@ fn submit_command(world: &mut World, args: &CommandArgs) -> CommandResult {
             field.id
         )));
     }
-    world.resource_mut::<PendingSubmits>().0.push(entity);
+    let panel = world
+        .get::<PanelTextField>(entity)
+        .expect("found as a text field")
+        .panel;
+    world
+        .resource_mut::<PendingSubmits>()
+        .0
+        .push((panel, field.id));
     Ok(CommandOutcome::Continue)
 }
 

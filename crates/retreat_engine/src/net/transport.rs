@@ -50,6 +50,66 @@ pub trait ClientTransport {
     fn poll(&mut self) -> Vec<ClientEvent>;
     /// Sends a datagram to the server (dropped while not connected).
     fn send(&mut self, bytes: Vec<u8>);
+    /// Starts connecting, for a transport made not to connect at once ([`DeferredClientTransport`]).
+    /// The client calls it every tick once it may say hello; it does nothing after the first call
+    /// and on transports that connect when made.
+    fn start(&mut self) {}
+}
+
+/// Makes the real transport.
+pub type ConnectClientTransport = Box<dyn FnOnce() -> Result<Box<dyn ClientTransport>, String>>;
+
+/// A client transport that connects only on [`ClientTransport::start`] (decided 2026-11-27, crawler
+/// plan CE1): a client that waits for an identity token (a login screen) connects once it has one,
+/// so a player who takes long to type never runs into the server's join timeout. A connection
+/// that cannot be made becomes a `Disconnected` event with the reason.
+pub struct DeferredClientTransport {
+    connect: Option<ConnectClientTransport>,
+    inner: Option<Box<dyn ClientTransport>>,
+    failure: Option<String>,
+}
+
+impl DeferredClientTransport {
+    pub fn new(connect: ConnectClientTransport) -> Self {
+        Self {
+            connect: Some(connect),
+            inner: None,
+            failure: None,
+        }
+    }
+
+    /// True once `start` ran.
+    pub fn started(&self) -> bool {
+        self.connect.is_none()
+    }
+}
+
+impl ClientTransport for DeferredClientTransport {
+    fn poll(&mut self) -> Vec<ClientEvent> {
+        if let Some(reason) = self.failure.take() {
+            return vec![ClientEvent::Disconnected(reason)];
+        }
+        self.inner
+            .as_mut()
+            .map(|inner| inner.poll())
+            .unwrap_or_default()
+    }
+
+    fn send(&mut self, bytes: Vec<u8>) {
+        if let Some(inner) = self.inner.as_mut() {
+            inner.send(bytes);
+        }
+    }
+
+    fn start(&mut self) {
+        let Some(connect) = self.connect.take() else {
+            return;
+        };
+        match connect() {
+            Ok(inner) => self.inner = Some(inner),
+            Err(reason) => self.failure = Some(reason),
+        }
+    }
 }
 
 struct Connection {

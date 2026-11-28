@@ -218,3 +218,44 @@ fn only_the_server_keeps_records() {
         "a client never has server records"
     );
 }
+
+/// A transport that is already "connected" and counts what it sends.
+struct Fake(std::rc::Rc<std::cell::Cell<u32>>);
+
+impl retreat_engine::net::transport::ClientTransport for Fake {
+    fn poll(&mut self) -> Vec<retreat_engine::net::transport::ClientEvent> {
+        vec![retreat_engine::net::transport::ClientEvent::Connected]
+    }
+    fn send(&mut self, _bytes: Vec<u8>) {
+        self.0.set(self.0.get() + 1);
+    }
+}
+
+#[test]
+fn a_deferred_transport_connects_only_when_started_and_reports_a_failed_connection() {
+    use retreat_engine::net::transport::{ClientEvent, ClientTransport, DeferredClientTransport};
+    let sent = std::rc::Rc::new(std::cell::Cell::new(0));
+    let made = sent.clone();
+    let mut transport = DeferredClientTransport::new(Box::new(move || {
+        Ok(Box::new(Fake(made)) as Box<dyn ClientTransport>)
+    }));
+    assert!(transport.poll().is_empty(), "nothing happens before start");
+    transport.send(vec![1]);
+    assert_eq!(sent.get(), 0, "nothing is sent before start");
+    transport.start();
+    transport.start();
+    assert!(transport.started());
+    assert_eq!(transport.poll(), vec![ClientEvent::Connected]);
+    transport.send(vec![1]);
+    assert_eq!(sent.get(), 1);
+    let mut failing =
+        DeferredClientTransport::new(Box::new(|| Err("no route to the server".to_string())));
+    failing.start();
+    assert_eq!(
+        failing.poll(),
+        vec![ClientEvent::Disconnected(
+            "no route to the server".to_string()
+        )]
+    );
+    assert!(failing.poll().is_empty());
+}

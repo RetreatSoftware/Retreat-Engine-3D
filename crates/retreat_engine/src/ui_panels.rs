@@ -7,7 +7,9 @@
 //! entry) or when the view size changes, so hiding anything re-flows what is left.
 //!
 //! Buttons are `bevy::ui_widgets::Button`s: a completed click (or Enter/Space when focused) fires
-//! an `Activate` event, and an observer runs the entry's command through `dispatch_command_line`.
+//! an `Activate` event, and one app-wide observer runs the entry's command through
+//! `dispatch_command_line` (per-button observers were lost on a rebuild in the browser, found by
+//! the crawler's network check, 2026-11-27).
 //! `ui.press` fires the same `Activate` on the next `Update`, so a scripted press runs the same code
 //! as a real one. (It cannot fire it from inside its own handler: the button's command would then
 //! run inside another command, which the registry forbids.)
@@ -22,14 +24,16 @@ use bevy::input_focus::{FocusCause, InputFocus};
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui::Pressed;
-use bevy::ui_widgets::{Activate, Button, observe};
+use bevy::ui_widgets::{Activate, Button};
 use retreat_engine_api::{
     AppCommandExt, CommandArgs, CommandOutcome, CommandRegistry, CommandResult, PanelRect,
     UiButtonEntry, UiPanels, UiTextFields, compute_panel_layout,
 };
 
 use crate::command_dispatch::dispatch_command_line;
-use crate::ui_text_fields::{UiTextFieldsPlugin, spawn_text_field};
+use crate::ui_text_fields::{PanelTextField, UiTextFieldsPlugin, spawn_text_field, widget_text};
+use bevy::ecs::system::SystemParam;
+use bevy::text::EditableText;
 
 const BUTTON_COLOR: Color = Color::srgb(0.16, 0.17, 0.20);
 const BUTTON_HOVERED_COLOR: Color = Color::srgb(0.25, 0.27, 0.32);
@@ -59,6 +63,9 @@ impl Plugin for UiPanelsPlugin {
             )
             .register_command("ui.press", "ui.press <panel> <entry>", press_command)
             .register_command("ui.list", "ui.list", list_command)
+            // One app-wide observer instead of one per button: buttons are rebuilt with the
+            // panels, and an entity observer did not survive every rebuild in the browser.
+            .add_observer(run_activated_button)
             .add_systems(
                 Update,
                 (
@@ -130,13 +137,21 @@ fn node_at(rect: PanelRect) -> Node {
     }
 }
 
+/// What a rebuild needs of the text fields: their mirrored state, the keyboard focus and the
+/// widgets being replaced.
+#[derive(SystemParam)]
+struct FieldsToRebuild<'w, 's> {
+    texts: Res<'w, UiTextFields>,
+    focus: ResMut<'w, InputFocus>,
+    old: Query<'w, 's, (Entity, &'static PanelTextField, &'static EditableText)>,
+}
+
 /// Rebuilds every visible panel when `UiPanels` changed or the view was resized (or on the first
 /// frame a camera has a size). A text field keeps its text and its keyboard focus across a rebuild.
 fn rebuild_panels_when_needed(
     mut commands: Commands,
     panels: Res<UiPanels>,
-    texts: Res<UiTextFields>,
-    mut focus: ResMut<InputFocus>,
+    mut fields: FieldsToRebuild,
     cameras: Query<&Camera, With<Camera3d>>,
     roots: Query<Entity, With<PanelRoot>>,
     mut last_viewport: Local<Option<Vec2>>,
@@ -149,6 +164,16 @@ fn rebuild_panels_when_needed(
         return;
     }
     *last_viewport = Some(viewport);
+    // The widgets being replaced are fresher than `UiTextFields` (mirrored after this frame's
+    // edits), so a rebuild in the frame something was typed keeps it, and keeps the focus.
+    let mut current_texts = fields.texts.texts.clone();
+    let mut focused = fields.texts.focused;
+    for (entity, field, editable) in &fields.old {
+        current_texts.insert((field.panel, field.field.id), widget_text(editable));
+        if fields.focus.get() == Some(entity) {
+            focused = Some((field.panel, field.field.id));
+        }
+    }
     for root in &roots {
         commands.entity(root).despawn();
     }
@@ -192,10 +217,12 @@ fn rebuild_panels_when_needed(
                     ));
                 }
                 for (field, placed) in panels.text_fields(id).iter().zip(&layout.fields) {
-                    let entity =
-                        spawn_text_field(root, id, *field, placed.rect, texts.text(id, field.id));
-                    if texts.focused == Some((id, field.id)) {
-                        focus.set(entity, FocusCause::Navigated);
+                    let text = current_texts
+                        .get(&(id, field.id))
+                        .map_or("", String::as_str);
+                    let entity = spawn_text_field(root, id, *field, placed.rect, text);
+                    if focused == Some((id, field.id)) {
+                        fields.focus.set(entity, FocusCause::Navigated);
                     }
                 }
                 for (entry, button) in entries.iter().zip(&layout.buttons) {
@@ -210,7 +237,6 @@ fn rebuild_panels_when_needed(
                         node_at(button.rect),
                         BackgroundColor(BUTTON_COLOR),
                         Hovered::default(),
-                        observe(run_activated_button),
                     ))
                     .with_child((
                         Text::new(entry.label),
@@ -222,14 +248,22 @@ fn rebuild_panels_when_needed(
     }
 }
 
-/// Buttons that `ui.press` asked to activate, handled on the next `Update`.
+/// Buttons that `ui.press` asked to activate, handled on the next `Update`: by entity name, not by
+/// entity, because the panel may be rebuilt in between (a view resize; found in the browser).
 #[derive(Resource, Default)]
-struct PendingPresses(Vec<Entity>);
+struct PendingPresses(Vec<String>);
 
 /// Fires `Activate` on each button `ui.press` asked for: the event a click ends with.
-fn activate_pending_presses(mut pending: ResMut<PendingPresses>, mut commands: Commands) {
-    for button in pending.0.drain(..) {
-        commands.trigger(Activate { entity: button });
+fn activate_pending_presses(
+    mut pending: ResMut<PendingPresses>,
+    buttons: Query<(Entity, &Name), With<PanelButton>>,
+    mut commands: Commands,
+) {
+    for wanted in pending.0.drain(..) {
+        match buttons.iter().find(|(_, name)| name.as_str() == wanted) {
+            Some((button, _)) => commands.trigger(Activate { entity: button }),
+            None => warn!("ui.press: button `{wanted}` is no longer shown; the press is dropped"),
+        }
     }
 }
 
@@ -323,18 +357,15 @@ fn press_command(world: &mut World, args: &CommandArgs) -> CommandResult {
         .entry(&panel, &entry)
         .map_err(|message| args.failure(message))?;
     let button_name = panel_button_name(&panel, &entry);
-    let mut buttons = world.query_filtered::<(Entity, &Name), With<PanelButton>>();
-    let Some(button) = buttons
-        .iter(world)
-        .find(|(_, name)| name.as_str() == button_name)
-        .map(|(entity, _)| entity)
-    else {
+    let mut buttons = world.query_filtered::<&Name, With<PanelButton>>();
+    let shown = buttons.iter(world).any(|name| name.as_str() == button_name);
+    if !shown {
         return Err(args.failure(format!(
             "button `{entry}` of panel `{panel}` is not shown (the panel or the entry is hidden, \
              or the UI is not built yet)"
         )));
-    };
-    world.resource_mut::<PendingPresses>().0.push(button);
+    }
+    world.resource_mut::<PendingPresses>().0.push(button_name);
     Ok(CommandOutcome::Continue)
 }
 
